@@ -22,6 +22,26 @@ void* getRealPtr(uint64_t rva) {
     return base ? (void*)(base + rva) : NULL;
 }
 
+// ========== ПОЛУЧЕНИЕ ГЛАВНОГО ОКНА (БЕЗ keyWindow) ==========
+UIWindow* getMainWindow() {
+    NSArray<UIWindow *> *windows = [UIApplication sharedApplication].windows;
+    for (UIWindow *window in windows) {
+        if (window.isKeyWindow) return window;
+    }
+    return windows.firstObject;
+}
+
+UIViewController* getTopViewController() {
+    UIWindow *window = getMainWindow();
+    if (!window) return nil;
+    
+    UIViewController *vc = window.rootViewController;
+    while (vc.presentedViewController) {
+        vc = vc.presentedViewController;
+    }
+    return vc;
+}
+
 // ========== КНОПКА ==========
 @interface SimpleButton : UIButton @end
 @implementation SimpleButton
@@ -54,9 +74,7 @@ void* getRealPtr(uint64_t rva) {
                                                             preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
     
-    UIViewController *vc = [UIApplication sharedApplication].keyWindow.rootViewController;
-    while (vc.presentedViewController) vc = vc.presentedViewController;
-    [vc presentViewController:alert animated:YES completion:nil];
+    [getTopViewController() presentViewController:alert animated:YES completion:nil];
 }
 @end
 
@@ -64,17 +82,17 @@ void* getRealPtr(uint64_t rva) {
 __attribute__((constructor))
 static void init() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        UIWindow *win = [UIApplication sharedApplication].keyWindow;
+        UIWindow *win = getMainWindow();
         if (!win) return;
         
         SimpleButton *btn = [[SimpleButton alloc] init];
         [win addSubview:btn];
         
-        // Показываем алерт при загрузке (что твик вообще работает)
+        // Показываем алерт при загрузке
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Aimbot"
                                                                        message:[NSString stringWithFormat:@"Твик загружен\nBase: %llx", getBaseAddress()]
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-        [[UIApplication sharedApplication].keyWindow.rootViewController presentViewController:alert animated:YES completion:nil];
+        [getTopViewController() presentViewController:alert animated:YES completion:nil];
     });
 }
