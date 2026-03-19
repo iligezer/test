@@ -32,7 +32,6 @@ static NSMutableString *logText = nil;
 static UIWindow *overlayWindow = nil;
 static UIWindow *logWindow = nil;
 static UIButton *floatingButton = nil;
-static CGPoint lastTouchPoint;
 
 // ========== КЛАСС-ОБРАБОТЧИК ==========
 @interface ButtonHandler : NSObject
