@@ -1,5 +1,117 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
+#import <mach-o/dyld.h>
+#import <mach-o/loader.h>
+
+// ===== УТИЛИТЫ ДЛЯ РАБОТЫ С ПАМЯТЬЮ =====
+
+// Получение базового адреса UnityFramework
+uintptr_t getBaseAddress() {
+    uint32_t count = _dyld_image_count();
+    for (uint32_t i = 0; i < count; i++) {
+        const char *name = _dyld_get_image_name(i);
+        if (strstr(name, "UnityFramework") != NULL) {
+            return (uintptr_t)_dyld_get_image_header(i);
+        }
+    }
+    return 0;
+}
+
+// Поиск значения в памяти
+void searchMemory(float value, NSMutableString *log) {
+    uintptr_t base = getBaseAddress();
+    if (base == 0) {
+        [log appendString:@"❌ UnityFramework не найден\n"];
+        return;
+    }
+    
+    [log appendFormat:@"📌 Базовый адрес: 0x%llx\n", base];
+    [log appendFormat:@"🔍 Ищем значение: %f (float)\n\n", value];
+    
+    // Здесь будет код поиска в памяти
+    // Пока просто заглушка для теста
+    [log appendString:@"⚠️ Функция поиска в разработке\n"];
+    [log appendString:@"📝 Будет искать:\n"];
+    [log appendString:@"   - Здоровье игрока (100.0)\n"];
+    [log appendString:@"   - Здоровье врагов (100.0)\n"];
+    [log appendString:@"   - Позиции X, Y, Z\n"];
+}
+
+// Поиск всех экземпляров PlayerController
+void findPlayers(NSMutableString *log) {
+    [log appendString:@"🔍 ПОИСК ИГРОКОВ\n\n"];
+    
+    // Теоретически, PlayerController должен быть где-то в памяти
+    // Будем искать по паттернам или через GameManager
+    
+    [log appendString:@"⚠️ Нужно получить адреса из Il2CppDumper:\n"];
+    [log appendString:@"1. GameManager::Instance\n"];
+    [log appendString:@"2. GameManager::GetAllPlayers()\n"];
+    [log appendString:@"3. PlayerController::_health\n"];
+    [log appendString:@"4. PlayerController::_transform\n"];
+}
+
+// Поиск по сигнатуре (паттерну)
+void findPattern(const char *pattern, const char *mask, NSMutableString *log) {
+    [log appendFormat:@"🔍 Поиск паттерна: %s\n", pattern];
+    // Заглушка
+}
+
+// Тестовое сканирование памяти
+void scanMemory() {
+    NSMutableString *log = [NSMutableString stringWithString:@"🔬 СКАНИРОВАНИЕ ПАМЯТИ\n\n"];
+    
+    // 1. Базовый адрес
+    uintptr_t base = getBaseAddress();
+    [log appendFormat:@"📍 UnityFramework: 0x%llx\n", base];
+    
+    // 2. Информация о загруженных библиотеках
+    [log appendString:@"\n📚 ЗАГРУЖЕННЫЕ БИБЛИОТЕКИ:\n"];
+    uint32_t count = _dyld_image_count();
+    for (uint32_t i = 0; i < count && i < 10; i++) {
+        const char *name = _dyld_get_image_name(i);
+        const char *shortName = strrchr(name, '/');
+        if (shortName) shortName++; else shortName = name;
+        [log appendFormat:@"   %d: %s\n", i, shortName];
+    }
+    
+    // 3. Поиск возможных классов
+    [log appendString:@"\n🎯 ПОИСК КЛАССОВ ИЗ PROJECT.GAME.DLL:\n"];
+    NSArray *classNames = @[
+        @"GameManager",
+        @"PlayerController",
+        @"GameUIManager",
+        @"PlayerHealth",
+        @"EnemyBaseScript",
+        @"PlayerManager",
+        @"EnemyManager"
+    ];
+    
+    // В IL2CPP классы не регистрируются в ObjC runtime
+    [log appendString:@"   ❌ IL2CPP - классы не видны через objc_getClass\n"];
+    [log appendString:@"   ✅ Нужно искать в памяти по сигнатурам\n"];
+    
+    // 4. Поиск значений здоровья (100.0)
+    [log appendString:@"\n❤️ ПОИСК ЗДОРОВЬЯ (100.0):\n"];
+    [log appendString:@"   ⏳ Будет реализовано после получения адресов\n"];
+    
+    // 5. Поиск позиций
+    [log appendString:@"\n📍 ПОИСК ПОЗИЦИЙ (X, Y, Z):\n"];
+    [log appendString:@"   ⏳ Будет реализовано после получения адресов\n"];
+    
+    // 6. Что нужно сделать дальше
+    [log appendString:@"\n📋 ПЛАН ДЕЙСТВИЙ:\n"];
+    [log appendString:@"1. Запустить Il2CppDumper с UnityFramework\n"];
+    [log appendString:@"2. Найти в script.json:\n"];
+    [log appendString:@"   - GameManager::Instance\n"];
+    [log appendString:@"   - GameManager::GetAllPlayers\n"];
+    [log appendString:@"   - PlayerController::_health\n"];
+    [log appendString:@"   - PlayerController::_transform\n"];
+    [log appendString:@"3. Подставить адреса в код\n"];
+    [log appendString:@"4. Реализовать ESP\n"];
+    
+    showResultWindow(log);
+}
 
 // ===== ФУНКЦИЯ ПОКАЗА РЕЗУЛЬТАТОВ =====
 void showResultWindow(NSString *text) {
@@ -20,115 +132,42 @@ void showResultWindow(NSString *text) {
         
         if (!keyWindow) return;
         
-        UIWindow *resultWindow = [[UIWindow alloc] initWithFrame:CGRectMake(20, 100, keyWindow.frame.size.width - 40, 400)];
+        UIWindow *resultWindow = [[UIWindow alloc] initWithFrame:CGRectMake(20, 100, keyWindow.frame.size.width - 40, 450)];
         resultWindow.windowLevel = UIWindowLevelAlert + 2;
         resultWindow.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.95];
         resultWindow.layer.cornerRadius = 15;
+        resultWindow.layer.borderWidth = 1;
+        resultWindow.layer.borderColor = [UIColor cyanColor].CGColor;
         resultWindow.hidden = NO;
         
         UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, resultWindow.frame.size.width, 40)];
-        title.text = @"🎯 РЕЗУЛЬТАТ";
-        title.textColor = [UIColor whiteColor];
+        title.text = @"🔬 РЕЗУЛЬТАТЫ СКАНИРОВАНИЯ";
+        title.textColor = [UIColor cyanColor];
         title.textAlignment = NSTextAlignmentCenter;
-        title.font = [UIFont boldSystemFontOfSize:18];
+        title.font = [UIFont boldSystemFontOfSize:16];
         [resultWindow addSubview:title];
         
-        UITextView *textView = [[UITextView alloc] initWithFrame:CGRectMake(10, 60, resultWindow.frame.size.width - 20, 260)];
+        UITextView *textView = [[UITextView alloc] initWithFrame:CGRectMake(10, 60, resultWindow.frame.size.width - 20, 310)];
         textView.backgroundColor = [UIColor blackColor];
         textView.textColor = [UIColor greenColor];
-        textView.font = [UIFont fontWithName:@"Courier" size:12];
+        textView.font = [UIFont fontWithName:@"Courier" size:11];
         textView.text = text;
         textView.editable = NO;
         textView.selectable = YES;
         [resultWindow addSubview:textView];
         
         UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        closeBtn.frame = CGRectMake(resultWindow.frame.size.width/2 - 50, 340, 100, 40);
-        [closeBtn setTitle:@"Закрыть" forState:UIControlStateNormal];
+        closeBtn.frame = CGRectMake(resultWindow.frame.size.width/2 - 50, 390, 100, 40);
+        [closeBtn setTitle:@"ЗАКРЫТЬ" forState:UIControlStateNormal];
         closeBtn.backgroundColor = [UIColor systemBlueColor];
         [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
         closeBtn.layer.cornerRadius = 8;
+        closeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
         [closeBtn addTarget:resultWindow action:@selector(setHidden:) forControlEvents:UIControlEventTouchUpInside];
         [resultWindow addSubview:closeBtn];
         
         [resultWindow makeKeyAndVisible];
     });
-}
-
-// ===== ГЛАВНАЯ ФУНКЦИЯ ВКЛЮЧЕНИЯ АИМБОТА =====
-NSString* enableAimbot() {
-    NSMutableString *log = [NSMutableString stringWithString:@"🔧 ВКЛЮЧЕНИЕ АИМБОТА\n\n"];
-    
-    // Путь к папке с данными приложений
-    NSString *dataPath = @"/var/mobile/Containers/Data/Application/";
-    NSFileManager *fm = [NSFileManager defaultManager];
-    
-    // Ищем папку игры
-    NSArray *apps = [fm contentsOfDirectoryAtPath:dataPath error:nil];
-    NSString *prefsPath = nil;
-    
-    for (NSString *appId in apps) {
-        NSString *libPath = [dataPath stringByAppendingPathComponent:appId];
-        libPath = [libPath stringByAppendingPathComponent:@"Library/Preferences"];
-        NSString *plistPath = [libPath stringByAppendingPathComponent:@"com.gamedevltd.modernstrikeonline.plist"];
-        
-        if ([fm fileExistsAtPath:plistPath]) {
-            prefsPath = plistPath;
-            [log appendFormat:@"📂 Найден файл настроек:\n%@\n", plistPath];
-            break;
-        }
-    }
-    
-    if (!prefsPath) {
-        [log appendString:@"❌ Файл настроек не найден!"];
-        return log;
-    }
-    
-    // Читаем текущие настройки
-    NSMutableDictionary *prefs = [NSMutableDictionary dictionaryWithContentsOfFile:prefsPath];
-    if (!prefs) {
-        prefs = [NSMutableDictionary dictionary];
-        [log appendString:@"📝 Создан новый файл настроек\n"];
-    }
-    
-    // Сохраняем старые значения
-    NSNumber *oldAutoAim = prefs[@"AutoAim"];
-    NSNumber *oldAutoShoot = prefs[@"AutoShoot"];
-    NSNumber *oldNoAds = prefs[@"DoNotShowAds"];
-    
-    [log appendString:@"\n📊 ТЕКУЩИЕ НАСТРОЙКИ:\n"];
-    [log appendFormat:@"AutoAim: %@\n", oldAutoAim ? oldAutoAim : @"(не задано)"];
-    [log appendFormat:@"AutoShoot: %@\n", oldAutoShoot ? oldAutoShoot : @"(не задано)"];
-    [log appendFormat:@"DoNotShowAds: %@\n", oldNoAds ? oldNoAds : @"(не задано)"];
-    
-    // УСТАНАВЛИВАЕМ НОВЫЕ ЗНАЧЕНИЯ (из найденных файлов)
-    prefs[@"AutoAim"] = @(1);      // Включаем аимбот
-    prefs[@"AutoShoot"] = @(1);    // Включаем авто-стрельбу
-    prefs[@"DoNotShowAds"] = @(1); // Отключаем рекламу
-    prefs[@"Max"] = @(9);           // Открываем все уровни
-    prefs[@"SelectedLevel"] = @(8); // Последний уровень
-    
-    // Разблокируем всё оружие (из CustomWeaponSelector.cs)
-    for (int i = 0; i < 10; i++) {
-        prefs[[NSString stringWithFormat:@"WeaponUnlocked%d", i]] = @(0);
-    }
-    
-    // Сохраняем
-    BOOL saved = [prefs writeToFile:prefsPath atomically:YES];
-    
-    if (saved) {
-        [log appendString:@"\n✅ НАСТРОЙКИ УСПЕШНО СОХРАНЕНЫ!\n"];
-        [log appendString:@"\n🎯 AutoAim = 1 (аимбот включен)"];
-        [log appendString:@"\n🔫 AutoShoot = 1 (авто-стрельба)"];
-        [log appendString:@"\n🚫 DoNotShowAds = 1 (рекламы нет)"];
-        [log appendString:@"\n🔓 Все уровни открыты"];
-        [log appendString:@"\n🔓 Все оружие разблокировано"];
-        [log appendString:@"\n\n⚠️ ПЕРЕЗАПУСТИТЕ ИГРУ для применения!"];
-    } else {
-        [log appendString:@"\n❌ ОШИБКА СОХРАНЕНИЯ!"];
-    }
-    
-    return log;
 }
 
 // ===== ПЛАВАЮЩАЯ КНОПКА =====
@@ -140,13 +179,21 @@ NSString* enableAimbot() {
 @implementation FloatButton
 
 - (instancetype)init {
-    self = [super initWithFrame:CGRectMake(20, 100, 50, 50)];
+    self = [super initWithFrame:CGRectMake(20, 100, 60, 60)];
     if (self) {
         self.backgroundColor = [UIColor systemBlueColor];
-        self.layer.cornerRadius = 25;
-        self.layer.borderWidth = 2;
+        self.layer.cornerRadius = 30;
+        self.layer.borderWidth = 3;
         self.layer.borderColor = [UIColor whiteColor].CGColor;
         self.userInteractionEnabled = YES;
+        
+        // Добавим иконку (текст "ESP")
+        UILabel *label = [[UILabel alloc] initWithFrame:self.bounds];
+        label.text = @"ESP";
+        label.textColor = [UIColor whiteColor];
+        label.textAlignment = NSTextAlignmentCenter;
+        label.font = [UIFont boldSystemFontOfSize:16];
+        [self addSubview:label];
         
         UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleTap)];
         [self addGestureRecognizer:tap];
@@ -228,39 +275,62 @@ NSString* enableAimbot() {
 }
 
 - (void)buildMenu {
-    self.menuView = [[UIView alloc] initWithFrame:CGRectMake(80, 160, 260, 220)];
+    self.menuView = [[UIView alloc] initWithFrame:CGRectMake(80, 160, 280, 320)];
     self.menuView.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.95];
     self.menuView.layer.cornerRadius = 15;
-    self.menuView.layer.borderWidth = 1;
-    self.menuView.layer.borderColor = [UIColor grayColor].CGColor;
+    self.menuView.layer.borderWidth = 2;
+    self.menuView.layer.borderColor = [UIColor cyanColor].CGColor;
     self.menuView.hidden = YES;
     self.window.menuView = self.menuView;
     
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, 260, 40)];
-    title.text = @"🎯 MODERN STRIKE AIMBOT";
-    title.textColor = [UIColor whiteColor];
+    // Заголовок
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 15, 280, 30)];
+    title.text = @"🎯 ESP ДЛЯ MODERN STRIKE";
+    title.textColor = [UIColor cyanColor];
     title.textAlignment = NSTextAlignmentCenter;
     title.font = [UIFont boldSystemFontOfSize:16];
     [self.menuView addSubview:title];
     
-    // Кнопка включения аимбота
-    UIButton *aimbotBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    aimbotBtn.frame = CGRectMake(30, 60, 200, 50);
-    [aimbotBtn setTitle:@"🎯 ВКЛЮЧИТЬ АИМБОТ" forState:UIControlStateNormal];
-    aimbotBtn.backgroundColor = [UIColor systemGreenColor];
-    [aimbotBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    aimbotBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
-    aimbotBtn.layer.cornerRadius = 8;
-    [aimbotBtn addTarget:self action:@selector(enableAimbotAction) forControlEvents:UIControlEventTouchUpInside];
-    [self.menuView addSubview:aimbotBtn];
+    // Кнопка 1: Сканирование памяти
+    UIButton *scanBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    scanBtn.frame = CGRectMake(40, 70, 200, 45);
+    [scanBtn setTitle:@"🔍 СКАНИРОВАТЬ ПАМЯТЬ" forState:UIControlStateNormal];
+    scanBtn.backgroundColor = [UIColor systemIndigoColor];
+    [scanBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    scanBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+    scanBtn.layer.cornerRadius = 8;
+    [scanBtn addTarget:self action:@selector(scanMemoryAction) forControlEvents:UIControlEventTouchUpInside];
+    [self.menuView addSubview:scanBtn];
     
-    // Кнопка закрытия
+    // Кнопка 2: Поиск игроков
+    UIButton *playersBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    playersBtn.frame = CGRectMake(40, 130, 200, 45);
+    [playersBtn setTitle:@"👥 ПОИСК ИГРОКОВ" forState:UIControlStateNormal];
+    playersBtn.backgroundColor = [UIColor systemOrangeColor];
+    [playersBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    playersBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+    playersBtn.layer.cornerRadius = 8;
+    [playersBtn addTarget:self action:@selector(findPlayersAction) forControlEvents:UIControlEventTouchUpInside];
+    [self.menuView addSubview:playersBtn];
+    
+    // Кнопка 3: Инфо о памяти
+    UIButton *infoBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    infoBtn.frame = CGRectMake(40, 190, 200, 45);
+    [infoBtn setTitle:@"ℹ️ БАЗОВАЯ ИНФО" forState:UIControlStateNormal];
+    infoBtn.backgroundColor = [UIColor systemGrayColor];
+    [infoBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    infoBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+    infoBtn.layer.cornerRadius = 8;
+    [infoBtn addTarget:self action:@selector(infoAction) forControlEvents:UIControlEventTouchUpInside];
+    [self.menuView addSubview:infoBtn];
+    
+    // Кнопка 4: Закрыть
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(30, 130, 200, 50);
+    closeBtn.frame = CGRectMake(40, 250, 200, 45);
     [closeBtn setTitle:@"❌ ЗАКРЫТЬ МЕНЮ" forState:UIControlStateNormal];
     closeBtn.backgroundColor = [UIColor systemRedColor];
     [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    closeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
+    closeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
     closeBtn.layer.cornerRadius = 8;
     [closeBtn addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
     [self.menuView addSubview:closeBtn];
@@ -273,9 +343,38 @@ NSString* enableAimbot() {
     self.menuView.hidden = !self.menuVisible;
 }
 
-- (void)enableAimbotAction {
-    NSString *result = enableAimbot();
-    showResultWindow(result);
+- (void)scanMemoryAction {
+    scanMemory();
+}
+
+- (void)findPlayersAction {
+    NSMutableString *log = [NSMutableString stringWithString:@"👥 ПОИСК ИГРОКОВ\n\n"];
+    findPlayers(log);
+    showResultWindow(log);
+}
+
+- (void)infoAction {
+    NSMutableString *log = [NSMutableString stringWithString:@"ℹ️ ИНФОРМАЦИЯ\n\n"];
+    
+    uintptr_t base = getBaseAddress();
+    [log appendFormat:@"📌 UnityFramework: 0x%llx\n", base];
+    
+    [log appendString:@"\n📚 Классы для поиска:\n"];
+    [log appendString:@"• GameManager\n"];
+    [log appendString:@"• PlayerController\n"];
+    [log appendString:@"• GameUIManager\n"];
+    [log appendString:@"• PlayerHealth\n"];
+    [log appendString:@"• EnemyBaseScript\n"];
+    
+    [log appendString:@"\n🔍 Смещения (предположительно):\n"];
+    [log appendString:@"• health: 0x10\n"];
+    [log appendString:@"• isDead: 0x14\n"];
+    [log appendString:@"• team: 0x30\n"];
+    [log appendString:@"• position: 0x20 (x,y,z)\n"];
+    
+    [log appendString:@"\n⚠️ Для точных адресов нужен Il2CppDumper"];
+    
+    showResultWindow(log);
 }
 
 @end
@@ -285,8 +384,8 @@ static AimbotUI *g_ui = nil;
 
 __attribute__((constructor))
 static void init() {
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         g_ui = [[AimbotUI alloc] init];
-        NSLog(@"[Aimbot] Твик загружен!");
+        NSLog(@"[ESP] Твик загружен!");
     });
 }
