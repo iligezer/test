@@ -55,7 +55,7 @@ static PlayerData *myPlayer = nil;
 + (void)addLog:(NSString*)text;
 + (void)resetScan;
 + (void)findSafeRegions;
-+ (void)scanByCoordinates;
++ (void)scanRealPlayers;
 + (void)refineScanAroundMyPlayer;
 + (UIWindow*)mainWindow;
 + (void)handlePan:(UIPanGestureRecognizer*)gesture;
@@ -115,7 +115,7 @@ static PlayerData *myPlayer = nil;
     menuWindow.layer.cornerRadius = 10;
     
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, menuWidth, 30)];
-    title.text = @"⚡ COORD SCANNER";
+    title.text = @"⚡ REAL PLAYER SCANNER";
     title.textColor = [UIColor whiteColor];
     title.textAlignment = NSTextAlignmentCenter;
     [menuWindow addSubview:title];
@@ -138,14 +138,14 @@ static PlayerData *myPlayer = nil;
     [findRegionsBtn addTarget:self action:@selector(findSafeRegions) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:findRegionsBtn];
     
-    // Кнопка 3: СКАНИРОВАТЬ ПО КООРДИНАТАМ
-    UIButton *coordScanBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    coordScanBtn.frame = CGRectMake(20, 150, menuWidth-40, 40);
-    coordScanBtn.backgroundColor = [UIColor systemPurpleColor];
-    [coordScanBtn setTitle:@"📍 СКАНИРОВАТЬ ПО КООРДИНАТАМ" forState:UIControlStateNormal];
-    [coordScanBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    [coordScanBtn addTarget:self action:@selector(scanByCoordinates) forControlEvents:UIControlEventTouchUpInside];
-    [menuWindow addSubview:coordScanBtn];
+    // Кнопка 3: СКАНИРОВАТЬ РЕАЛЬНЫХ ИГРОКОВ
+    UIButton *realScanBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    realScanBtn.frame = CGRectMake(20, 150, menuWidth-40, 40);
+    realScanBtn.backgroundColor = [UIColor systemPurpleColor];
+    [realScanBtn setTitle:@"🎯 СКАНИРОВАТЬ РЕАЛЬНЫХ ИГРОКОВ" forState:UIControlStateNormal];
+    [realScanBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [realScanBtn addTarget:self action:@selector(scanRealPlayers) forControlEvents:UIControlEventTouchUpInside];
+    [menuWindow addSubview:realScanBtn];
     
     // Кнопка 4: УТОЧНИТЬ ВОКРУГ СЕБЯ
     UIButton *refineBtn = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -193,7 +193,7 @@ static PlayerData *myPlayer = nil;
     [self addLog:@"🔄 ПАМЯТЬ ОЧИЩЕНА"];
     [self addLog:@"1. Зайди в матч"];
     [self addLog:@"2. Нажми НАЙТИ РЕГИОНЫ"];
-    [self addLog:@"3. Нажми СКАНИРОВАТЬ ПО КООРДИНАТАМ"];
+    [self addLog:@"3. Нажми СКАНИРОВАТЬ РЕАЛЬНЫХ ИГРОКОВ"];
     [self updateLogWindow];
 }
 
@@ -232,8 +232,8 @@ static PlayerData *myPlayer = nil;
     [self updateLogWindow];
 }
 
-// ========== СКАНИРОВАНИЕ ПО КООРДИНАТАМ ==========
-+ (void)scanByCoordinates {
+// ========== СКАНИРОВАНИЕ РЕАЛЬНЫХ ИГРОКОВ (С ЖЕСТКИМИ ФИЛЬТРАМИ) ==========
++ (void)scanRealPlayers {
     if (!safeRegions || safeRegions.count == 0) {
         [self addLog:@"❌ Сначала найди регионы"];
         [self updateLogWindow];
@@ -243,12 +243,12 @@ static PlayerData *myPlayer = nil;
     [foundPlayers removeAllObjects];
     myPlayer = nil;
     
-    [self addLog:@"\n📍 СКАНИРОВАНИЕ ПО КООРДИНАТАМ"];
+    [self addLog:@"\n🎯 СКАНИРОВАНИЕ РЕАЛЬНЫХ ИГРОКОВ"];
     [self addLog:@"================================="];
     
     task_t task = mach_task_self();
+    int realPlayers = 0;
     int candidates = 0;
-    int totalScanned = 0;
     int regionCount = 0;
     int totalRegions = (int)safeRegions.count;
     
@@ -265,174 +265,38 @@ static PlayerData *myPlayer = nil;
         
         if (kr == KERN_SUCCESS && data_read == size) {
             
-            for (int i = 0; i < data_read - 128; i += 4) {
-                totalScanned++;
+            // Проходим с шагом 4 байта
+            for (int i = 0; i < data_read - 256; i += 4) {
                 
-                // Ищем координаты (три float подряд)
-                float *x = (float*)(buffer + i);
-                float *y = (float*)(buffer + i + 4);
-                float *z = (float*)(buffer + i + 8);
+                // Сначала ищем здоровье (главный признак)
+                float *healthPtr = (float*)(buffer + i);
                 
-                if (isfinite(*x) && isfinite(*y) && isfinite(*z) &&
-                    fabs(*x) < 10000 && fabs(*y) < 10000 && fabs(*z) < 10000) {
+                // Здоровье должно быть от 10 до 200
+                if (isfinite(*healthPtr) && *healthPtr >= 10 && *healthPtr <= 200) {
                     
-                    // Нашли координаты - ищем здоровье рядом
-                    float health = 0;
-                    unsigned long healthAddr = 0;
-                    
-                    for (int off = -0x50; off < 0x50; off += 4) {
-                        float *h = (float*)(buffer + i + off);
-                        if (isfinite(*h) && *h > 0 && *h < 200) {
-                            health = *h;
-                            healthAddr = addr + i + off;
-                            break;
-                        }
-                    }
-                    
-                    if (health > 0) {
-                        candidates++;
+                    // Ищем координаты рядом (обычно через 0x10-0x20 байт)
+                    for (int offset = 0x10; offset < 0x40; offset += 4) {
+                        float *x = (float*)(buffer + i + offset);
+                        float *y = (float*)(buffer + i + offset + 4);
+                        float *z = (float*)(buffer + i + offset + 8);
                         
-                        PlayerData *p = [[PlayerData alloc] init];
-                        p.health = health;
-                        p.x = *x;
-                        p.y = *y;
-                        p.z = *z;
-                        p.address = healthAddr;
-                        
-                        // Ищем имя рядом (UTF-16)
-                        NSString *name = nil;
-                        for (int off = -0x80; off < 0x80; off += 2) {
-                            uint16_t *chars = (uint16_t*)(buffer + i + off);
+                        // Проверяем координаты
+                        if (isfinite(*x) && isfinite(*y) && isfinite(*z) &&
+                            fabs(*x) > 1.0 && fabs(*y) > 1.0 && fabs(*z) > 1.0 && // не около нуля
+                            fabs(*x) < 5000 && fabs(*y) < 5000 && fabs(*z) < 5000) { // разумные пределы
                             
-                            int validChars = 0;
-                            for (int j = 0; j < 16; j++) {
-                                if (chars[j] > 0x20 && chars[j] < 0x7F) {
-                                    validChars++;
-                                } else if (chars[j] >= 0x0400 && chars[j] <= 0x04FF) {
-                                    validChars++;
-                                } else if (chars[j] == 0) {
-                                    break;
-                                } else {
-                                    validChars = 0;
-                                    break;
-                                }
-                            }
-                            
-                            if (validChars > 2 && validChars < 16) {
-                                name = [[NSString alloc] initWithCharacters:chars length:validChars];
-                                break;
-                            }
-                        }
-                        p.name = name;
-                        
-                        // Проверяем, не мой ли это ник
-                        if (name && [name isEqualToString:MY_NICK]) {
-                            p.isMyPlayer = YES;
-                            myPlayer = p;
-                            [self addLog:[NSString stringWithFormat:@"\n✅ НАЙДЕН СВОЙ ИГРОК #%d:", candidates]];
-                            [self addLog:[NSString stringWithFormat:@"   Адрес здоровья: 0x%lx", p.address]];
-                            [self addLog:[NSString stringWithFormat:@"   Координаты: (%.1f, %.1f, %.1f)", p.x, p.y, p.z]];
-                            [self addLog:[NSString stringWithFormat:@"   Здоровье: %.1f", p.health]];
-                            [self addLog:[NSString stringWithFormat:@"   Имя: %@", p.name]];
-                        } else {
-                            if (candidates <= 50) {
-                                [self addLog:[NSString stringWithFormat:@"\n👾 Кандидат #%d: (%.1f,%.1f,%.1f) HP:%.0f %@",
-                                              candidates, p.x, p.y, p.z, p.health, p.name ?: @"?"]];
-                            }
-                        }
-                        
-                        [foundPlayers addObject:p];
-                        i += 0x80;
-                    }
-                }
-            }
-        }
-        free(buffer);
-        
-        if (regionCount % 500 == 0) {
-            [self addLog:[NSString stringWithFormat:@"📊 Прогресс: %d/%d регионов, найдено кандидатов: %d", 
-                          regionCount, totalRegions, candidates]];
-            [self updateLogWindow];
-        }
-        usleep(1000);
-    }
-    
-    [self addLog:@"\n📊 СТАТИСТИКА:"];
-    [self addLog:[NSString stringWithFormat:@"📁 Регионов: %d", totalRegions]];
-    [self addLog:[NSString stringWithFormat:@"🔍 Проверено адресов: %d", totalScanned]];
-    [self addLog:[NSString stringWithFormat:@"🎯 Найдено кандидатов: %d", candidates]];
-    
-    if (myPlayer) {
-        [self addLog:@"\n✅ СВОЙ ИГРОК УСПЕШНО ИДЕНТИФИЦИРОВАН"];
-    } else {
-        [self addLog:@"\n❌ Свой игрок не найден. Попробуй УТОЧНИТЬ ВОКРУГ СЕБЯ"];
-    }
-    
-    [self updateLogWindow];
-}
-
-// ========== УТОЧНЕНИЕ ВОКРУГ СВОЕГО ИГРОКА ==========
-+ (void)refineScanAroundMyPlayer {
-    if (!myPlayer) {
-        [self addLog:@"❌ Сначала найди своего игрока (СКАНИРОВАТЬ ПО КООРДИНАТАМ)"];
-        [self updateLogWindow];
-        return;
-    }
-    
-    [self addLog:@"\n🎯 УТОЧНЕНИЕ ВОКРУГ СВОЕГО ИГРОКА"];
-    [self addLog:@"================================="];
-    
-    task_t task = mach_task_self();
-    int enemies = 0;
-    float searchRadius = 500.0f;
-    
-    [self addLog:[NSString stringWithFormat:@"📍 Мои координаты: (%.1f, %.1f, %.1f)", 
-                  myPlayer.x, myPlayer.y, myPlayer.z]];
-    [self addLog:[NSString stringWithFormat:@"🔍 Поиск врагов в радиусе %.0f", searchRadius]];
-    
-    for (NSDictionary *region in safeRegions) {
-        vm_address_t addr = [region[@"address"] unsignedLongLongValue];
-        vm_size_t size = [region[@"size"] unsignedLongValue];
-        
-        uint8_t *buffer = malloc(size);
-        vm_size_t data_read = 0;
-        
-        kern_return_t kr = vm_read_overwrite(task, addr, size, (vm_address_t)buffer, &data_read);
-        
-        if (kr == KERN_SUCCESS && data_read == size) {
-            
-            for (int i = 0; i < data_read - 128; i += 4) {
-                float *health = (float*)(buffer + i);
-                
-                if (isfinite(*health) && *health > 0 && *health < 200) {
-                    
-                    float *x = (float*)(buffer + i + 0x10);
-                    float *y = (float*)(buffer + i + 0x14);
-                    float *z = (float*)(buffer + i + 0x18);
-                    
-                    if (isfinite(*x) && isfinite(*y) && isfinite(*z) &&
-                        fabs(*x) < 10000 && fabs(*y) < 10000 && fabs(*z) < 10000) {
-                        
-                        // Проверяем расстояние
-                        float dx = *x - myPlayer.x;
-                        float dy = *y - myPlayer.y;
-                        float dz = *z - myPlayer.z;
-                        float dist = sqrt(dx*dx + dy*dy + dz*dz);
-                        
-                        if (dist < searchRadius && dist > 1.0f) {
-                            enemies++;
+                            candidates++;
                             
                             PlayerData *p = [[PlayerData alloc] init];
-                            p.health = *health;
+                            p.health = *healthPtr;
                             p.x = *x;
                             p.y = *y;
                             p.z = *z;
                             p.address = addr + i;
-                            p.isMyPlayer = NO;
                             
-                            // Ищем имя
-                            for (int off = -0x80; off < 0x80; off += 2) {
-                                uint16_t *chars = (uint16_t*)(buffer + i + off);
+                            // Ищем имя рядом (UTF-16)
+                            for (int nameOff = -0x80; nameOff < 0x80; nameOff += 2) {
+                                uint16_t *chars = (uint16_t*)(buffer + i + nameOff);
                                 
                                 int validChars = 0;
                                 for (int j = 0; j < 16; j++) {
@@ -454,26 +318,92 @@ static PlayerData *myPlayer = nil;
                                 }
                             }
                             
-                            [foundPlayers addObject:p];
-                            
-                            if (enemies <= 50) {
-                                [self addLog:[NSString stringWithFormat:@"👾 Враг #%d: (%.1f,%.1f,%.1f) HP:%.0f Дист:%.0f %@",
-                                              enemies, p.x, p.y, p.z, p.health, dist, p.name ?: @""]];
+                            // Проверяем, не мой ли это ник
+                            if (p.name && [p.name isEqualToString:MY_NICK]) {
+                                p.isMyPlayer = YES;
+                                myPlayer = p;
+                                realPlayers++;
+                                [self addLog:[NSString stringWithFormat:@"\n✅ НАЙДЕН СВОЙ ИГРОК #%d:", realPlayers]];
+                                [self addLog:[NSString stringWithFormat:@"   Адрес здоровья: 0x%lx", p.address]];
+                                [self addLog:[NSString stringWithFormat:@"   Координаты: (%.1f, %.1f, %.1f)", p.x, p.y, p.z]];
+                                [self addLog:[NSString stringWithFormat:@"   Здоровье: %.1f", p.health]];
+                                [self addLog:[NSString stringWithFormat:@"   Имя: %@", p.name]];
+                            } else {
+                                // Показываем только реальных игроков (не кандидатов)
+                                realPlayers++;
+                                [self addLog:[NSString stringWithFormat:@"\n👾 РЕАЛЬНЫЙ ИГРОК #%d: (%.1f,%.1f,%.1f) HP:%.0f %@",
+                                              realPlayers, p.x, p.y, p.z, p.health, p.name ?: @"?"]];
                             }
                             
+                            [foundPlayers addObject:p];
+                            
+                            // Пропускаем структуру
                             i += 0x80;
+                            break;
                         }
                     }
                 }
             }
         }
         free(buffer);
+        
+        if (regionCount % 500 == 0) {
+            [self addLog:[NSString stringWithFormat:@"📊 Прогресс: %d/%d регионов, найдено игроков: %d", 
+                          regionCount, totalRegions, realPlayers]];
+            [self updateLogWindow];
+        }
         usleep(1000);
     }
     
-    [self addLog:[NSString stringWithFormat:@"\n📊 Найдено врагов рядом: %d", enemies]];
-    [self addLog:[NSString stringWithFormat:@"📊 Всего игроков в базе: %lu", (unsigned long)foundPlayers.count]];
+    [self addLog:@"\n📊 СТАТИСТИКА:"];
+    [self addLog:[NSString stringWithFormat:@"📁 Регионов: %d", totalRegions]];
+    [self addLog:[NSString stringWithFormat:@"🎯 Найдено реальных игроков: %d", realPlayers]];
     
+    if (myPlayer) {
+        [self addLog:@"\n✅ СВОЙ ИГРОК УСПЕШНО ИДЕНТИФИЦИРОВАН"];
+    } else {
+        [self addLog:@"\n❌ Свой игрок не найден. Попробуй УТОЧНИТЬ ВОКРУГ СЕБЯ"];
+        [self addLog:@"   Возможно твой ник не giviNgGrebe?"];
+    }
+    
+    [self updateLogWindow];
+}
+
+// ========== УТОЧНЕНИЕ ВОКРУГ СВОЕГО ИГРОКА ==========
++ (void)refineScanAroundMyPlayer {
+    if (!myPlayer) {
+        [self addLog:@"❌ Сначала найди своего игрока"];
+        [self updateLogWindow];
+        return;
+    }
+    
+    [self addLog:@"\n🎯 УТОЧНЕНИЕ ВОКРУГ СВОЕГО ИГРОКА"];
+    [self addLog:@"================================="];
+    
+    task_t task = mach_task_self();
+    int enemies = 0;
+    float searchRadius = 500.0f;
+    
+    [self addLog:[NSString stringWithFormat:@"📍 Мои координаты: (%.1f, %.1f, %.1f)", 
+                  myPlayer.x, myPlayer.y, myPlayer.z]];
+    [self addLog:[NSString stringWithFormat:@"🔍 Поиск врагов в радиусе %.0f", searchRadius]];
+    
+    for (PlayerData *p in foundPlayers) {
+        if (p.isMyPlayer) continue;
+        
+        float dx = p.x - myPlayer.x;
+        float dy = p.y - myPlayer.y;
+        float dz = p.z - myPlayer.z;
+        float dist = sqrt(dx*dx + dy*dy + dz*dz);
+        
+        if (dist < searchRadius) {
+            enemies++;
+            [self addLog:[NSString stringWithFormat:@"👾 Враг #%d: (%.1f,%.1f,%.1f) HP:%.0f Дист:%.0f %@",
+                          enemies, p.x, p.y, p.z, p.health, dist, p.name ?: @""]];
+        }
+    }
+    
+    [self addLog:[NSString stringWithFormat:@"\n📊 Найдено врагов рядом: %d", enemies]];
     [self updateLogWindow];
 }
 
