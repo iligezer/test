@@ -55,7 +55,7 @@ void writeLog(NSString *format, ...) {
         self.layer.borderWidth = 2;
         self.layer.borderColor = [UIColor whiteColor].CGColor;
         self.userInteractionEnabled = YES;
-        self.image = [UIImage imageNamed:@"H5Icon.png"]; // если есть иконка
+        self.image = nil; // убираем иконку, если её нет
         
         // Добавляем тап для обработки нажатия
         UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleTap)];
@@ -87,38 +87,45 @@ void writeLog(NSString *format, ...) {
 
 @end
 
-// Функция для создания окна (как в makeWindow.h)
-UIWindow* createOverlayWindow() {
-    UIWindow *window = nil;
+// ============================================
+// НОВЫЙ КЛАСС: ПРОЗРАЧНОЕ ОКНО (пропускает нажатия)
+// ============================================
+@interface PassthroughWindow : UIWindow
+@property (nonatomic, weak) FloatButton *floatButton;
+@property (nonatomic, weak) UIView *menuView;
+@end
+
+@implementation PassthroughWindow
+
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    // 1. Находим стандартную view, в которую попал удар
+    UIView *hitView = [super hitTest:point withEvent:event];
     
-    if (@available(iOS 13.0, *)) {
-        UIWindowScene *activeScene = nil;
-        for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
-            if (scene.activationState == UISceneActivationStateForegroundActive) {
-                activeScene = scene;
-                break;
-            }
-        }
-        if (activeScene) {
-            window = [[UIWindow alloc] initWithWindowScene:activeScene];
-        }
+    // 2. Если мы вообще не попали ни во что, сразу возвращаем nil
+    if (!hitView) {
+        return nil;
     }
     
-    if (!window) {
-        window = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    // 3. Смотрим, является ли эта view нашей кнопкой или меню (или их сабвью)
+    if (self.floatButton && (hitView == self.floatButton || [self.floatButton isDescendantOfView:hitView])) {
+        return hitView;
+    }
+    if (self.menuView && (hitView == self.menuView || [self.menuView isDescendantOfView:hitView])) {
+        return hitView;
     }
     
-    window.windowLevel = UIWindowLevelAlert + 1;
-    window.backgroundColor = [UIColor clearColor];
-    window.userInteractionEnabled = YES;
-    window.hidden = NO;
-    
-    return window;
+    // 4. Иначе (мы попали в пустую область окна) — возвращаем nil
+    //    Это заставит iOS искать получателя касания в окнах ниже (игра)
+    return nil;
 }
 
-// Основной класс для управления интерфейсом
+@end
+
+// ============================================
+// ОСНОВНОЙ КЛАСС УПРАВЛЕНИЯ
+// ============================================
 @interface AimbotUI : NSObject
-@property (nonatomic, strong) UIWindow *window;
+@property (nonatomic, strong) PassthroughWindow *window;  // ← ИЗМЕНЕНО: теперь PassthroughWindow
 @property (nonatomic, strong) FloatButton *floatButton;
 @property (nonatomic, strong) UIView *menuView;
 @property (nonatomic, assign) BOOL menuVisible;
@@ -137,13 +144,25 @@ UIWindow* createOverlayWindow() {
 - (void)setupUI {
     writeLog(@"Setting up UI");
     
-    // Создаем окно
-    self.window = createOverlayWindow();
+    // ========================================
+    // 1. Создаем прозрачное окно (ИЗМЕНЕНО)
+    // ========================================
+    self.window = [[PassthroughWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    self.window.windowLevel = UIWindowLevelAlert + 1;
+    self.window.backgroundColor = [UIColor clearColor];
+    self.window.userInteractionEnabled = YES;
+    self.window.hidden = NO;
     
-    // Создаем плавающую кнопку
+    // ========================================
+    // 2. Создаем плавающую кнопку
+    // ========================================
     self.floatButton = [[FloatButton alloc] init];
     
-    // ИСПРАВЛЕНО: weakSelf для избежания retain cycle
+    // Связываем кнопку с окном (чтобы hitTest мог её найти)
+    self.window.floatButton = self.floatButton;
+    [self.window addSubview:self.floatButton];
+    
+    // Устанавливаем действие для кнопки (weakSelf для избежания retain cycle)
     __weak typeof(self) weakSelf = self;
     [self.floatButton setAction:^{
         __strong typeof(weakSelf) strongSelf = weakSelf;
@@ -152,15 +171,19 @@ UIWindow* createOverlayWindow() {
         }
     }];
     
-    [self.window addSubview:self.floatButton];
-    
-    // Создаем меню
+    // ========================================
+    // 3. Создаем меню
+    // ========================================
     self.menuView = [[UIView alloc] initWithFrame:CGRectMake(80, 160, 220, 200)];
     self.menuView.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.9];
     self.menuView.layer.cornerRadius = 10;
     self.menuView.layer.borderWidth = 1;
     self.menuView.layer.borderColor = [UIColor whiteColor].CGColor;
     self.menuView.hidden = YES;
+    
+    // Связываем меню с окном
+    self.window.menuView = self.menuView;
+    [self.window addSubview:self.menuView];
     
     // Заголовок
     UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, 220, 30)];
@@ -188,8 +211,6 @@ UIWindow* createOverlayWindow() {
     closeBtn.layer.cornerRadius = 5;
     [closeBtn addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
     [self.menuView addSubview:closeBtn];
-    
-    [self.window addSubview:self.menuView];
     
     writeLog(@"UI setup complete");
 }
@@ -229,8 +250,9 @@ UIWindow* createOverlayWindow() {
 
 @end
 
-#pragma mark - Constructor
-
+// ============================================
+// КОНСТРУКТОР
+// ============================================
 static AimbotUI *g_ui = nil;
 
 __attribute__((constructor))
