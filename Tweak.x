@@ -150,7 +150,7 @@ void writeLog(NSString *format, ...) {
     scanBtn.backgroundColor = [UIColor lightGrayColor];
     [scanBtn setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
     scanBtn.layer.cornerRadius = 5;
-    [scanBtn addTarget:self action:@selector(scanAction) forControlEvents:UIControlEventTouchUpInside];
+    [scanBtn addTarget:self action:@selector(n) forControlEvents:UIControlEventTouchUpInside];
     [self.menuView addSubview:scanBtn];
     
     // Кнопка закрытия
@@ -174,7 +174,7 @@ void writeLog(NSString *format, ...) {
 
 - (void)scanAction {
     writeLog(@"\n🔍 Сканирование классов...");
-    // Здесь добавь свою логику сканирования
+    scanClasses();  // ← добавить эту строку
     writeLog(@"✅ Сканирование завершено");
 }
 @end
