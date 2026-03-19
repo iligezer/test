@@ -47,7 +47,7 @@ static NSMutableArray *foundPlayers = nil;
 + (void)closeLogWindow;
 + (void)showLogWindow;
 + (void)addLog:(NSString*)text;
-+ (void)scanByCoordinates;
++ (void)safeScan;
 + (UIWindow*)mainWindow;
 + (void)handlePan:(UIPanGestureRecognizer*)gesture;
 @end
@@ -110,7 +110,7 @@ static NSMutableArray *foundPlayers = nil;
     menuWindow.layer.cornerRadius = 10;
     
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, menuWidth, 30)];
-    title.text = @"⚡ SCANNER";
+    title.text = @"⚡ SAFE SCANNER";
     title.textColor = [UIColor whiteColor];
     title.textAlignment = NSTextAlignmentCenter;
     [menuWindow addSubview:title];
@@ -119,9 +119,9 @@ static NSMutableArray *foundPlayers = nil;
     scanBtn.frame = CGRectMake(20, 60, menuWidth-40, 45);
     scanBtn.backgroundColor = [UIColor systemBlueColor];
     scanBtn.layer.cornerRadius = 8;
-    [scanBtn setTitle:@"🔍 СКАНИРОВАТЬ" forState:UIControlStateNormal];
+    [scanBtn setTitle:@"🔍 БЕЗОПАСНОЕ СКАНИРОВАНИЕ" forState:UIControlStateNormal];
     [scanBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    [scanBtn addTarget:self action:@selector(scanByCoordinates) forControlEvents:UIControlEventTouchUpInside];
+    [scanBtn addTarget:self action:@selector(safeScan) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:scanBtn];
     
     UIButton *logBtn = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -152,10 +152,11 @@ static NSMutableArray *foundPlayers = nil;
     [menuWindow resignKeyWindow];
 }
 
-// ========== ПОИСК ПО КООРДИНАТАМ ==========
-+ (void)scanByCoordinates {
+// ========== БЕЗОПАСНОЕ СКАНИРОВАНИЕ ==========
++ (void)safeScan {
     [logText setString:@""];
-    [self addLog:@"🔍 ПОИСК ПО КООРДИНАТАМ..."];
+    [self addLog:@"🔍 БЕЗОПАСНОЕ СКАНИРОВАНИЕ..."];
+    [self addLog:@"⏳ Это может занять 10-20 секунд..."];
     
     foundPlayers = [NSMutableArray array];
     
@@ -167,72 +168,90 @@ static NSMutableArray *foundPlayers = nil;
     mach_port_t object_name;
     
     int regionCount = 0;
-    int coordFound = 0;
+    int candidates = 0;
+    vm_size_t totalScanned = 0;
     
-    while (vm_region_64(task, &address, &size, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info, &count, &object_name) == KERN_SUCCESS) {
+    while (vm_region_64(task, &address, &size, VM_REGION_BASIC_INFO_64, 
+                        (vm_region_info_t)&info, &count, &object_name) == KERN_SUCCESS) {
         
         regionCount++;
+        totalScanned += size;
         
-        // Пропускаем слишком маленькие или огромные регионы
-        if (size < 4096 || size > 20 * 1024 * 1024) {
+        // ПРОВЕРКА БЕЗОПАСНОСТИ РЕГИОНА
+        if (!(info.protection & VM_PROT_READ)) {
             address += size;
-            continue;
+            continue; // Нечитаемый регион
         }
         
-        // Читаем регион
-        uint8_t *buffer = malloc(size);
-        vm_size_t data_read;
+        if (size < 4096 || size > 20*1024*1024) {
+            address += size;
+            continue; // Слишком маленький или большой
+        }
         
-        if (vm_read_overwrite(task, address, size, (vm_address_t)buffer, &data_read) == KERN_SUCCESS) {
+        // Показываем прогресс
+        if (regionCount % 50 == 0) {
+            [self addLog:[NSString stringWithFormat:@"📊 Сканировано: %d MB, регионов: %d", 
+                          (int)(totalScanned / (1024*1024)), regionCount]];
+        }
+        
+        // Читаем только безопасные регионы
+        uint8_t *buffer = malloc(size);
+        vm_size_t data_read = 0;
+        
+        kern_return_t kr = vm_read_overwrite(task, address, size, 
+                                             (vm_address_t)buffer, &data_read);
+        
+        if (kr == KERN_SUCCESS && data_read == size) {
             
-            // Ищем координаты (три float подряд)
+            // БЕЗОПАСНО сканируем
             for (int i = 0; i < data_read - 64; i += 4) {
                 
+                // Сначала ищем координаты (три float подряд)
                 float *x = (float*)(buffer + i);
                 float *y = (float*)(buffer + i + 4);
                 float *z = (float*)(buffer + i + 8);
                 
-                // Проверяем, похоже ли на координаты
-                if (*x > -10000 && *x < 10000 &&
-                    *y > -10000 && *y < 10000 &&
-                    *z > -10000 && *z < 10000) {
+                // Проверяем на валидность (не NaN, не бесконечность)
+                if (isfinite(*x) && isfinite(*y) && isfinite(*z) &&
+                    fabs(*x) < 10000 && fabs(*y) < 10000 && fabs(*z) < 10000) {
                     
-                    coordFound++;
-                    
-                    // Нашли координаты - теперь ищем здоровье рядом
+                    // Нашли координаты - ищем здоровье рядом
                     float health = 0;
                     unsigned long healthAddr = 0;
-                    NSString *name = nil;
                     
-                    // Ищем здоровье в пределах -0x50..+0x50
-                    for (int offset = -0x50; offset < 0x50; offset += 4) {
-                        float *val = (float*)(buffer + i + offset);
-                        if (*val > 1 && *val < 200) {
-                            health = *val;
-                            healthAddr = address + i + offset;
+                    for (int off = -0x40; off < 0x40; off += 4) {
+                        float *h = (float*)(buffer + i + off);
+                        if (isfinite(*h) && *h > 0 && *h < 200) {
+                            health = *h;
+                            healthAddr = address + i + off;
                             break;
                         }
                     }
                     
-                    // Если нашли здоровье - ищем имя
                     if (health > 0) {
-                        for (int offset = -0x80; offset < 0x80; offset += 2) { // шаг 2 для UTF-16
-                            uint16_t *chars = (uint16_t*)(buffer + i + offset);
+                        candidates++;
+                        
+                        // Ищем имя рядом (UTF-16 для русского текста)
+                        NSString *name = nil;
+                        for (int off = -0x80; off < 0x80; off += 2) {
+                            uint16_t *chars = (uint16_t*)(buffer + i + off);
                             
-                            // Проверяем, похоже ли на строку (русские/английские буквы)
+                            // Проверяем, похоже ли на строку
                             int validChars = 0;
                             for (int j = 0; j < 16; j++) {
                                 if (chars[j] > 0x20 && chars[j] < 0x7F) { // английские
                                     validChars++;
                                 } else if (chars[j] >= 0x0400 && chars[j] <= 0x04FF) { // русские
                                     validChars++;
+                                } else if (chars[j] == 0) { // конец строки
+                                    break;
                                 } else {
+                                    validChars = 0;
                                     break;
                                 }
                             }
                             
                             if (validChars > 2 && validChars < 20) {
-                                // Конвертируем UTF-16 в NSString
                                 name = [[NSString alloc] initWithCharacters:chars length:validChars];
                                 break;
                             }
@@ -249,31 +268,33 @@ static NSMutableArray *foundPlayers = nil;
                         
                         [foundPlayers addObject:p];
                         
-                        [self addLog:[NSString stringWithFormat:@"\n🎯 КАНДИДАТ #%lu:", (unsigned long)foundPlayers.count]];
+                        [self addLog:[NSString stringWithFormat:@"\n🎯 КАНДИДАТ #%d:", candidates]];
                         [self addLog:[NSString stringWithFormat:@"   Координаты: (%.1f, %.1f, %.1f)", p.x, p.y, p.z]];
-                        [self addLog:[NSString stringWithFormat:@"   Здоровье: %.1f по адресу 0x%lx", p.health, p.address]];
+                        [self addLog:[NSString stringWithFormat:@"   Здоровье: %.1f", p.health]];
+                        [self addLog:[NSString stringWithFormat:@"   Адрес здоровья: 0x%lx", p.address]];
                         if (p.name) [self addLog:[NSString stringWithFormat:@"   Имя: %@", p.name]];
                         
-                        // Пропускаем структуру
+                        // Пропускаем остаток структуры
                         i += 0x80;
                     }
                 }
             }
         }
+        
         free(buffer);
-        
         address += size;
-        address = (address + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
         
-        // Даем игре подышать
+        // Пауза каждые 10 регионов (чтобы не грузить процессор)
         if (regionCount % 10 == 0) {
-            usleep(1000); // 1ms пауза
+            usleep(10000); // 10ms пауза
         }
     }
     
-    [self addLog:[NSString stringWithFormat:@"\n📊 Регионов: %d", regionCount]];
-    [self addLog:[NSString stringWithFormat:@"📊 Найдено координат: %d", coordFound]];
-    [self addLog:[NSString stringWithFormat:@"📊 Кандидатов в игроки: %lu", (unsigned long)foundPlayers.count]];
+    [self addLog:@"\n📊 СТАТИСТИКА:"];
+    [self addLog:[NSString stringWithFormat:@"📁 Всего регионов: %d", regionCount]];
+    [self addLog:[NSString stringWithFormat:@"💾 Всего просканировано: %d MB", (int)(totalScanned / (1024*1024))]];
+    [self addLog:[NSString stringWithFormat:@"👥 Найдено кандидатов: %d", candidates]];
+    [self addLog:[NSString stringWithFormat:@"📦 Сохранено: %lu", (unsigned long)foundPlayers.count]];
     
     [self showLogWindow];
 }
@@ -373,6 +394,7 @@ static void init() {
             [mainWindow addSubview:floatingButton];
             
             [ButtonHandler addLog:@"✅ Твик загружен"];
+            [ButtonHandler addLog:@"⚡ Нажми кнопку для меню"];
         });
     }
 }
