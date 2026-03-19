@@ -14,6 +14,11 @@
 #define RVA_Player_GetTransform      0x10716cc10
 #define BASE_ADDR 0x1042c4000
 
+// ========== СМЕЩЕНИЯ ПОЛЕЙ (ИЗ ТВОЕГО dump.cs) ==========
+#define OFFSET_NICKNAME 0x38  // Смещение указателя на строку с ником
+#define OFFSET_HEALTH   0x20  // Смещение здоровья (подбери точно)
+#define OFFSET_POSITION 0x10  // Смещение координат (x,y,z)
+
 // ========== ТИПЫ ФУНКЦИЙ ==========
 typedef void *(*t_get_main_camera)();
 typedef void *(*t_world_to_screen)(void *camera, void *worldPos);
@@ -35,11 +40,31 @@ static t_get_health Player_GetHealth = NULL;
 static t_get_transform Player_GetTransform = NULL;
 
 static BOOL espEnabled = NO;
+static BOOL showNames = YES;
+static BOOL showHealth = YES;
+static BOOL showDistance = YES;
+
 static NSMutableString *logText = nil;
 static UIWindow *overlayWindow = nil;
 static UIWindow *logWindow = nil;
+static UIWindow *menuWindow = nil;
 static UIButton *floatingButton = nil;
-static NSMutableArray *foundPlayers = nil; // Для хранения найденных игроков
+
+// ========== МОДЕЛЬ ИГРОКА ==========
+@interface PlayerData : NSObject
+@property (assign) float health;
+@property (assign) float x, y, z;
+@property (assign) unsigned long address;
+@property (strong) NSString *name;
+@property (assign) float distance;
+@property (assign) BOOL isEnemy;
+@end
+
+@implementation PlayerData
+@end
+
+static NSMutableArray<PlayerData*> *foundPlayers = nil;
+static NSString *myNickname = @"giviNgGrebe"; // Твой ник
 
 // ========== ОБЪЯВЛЕНИЕ КЛАССА ==========
 @interface ButtonHandler : NSObject
@@ -54,17 +79,10 @@ static NSMutableArray *foundPlayers = nil; // Для хранения найде
 + (void)handlePan:(UIPanGestureRecognizer*)gesture;
 + (void)addLog:(NSString*)text;
 + (void)toggleESP;
-+ (void)closeMenu:(UIButton*)sender;
-@end
-
-// ========== СТРУКТУРА ИГРОКА ==========
-@interface PlayerData : NSObject
-@property (assign) float health;
-@property (assign) float x, y, z;
-@property (assign) unsigned long address;
-@end
-
-@implementation PlayerData
++ (void)toggleNames;
++ (void)toggleHealth;
++ (void)toggleDistance;
++ (void)closeMenu;
 @end
 
 // ========== ESP VIEW ==========
@@ -72,38 +90,90 @@ static NSMutableArray *foundPlayers = nil; // Для хранения найде
 @end
 
 @implementation ESPView
+
+- (Vector3)worldToScreen:(Vector3)worldPos camera:(void*)camera {
+    Vector3 screen = {0,0,0};
+    if (Camera_WorldToScreen && camera) {
+        void *result = Camera_WorldToScreen(camera, &worldPos);
+        if (result) {
+            float *screenPos = (float*)result;
+            screen.x = screenPos[0];
+            screen.y = screenPos[1];
+            screen.z = screenPos[2];
+        }
+    }
+    return screen;
+}
+
 - (void)drawRect:(CGRect)rect {
     [super drawRect:rect];
     
     if (!espEnabled || !foundPlayers.count) return;
-    if (!Camera_main || !Camera_WorldToScreen || !Transform_get_position) return;
+    if (!Camera_main || !Camera_WorldToScreen) return;
     
     void *cam = Camera_main();
     if (!cam) return;
     
     CGContextRef ctx = UIGraphicsGetCurrentContext();
     
+    // Находим своего игрока для расчёта дистанций
+    PlayerData *localPlayer = nil;
+    for (PlayerData *p in foundPlayers) {
+        if ([p.name isEqualToString:myNickname]) {
+            localPlayer = p;
+            break;
+        }
+    }
+    
     for (PlayerData *player in foundPlayers) {
-        // Создаем вектор позиции (упрощенно)
-        float position[3] = {player.x, player.y, player.z};
+        // Пропускаем своего
+        if ([player.name isEqualToString:myNickname]) continue;
         
-        // Конвертируем в экранные координаты
-        void *screenPos = Camera_WorldToScreen(cam, position);
+        // Конвертируем мировые координаты в экранные
+        Vector3 worldPos = {player.x, player.y, player.z};
+        Vector3 screenPos = [self worldToScreen:worldPos camera:cam];
         
-        if (screenPos) {
-            float *screen = (float*)screenPos;
-            float screenX = screen[0] * rect.size.width;
-            float screenY = screen[1] * rect.size.height;
+        // Проверяем, что точка перед камерой (z > 0)
+        if (screenPos.z <= 0) continue;
+        
+        float screenX = screenPos.x * rect.size.width;
+        float screenY = screenPos.y * rect.size.height;
+        
+        // Рисуем точку игрока
+        CGContextSetFillColorWithColor(ctx, [UIColor redColor].CGColor);
+        CGContextFillEllipseInRect(ctx, CGRectMake(screenX - 5, screenY - 5, 10, 10));
+        
+        float yOffset = 15;
+        
+        // Рисуем ник
+        if (showNames && player.name.length > 0) {
+            NSString *displayName = player.name;
+            if (showDistance && localPlayer) {
+                float dist = sqrt(pow(player.x - localPlayer.x, 2) + 
+                                  pow(player.y - localPlayer.y, 2) + 
+                                  pow(player.z - localPlayer.z, 2));
+                displayName = [NSString stringWithFormat:@"%@ [%.1fm]", player.name, dist];
+            }
             
-            // Рисуем врага
-            CGContextSetFillColorWithColor(ctx, [UIColor redColor].CGColor);
-            CGContextFillEllipseInRect(ctx, CGRectMake(screenX - 5, screenY - 5, 10, 10));
-            
-            // Рисуем здоровье
-            NSString *healthText = [NSString stringWithFormat:@"%.0f", player.health];
-            [healthText drawAtPoint:CGPointMake(screenX + 10, screenY - 10) withAttributes:@{
-                NSFontAttributeName: [UIFont systemFontOfSize:12],
-                NSForegroundColorAttributeName: [UIColor whiteColor]
+            [displayName drawAtPoint:CGPointMake(screenX - 20, screenY - yOffset) 
+                      withAttributes:@{
+                NSFontAttributeName: [UIFont boldSystemFontOfSize:12],
+                NSForegroundColorAttributeName: [UIColor whiteColor],
+                NSStrokeColorAttributeName: [UIColor blackColor],
+                NSStrokeWidthAttributeName: @-2
+            }];
+            yOffset += 15;
+        }
+        
+        // Рисуем здоровье
+        if (showHealth) {
+            NSString *healthText = [NSString stringWithFormat:@"HP: %.0f", player.health];
+            [healthText drawAtPoint:CGPointMake(screenX - 20, screenY - yOffset) 
+                      withAttributes:@{
+                NSFontAttributeName: [UIFont systemFontOfSize:10],
+                NSForegroundColorAttributeName: [UIColor greenColor],
+                NSStrokeColorAttributeName: [UIColor blackColor],
+                NSStrokeWidthAttributeName: @-2
             }];
         }
     }
@@ -138,13 +208,18 @@ static NSMutableArray *foundPlayers = nil; // Для хранения найде
 @implementation ButtonHandler
 
 + (void)showMenu {
-    // Центрируем меню
+    if (menuWindow) {
+        menuWindow.hidden = NO;
+        [menuWindow makeKeyAndVisible];
+        return;
+    }
+    
     CGFloat menuWidth = 280;
     CGFloat menuHeight = 400;
     CGFloat menuX = ([UIScreen mainScreen].bounds.size.width - menuWidth) / 2;
     CGFloat menuY = ([UIScreen mainScreen].bounds.size.height - menuHeight) / 2;
     
-    UIWindow *menuWindow = [[UIWindow alloc] initWithFrame:CGRectMake(menuX, menuY, menuWidth, menuHeight)];
+    menuWindow = [[UIWindow alloc] initWithFrame:CGRectMake(menuX, menuY, menuWidth, menuHeight)];
     menuWindow.windowLevel = UIWindowLevelAlert + 3;
     menuWindow.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.95];
     menuWindow.layer.cornerRadius = 15;
@@ -161,7 +236,7 @@ static NSMutableArray *foundPlayers = nil; // Для хранения найде
     
     // Кнопка ESP
     UIButton *espBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    espBtn.frame = CGRectMake(20, 60, menuWidth-40, 45);
+    espBtn.frame = CGRectMake(20, 60, menuWidth-40, 40);
     espBtn.backgroundColor = espEnabled ? [UIColor systemGreenColor] : [UIColor systemGrayColor];
     espBtn.layer.cornerRadius = 10;
     [espBtn setTitle:[NSString stringWithFormat:@"🎯 ESP %@", espEnabled ? @"ON" : @"OFF"] forState:UIControlStateNormal];
@@ -169,29 +244,49 @@ static NSMutableArray *foundPlayers = nil; // Для хранения найде
     [espBtn addTarget:self action:@selector(toggleESP) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:espBtn];
     
+    // Кнопка имён
+    UIButton *namesBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    namesBtn.frame = CGRectMake(20, 110, menuWidth-40, 40);
+    namesBtn.backgroundColor = showNames ? [UIColor systemBlueColor] : [UIColor systemGrayColor];
+    namesBtn.layer.cornerRadius = 10;
+    [namesBtn setTitle:[NSString stringWithFormat:@"👤 Имена %@", showNames ? @"ON" : @"OFF"] forState:UIControlStateNormal];
+    [namesBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [namesBtn addTarget:self action:@selector(toggleNames) forControlEvents:UIControlEventTouchUpInside];
+    [menuWindow addSubview:namesBtn];
+    
+    // Кнопка здоровья
+    UIButton *healthBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    healthBtn.frame = CGRectMake(20, 160, menuWidth-40, 40);
+    healthBtn.backgroundColor = showHealth ? [UIColor systemBlueColor] : [UIColor systemGrayColor];
+    healthBtn.layer.cornerRadius = 10;
+    [healthBtn setTitle:[NSString stringWithFormat:@"❤️ Здоровье %@", showHealth ? @"ON" : @"OFF"] forState:UIControlStateNormal];
+    [healthBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [healthBtn addTarget:self action:@selector(toggleHealth) forControlEvents:UIControlEventTouchUpInside];
+    [menuWindow addSubview:healthBtn];
+    
+    // Кнопка дистанции
+    UIButton *distBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    distBtn.frame = CGRectMake(20, 210, menuWidth-40, 40);
+    distBtn.backgroundColor = showDistance ? [UIColor systemBlueColor] : [UIColor systemGrayColor];
+    distBtn.layer.cornerRadius = 10;
+    [distBtn setTitle:[NSString stringWithFormat:@"📏 Дистанция %@", showDistance ? @"ON" : @"OFF"] forState:UIControlStateNormal];
+    [distBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [distBtn addTarget:self action:@selector(toggleDistance) forControlEvents:UIControlEventTouchUpInside];
+    [menuWindow addSubview:distBtn];
+    
     // Кнопка сканирования
     UIButton *scanBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    scanBtn.frame = CGRectMake(20, 115, menuWidth-40, 45);
-    scanBtn.backgroundColor = [UIColor systemBlueColor];
+    scanBtn.frame = CGRectMake(20, 260, menuWidth-40, 40);
+    scanBtn.backgroundColor = [UIColor systemOrangeColor];
     scanBtn.layer.cornerRadius = 10;
-    [scanBtn setTitle:@"🔍 СКАНИРОВАТЬ ПАМЯТЬ" forState:UIControlStateNormal];
+    [scanBtn setTitle:@"🔍 СКАНИРОВАТЬ" forState:UIControlStateNormal];
     [scanBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [scanBtn addTarget:self action:@selector(scanMemory) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:scanBtn];
     
-    // Кнопка проверки адресов
-    UIButton *checkBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    checkBtn.frame = CGRectMake(20, 170, menuWidth-40, 45);
-    checkBtn.backgroundColor = [UIColor systemOrangeColor];
-    checkBtn.layer.cornerRadius = 10;
-    [checkBtn setTitle:@"🔎 ПРОВЕРИТЬ АДРЕСА" forState:UIControlStateNormal];
-    [checkBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    [checkBtn addTarget:self action:@selector(checkAddresses) forControlEvents:UIControlEventTouchUpInside];
-    [menuWindow addSubview:checkBtn];
-    
     // Кнопка лога
     UIButton *logBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    logBtn.frame = CGRectMake(20, 225, menuWidth-40, 45);
+    logBtn.frame = CGRectMake(20, 310, menuWidth-40, 40);
     logBtn.backgroundColor = [UIColor systemPurpleColor];
     logBtn.layer.cornerRadius = 10;
     [logBtn setTitle:@"📋 ПОКАЗАТЬ ЛОГ" forState:UIControlStateNormal];
@@ -201,16 +296,19 @@ static NSMutableArray *foundPlayers = nil; // Для хранения найде
     
     // Кнопка закрыть
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(20, 280, menuWidth-40, 45);
+    closeBtn.frame = CGRectMake(20, 360, menuWidth-40, 30);
     closeBtn.backgroundColor = [UIColor systemRedColor];
     closeBtn.layer.cornerRadius = 10;
     [closeBtn setTitle:@"✖️ ЗАКРЫТЬ" forState:UIControlStateNormal];
     [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    [closeBtn addTarget:self action:@selector(closeMenu:) forControlEvents:UIControlEventTouchUpInside];
+    [closeBtn addTarget:self action:@selector(closeMenu) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:closeBtn];
     
     [menuWindow makeKeyAndVisible];
-    objc_setAssociatedObject(self, @selector(closeMenu:), menuWindow, OBJC_ASSOCIATION_RETAIN);
+}
+
++ (void)closeMenu {
+    menuWindow.hidden = YES;
 }
 
 + (void)toggleESP {
@@ -218,12 +316,19 @@ static NSMutableArray *foundPlayers = nil; // Для хранения найде
     [self showMenu];
 }
 
-+ (void)closeMenu:(UIButton*)sender {
-    UIWindow *menuWindow = (UIWindow*)sender.superview;
-    if ([menuWindow isKindOfClass:[UIWindow class]]) {
-        menuWindow.hidden = YES;
-        [menuWindow resignKeyWindow];
-    }
++ (void)toggleNames {
+    showNames = !showNames;
+    [self showMenu];
+}
+
++ (void)toggleHealth {
+    showHealth = !showHealth;
+    [self showMenu];
+}
+
++ (void)toggleDistance {
+    showDistance = !showDistance;
+    [self showMenu];
 }
 
 + (void)handlePan:(UIPanGestureRecognizer*)gesture {
@@ -314,10 +419,6 @@ static NSMutableArray *foundPlayers = nil; // Для хранения найде
     [self addLog:[NSString stringWithFormat:@"Camera.main: %p", Camera_main]];
     [self addLog:[NSString stringWithFormat:@"WorldToScreen: %p", Camera_WorldToScreen]];
     [self addLog:[NSString stringWithFormat:@"get_position: %p", Transform_get_position]];
-    [self addLog:[NSString stringWithFormat:@"IsMine: %p", Player_IsMine]];
-    [self addLog:[NSString stringWithFormat:@"IsDead: %p", Player_IsDead]];
-    [self addLog:[NSString stringWithFormat:@"IsAlly: %p", Player_IsAlly]];
-    [self addLog:[NSString stringWithFormat:@"GetHealth: %p", Player_GetHealth]];
     [self addLog:@"✅ Все адреса загружены"];
     [self showLogWindow];
 }
@@ -325,12 +426,9 @@ static NSMutableArray *foundPlayers = nil; // Для хранения найде
 + (void)scanMemory {
     [logText setString:@""];
     [self addLog:@"🔍 СКАНИРОВАНИЕ ПАМЯТИ..."];
-    [self addLog:@"⚠️ Поиск структур игроков..."];
+    [self addLog:@"⚠️ Поиск игроков по никам..."];
     
     foundPlayers = [NSMutableArray array];
-    
-    uint64_t base = BASE_ADDR;
-    [self addLog:[NSString stringWithFormat:@"Базовый адрес: 0x%llx", base]];
     
     task_t task = mach_task_self();
     vm_address_t address = 0;
@@ -338,6 +436,8 @@ static NSMutableArray *foundPlayers = nil; // Для хранения найде
     vm_region_basic_info_data_64_t info;
     mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
     mach_port_t object_name;
+    
+    int playerCount = 0;
     int regionCount = 0;
     
     while (vm_region_64(task, &address, &size, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info, &count, &object_name) == KERN_SUCCESS) {
@@ -349,9 +449,9 @@ static NSMutableArray *foundPlayers = nil; // Для хранения найде
             
             if (vm_read_overwrite(task, address, size, (vm_address_t)buffer, &data_read) == KERN_SUCCESS) {
                 
-                for (int i = 0; i < data_read - 32; i += 4) {
+                for (int i = 0; i < data_read - 64; i += 4) {
                     float *health = (float*)(buffer + i);
-                    if (*health > 99.0f && *health < 101.0f) {
+                    if (*health > 90.0f && *health < 110.0f) {
                         
                         float *x = (float*)(buffer + i + 0x10);
                         float *y = (float*)(buffer + i + 0x14);
@@ -359,20 +459,49 @@ static NSMutableArray *foundPlayers = nil; // Для хранения найде
                         
                         if (*x > -10000 && *x < 10000 && *y > -10000 && *y < 10000 && *z > -10000 && *z < 10000) {
                             
-                            PlayerData *player = [[PlayerData alloc] init];
-                            player.health = *health;
-                            player.x = *x;
-                            player.y = *y;
-                            player.z = *z;
-                            player.address = (unsigned long)(address + i);
-                            [foundPlayers addObject:player];
+                            // Читаем указатель на имя (смещение 0x38 от начала структуры)
+                            uint64_t namePtr = *(uint64_t*)(buffer + i - 0x38);
                             
-                            [self addLog:[NSString stringWithFormat:@"\n🎯 ИГРОК #%lu:", (unsigned long)foundPlayers.count]];
-                            [self addLog:[NSString stringWithFormat:@"   Адрес: 0x%lx", player.address]];
-                            [self addLog:[NSString stringWithFormat:@"   Здоровье: %.1f", player.health]];
-                            [self addLog:[NSString stringWithFormat:@"   Позиция: (%.1f, %.1f, %.1f)", player.x, player.y, player.z]];
-                            
-                            i += 0x80;
+                            if (namePtr > 0x100000000 && namePtr < 0x300000000) {
+                                char nameBuffer[64] = {0};
+                                vm_size_t nameSize;
+                                if (vm_read_overwrite(task, namePtr, 60, (vm_address_t)nameBuffer, &nameSize) == KERN_SUCCESS) {
+                                    
+                                    // Проверяем, что это читаемая ASCII строка
+                                    BOOL valid = YES;
+                                    for (int j = 0; j < 30 && nameBuffer[j] != 0; j++) {
+                                        if (nameBuffer[j] < 32 || nameBuffer[j] > 126) {
+                                            valid = NO;
+                                            break;
+                                        }
+                                    }
+                                    
+                                    if (valid) {
+                                        NSString *name = [NSString stringWithUTF8String:nameBuffer];
+                                        if (name.length > 2 && name.length < 30) {
+                                            
+                                            PlayerData *player = [[PlayerData alloc] init];
+                                            player.health = *health;
+                                            player.x = *x;
+                                            player.y = *y;
+                                            player.z = *z;
+                                            player.address = (unsigned long)(address + i);
+                                            player.name = name;
+                                            player.isEnemy = ![name isEqualToString:myNickname];
+                                            [foundPlayers addObject:player];
+                                            
+                                            playerCount++;
+                                            [self addLog:[NSString stringWithFormat:@"\n🎯 ИГРОК #%d:", playerCount]];
+                                            [self addLog:[NSString stringWithFormat:@"   Адрес: 0x%lx", player.address]];
+                                            [self addLog:[NSString stringWithFormat:@"   Ник: %@", player.name]];
+                                            [self addLog:[NSString stringWithFormat:@"   Здоровье: %.1f", player.health]];
+                                            [self addLog:[NSString stringWithFormat:@"   Позиция: (%.1f, %.1f, %.1f)", player.x, player.y, player.z]];
+                                            
+                                            i += 0x80;
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -385,11 +514,15 @@ static NSMutableArray *foundPlayers = nil; // Для хранения найде
     }
     
     [self addLog:[NSString stringWithFormat:@"\n📊 Просканировано регионов: %d", regionCount]];
-    [self addLog:[NSString stringWithFormat:@"📊 Найдено игроков: %lu", (unsigned long)foundPlayers.count]];
+    [self addLog:[NSString stringWithFormat:@"📊 Найдено игроков: %d", playerCount]];
     
-    if (foundPlayers.count == 0) {
-        [self addLog:@"❌ Игроки не найдены. Возможно неверный паттерн поиска."];
+    // Подсчёт своих и чужих
+    int myCount = 0, enemyCount = 0;
+    for (PlayerData *p in foundPlayers) {
+        if ([p.name isEqualToString:myNickname]) myCount++;
+        else enemyCount++;
     }
+    [self addLog:[NSString stringWithFormat:@"📊 Своих: %d, Чужих: %d", myCount, enemyCount]];
     
     [self showLogWindow];
 }
@@ -465,6 +598,7 @@ static void init() {
             }];
             
             [ButtonHandler addLog:@"✅ Твик загружен"];
+            [ButtonHandler addLog:[NSString stringWithFormat:@"✅ Твой ник: %@", myNickname]];
         });
     }
 }
