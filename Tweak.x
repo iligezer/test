@@ -110,7 +110,7 @@ static NSMutableArray *currentValues = nil;
     menuWindow.layer.borderColor = [UIColor systemBlueColor].CGColor;
     
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 15, menuWidth, 30)];
-    title.text = @"⚡ ADDRESS PASTER";
+    title.text = @"⚡ COORD FINDER";
     title.textColor = [UIColor whiteColor];
     title.textAlignment = NSTextAlignmentCenter;
     title.font = [UIFont boldSystemFontOfSize:20];
@@ -242,7 +242,6 @@ static NSMutableArray *currentValues = nil;
     NSString *addrStr = pasteboard.string;
     
     if (addrStr.length > 0) {
-        // Очищаем строку
         addrStr = [addrStr stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
         addrStr = [addrStr stringByReplacingOccurrencesOfString:@"\"" withString:@""];
         addrStr = [addrStr stringByReplacingOccurrencesOfString:@"'" withString:@""];
@@ -251,11 +250,9 @@ static NSMutableArray *currentValues = nil;
         unsigned long long addr = 0;
         NSScanner *scanner = [NSScanner scannerWithString:addrStr];
         
-        // Пробуем как hex
         if ([addrStr hasPrefix:@"0x"] || [addrStr hasPrefix:@"0X"]) {
             [scanner scanHexLongLong:&addr];
         } else {
-            // Пробуем как десятичное
             addr = [addrStr longLongValue];
         }
         
@@ -295,7 +292,7 @@ static NSMutableArray *currentValues = nil;
     [self updateLogWindow];
 }
 
-// ========== НАЧАТЬ СКАНИРОВАНИЕ ==========
+// ========== НАЧАТЬ СКАНИРОВАНИЕ (С РАСШИРЕНИЕМ) ==========
 + (void)startScan {
     if (!trackedAddresses || trackedAddresses.count == 0) {
         [self addLog:@"❌ Нет адресов для сканирования"];
@@ -303,11 +300,31 @@ static NSMutableArray *currentValues = nil;
         return;
     }
     
+    // Расширяем массив адресами выше и ниже (шаг 4 байта, диапазон 0x800)
+    NSMutableArray *expandedAddresses = [NSMutableArray array];
+    int range = 0x800; // 2048 байт вверх и вниз
+    int step = 4;      // шаг 4 байта (для float)
+    
+    for (NSNumber *addrNum in trackedAddresses) {
+        unsigned long long baseAddr = [addrNum unsignedLongLongValue];
+        
+        for (int offset = -range; offset <= range; offset += step) {
+            unsigned long long newAddr = baseAddr + offset;
+            [expandedAddresses addObject:@(newAddr)];
+        }
+    }
+    
+    trackedAddresses = expandedAddresses;
     currentValues = [NSMutableArray array];
+    
     task_t task = mach_task_self();
     
-    [self addLog:@"\n🔍 НАЧАЛЬНОЕ СКАНИРОВАНИЕ:"];
+    [self addLog:[NSString stringWithFormat:@"\n🔍 РАСШИРЕННОЕ СКАНИРОВАНИЕ"]];
+    [self addLog:[NSString stringWithFormat:@"📊 Диапазон: ±0x%x байт", range]];
+    [self addLog:[NSString stringWithFormat:@"📊 Шаг: %d байта", step]];
+    [self addLog:[NSString stringWithFormat:@"📊 Всего адресов: %lu", (unsigned long)trackedAddresses.count]];
     
+    int success = 0;
     for (NSNumber *addrNum in trackedAddresses) {
         vm_address_t addr = [addrNum unsignedLongLongValue];
         float value = 0;
@@ -316,14 +333,15 @@ static NSMutableArray *currentValues = nil;
         
         if (kr == KERN_SUCCESS) {
             [currentValues addObject:@(value)];
-            [self addLog:[NSString stringWithFormat:@"📌 0x%llx = %.3f", (unsigned long long)addr, value]];
+            success++;
         } else {
             [currentValues addObject:@(0.0f)];
-            [self addLog:[NSString stringWithFormat:@"❌ 0x%llx = ошибка", (unsigned long long)addr]];
         }
     }
     
+    [self addLog:[NSString stringWithFormat:@"✅ Успешно прочитано: %d", success]];
     [self addLog:@"✅ Начальные значения сохранены"];
+    [self addLog:@"📊 Двигайся и нажимай ИЗМЕНИЛОСЬ/НЕ ИЗМЕНИЛОСЬ"];
     [self updateLogWindow];
 }
 
@@ -339,11 +357,13 @@ static NSMutableArray *currentValues = nil;
     NSMutableArray *newValues = [NSMutableArray array];
     task_t task = mach_task_self();
     
-    [self addLog:@"\n📈 ИЗМЕНИВШИЕСЯ:"];
+    [self addLog:@"\n📈 ПОИСК ИЗМЕНИВШИХСЯ..."];
+    int changed = 0;
     
     for (int i = 0; i < trackedAddresses.count; i++) {
         NSNumber *addrNum = trackedAddresses[i];
         vm_address_t addr = [addrNum unsignedLongLongValue];
+        
         float value = 0;
         vm_size_t data_read = 0;
         kern_return_t kr = vm_read_overwrite(task, addr, 4, (vm_address_t)&value, &data_read);
@@ -353,15 +373,16 @@ static NSMutableArray *currentValues = nil;
             if (fabs(value - oldValue) > 0.001f) {
                 [newAddresses addObject:addrNum];
                 [newValues addObject:@(value)];
-                [self addLog:[NSString stringWithFormat:@"✅ 0x%llx: %.3f -> %.3f", 
-                              (unsigned long long)addr, oldValue, value]];
+                changed++;
             }
         }
     }
     
     trackedAddresses = newAddresses;
     currentValues = newValues;
-    [self addLog:[NSString stringWithFormat:@"📊 Осталось: %lu", (unsigned long)trackedAddresses.count]];
+    
+    [self addLog:[NSString stringWithFormat:@"✅ Найдено изменившихся: %d", changed]];
+    [self addLog:[NSString stringWithFormat:@"📊 Осталось адресов: %lu", (unsigned long)trackedAddresses.count]];
     [self updateLogWindow];
 }
 
@@ -377,11 +398,13 @@ static NSMutableArray *currentValues = nil;
     NSMutableArray *newValues = [NSMutableArray array];
     task_t task = mach_task_self();
     
-    [self addLog:@"\n📉 НЕИЗМЕНИВШИЕСЯ:"];
+    [self addLog:@"\n📉 ПОИСК НЕИЗМЕНИВШИХСЯ..."];
+    int unchanged = 0;
     
     for (int i = 0; i < trackedAddresses.count; i++) {
         NSNumber *addrNum = trackedAddresses[i];
         vm_address_t addr = [addrNum unsignedLongLongValue];
+        
         float value = 0;
         vm_size_t data_read = 0;
         kern_return_t kr = vm_read_overwrite(task, addr, 4, (vm_address_t)&value, &data_read);
@@ -391,15 +414,16 @@ static NSMutableArray *currentValues = nil;
             if (fabs(value - oldValue) <= 0.001f) {
                 [newAddresses addObject:addrNum];
                 [newValues addObject:@(value)];
-                [self addLog:[NSString stringWithFormat:@"✅ 0x%llx = %.3f", 
-                              (unsigned long long)addr, value]];
+                unchanged++;
             }
         }
     }
     
     trackedAddresses = newAddresses;
     currentValues = newValues;
-    [self addLog:[NSString stringWithFormat:@"📊 Осталось: %lu", (unsigned long)trackedAddresses.count]];
+    
+    [self addLog:[NSString stringWithFormat:@"✅ Найдено неизменившихся: %d", unchanged]];
+    [self addLog:[NSString stringWithFormat:@"📊 Осталось адресов: %lu", (unsigned long)trackedAddresses.count]];
     [self updateLogWindow];
 }
 
@@ -410,11 +434,32 @@ static NSMutableArray *currentValues = nil;
     if (!trackedAddresses || trackedAddresses.count == 0) {
         [self addLog:@"❌ Нет кандидатов"];
     } else {
+        // Группируем по 3 (для поиска XYZ)
         for (int i = 0; i < trackedAddresses.count; i++) {
             NSNumber *addrNum = trackedAddresses[i];
             float value = currentValues ? [currentValues[i] floatValue] : 0;
-            [self addLog:[NSString stringWithFormat:@"%d. 0x%llx = %.3f", 
-                          i+1, (unsigned long long)[addrNum unsignedLongLongValue], value]];
+            
+            // Показываем только осмысленные значения (не 0 и не огромные)
+            if (fabs(value) > 0.1 && fabs(value) < 10000) {
+                [self addLog:[NSString stringWithFormat:@"%d. 0x%llx = %.3f", 
+                              i+1, (unsigned long long)[addrNum unsignedLongLongValue], value]];
+                
+                // Показываем следующие два адреса как возможные Y и Z
+                if (i + 1 < trackedAddresses.count) {
+                    float y = [currentValues[i+1] floatValue];
+                    if (fabs(y) > 0.1 && fabs(y) < 10000) {
+                        [self addLog:[NSString stringWithFormat:@"   Y: 0x%llx = %.3f", 
+                                      (unsigned long long)[trackedAddresses[i+1] unsignedLongLongValue], y]];
+                    }
+                }
+                if (i + 2 < trackedAddresses.count) {
+                    float z = [currentValues[i+2] floatValue];
+                    if (fabs(z) > 0.1 && fabs(z) < 10000) {
+                        [self addLog:[NSString stringWithFormat:@"   Z: 0x%llx = %.3f", 
+                                      (unsigned long long)[trackedAddresses[i+2] unsignedLongLongValue], z]];
+                    }
+                }
+            }
         }
     }
     [self showLogWindow];
