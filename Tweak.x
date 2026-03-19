@@ -6,7 +6,16 @@
 
 // ===== ПРОТОТИПЫ =====
 void showResultWindow(NSString *text);
+void showLoadingIndicator();
+void hideLoadingIndicator();
 uintptr_t getBaseAddress();
+
+// ===== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ =====
+static UITextView *g_textView = nil;
+static UIButton *g_copyBtn = nil;
+static UIWindow *g_loadingWindow = nil;
+static UIActivityIndicatorView *g_spinner = nil;
+static UILabel *g_loadingLabel = nil;
 
 // ===== РАБОТА С ПАМЯТЬЮ =====
 uintptr_t getBaseAddress() {
@@ -20,20 +29,81 @@ uintptr_t getBaseAddress() {
     return 0;
 }
 
-// Безопасное чтение памяти
+// Безопасное чтение памяти с try-catch
 size_t safeRead(uintptr_t address, void *buffer, size_t size) {
-    vm_size_t bytesRead = 0;
-    kern_return_t kr = vm_read_overwrite(current_task(), (vm_address_t)address, size, (vm_address_t)buffer, &bytesRead);
-    return (kr == KERN_SUCCESS) ? bytesRead : 0;
+    @try {
+        vm_size_t bytesRead = 0;
+        kern_return_t kr = vm_read_overwrite(current_task(), (vm_address_t)address, size, (vm_address_t)buffer, &bytesRead);
+        return (kr == KERN_SUCCESS) ? bytesRead : 0;
+    } @catch (NSException *e) {
+        return 0;
+    }
 }
 
-// ===== ПОЛНЫЙ СКАН ОДНОЙ КНОПКОЙ =====
+// ===== ИНДИКАТОР ЗАГРУЗКИ =====
+void showLoadingIndicator() {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIWindow *keyWindow = nil;
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if ([scene isKindOfClass:[UIWindowScene class]]) {
+                UIWindowScene *ws = (UIWindowScene *)scene;
+                for (UIWindow *w in ws.windows) {
+                    if (w.isKeyWindow) {
+                        keyWindow = w;
+                        break;
+                    }
+                }
+            }
+            if (keyWindow) break;
+        }
+        
+        if (!keyWindow) return;
+        
+        // Создаем окно загрузки
+        g_loadingWindow = [[UIWindow alloc] initWithFrame:CGRectMake(0, 0, 150, 120)];
+        g_loadingWindow.center = keyWindow.center;
+        g_loadingWindow.windowLevel = UIWindowLevelAlert + 3;
+        g_loadingWindow.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.95];
+        g_loadingWindow.layer.cornerRadius = 20;
+        g_loadingWindow.layer.borderWidth = 2;
+        g_loadingWindow.layer.borderColor = [UIColor systemBlueColor].CGColor;
+        g_loadingWindow.hidden = NO;
+        
+        // Спиннер
+        g_spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhiteLarge];
+        g_spinner.center = CGPointMake(75, 40);
+        g_spinner.color = [UIColor systemBlueColor];
+        [g_spinner startAnimating];
+        [g_loadingWindow addSubview:g_spinner];
+        
+        // Текст
+        g_loadingLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 70, 150, 30)];
+        g_loadingLabel.text = @"СКАНИРУЮ...";
+        g_loadingLabel.textColor = [UIColor whiteColor];
+        g_loadingLabel.textAlignment = NSTextAlignmentCenter;
+        g_loadingLabel.font = [UIFont boldSystemFontOfSize:14];
+        [g_loadingWindow addSubview:g_loadingLabel];
+        
+        [g_loadingWindow makeKeyAndVisible];
+    });
+}
+
+void hideLoadingIndicator() {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [g_spinner stopAnimating];
+        g_loadingWindow.hidden = YES;
+        g_loadingWindow = nil;
+    });
+}
+
+// ===== ПОЛНЫЙ СКАН С ЗАЩИТОЙ =====
 void fullMemoryScan() {
     NSMutableString *log = [NSMutableString stringWithString:@"🔍 ПОЛНЫЙ СКАН ПАМЯТИ\n\n"];
     
     uintptr_t base = getBaseAddress();
     if (base == 0) {
         [log appendString:@"❌ UnityFramework не найден\n"];
+        hideLoadingIndicator();
         showResultWindow(log);
         return;
     }
@@ -45,60 +115,81 @@ void fullMemoryScan() {
     int posCount = 0;
     int ptrCount = 0;
     
-    // Сканируем с шагом 16 байт для скорости
-    for (uintptr_t addr = base; addr < base + 0x2000000; addr += 16) {
-        // Ищем здоровье (100.0)
-        float val;
-        if (safeRead(addr, &val, sizeof(float)) == sizeof(float)) {
-            if (fabsf(val - 100.0f) < 0.01f && healthCount < 10) {
-                [log appendFormat:@"❤️ Здоровье: 0x%lx = 100.0\n", addr];
-                healthCount++;
-            }
-        }
+    // Сканируем меньший диапазон и с большим шагом для безопасности
+    uintptr_t startAddr = base;
+    uintptr_t endAddr = base + 0x800000; // 8 MB вместо 32 MB
+    
+    [log appendFormat:@"📏 Диапазон: 0x%lx - 0x%lx\n\n", startAddr, endAddr];
+    
+    int totalChecks = 0;
+    int maxResults = 15; // Ограничиваем количество результатов
+    
+    for (uintptr_t addr = startAddr; addr < endAddr && totalChecks < 50000; addr += 32) {
+        totalChecks++;
         
-        // Ищем позиции (X, Y, Z)
-        float x, y, z;
-        if (safeRead(addr, &x, sizeof(float)) == sizeof(float) &&
-            safeRead(addr + 4, &y, sizeof(float)) == sizeof(float) &&
-            safeRead(addr + 8, &z, sizeof(float)) == sizeof(float)) {
+        @autoreleasepool {
+            // Ищем здоровье (100.0)
+            if (healthCount < maxResults) {
+                float val;
+                if (safeRead(addr, &val, sizeof(float)) == sizeof(float)) {
+                    if (fabsf(val - 100.0f) < 0.01f) {
+                        [log appendFormat:@"❤️ Здоровье: 0x%lx = 100.0\n", addr];
+                        healthCount++;
+                    }
+                }
+            }
             
-            if (fabsf(x) < 1000 && fabsf(y) < 1000 && fabsf(z) < 1000 &&
-                (fabsf(x) > 1 || fabsf(y) > 1 || fabsf(z) > 1) && posCount < 10) {
-                [log appendFormat:@"📍 Позиция: 0x%lx → X=%.1f Y=%.1f Z=%.1f\n", addr, x, y, z];
-                posCount++;
+            // Ищем позиции (X, Y, Z)
+            if (posCount < maxResults) {
+                float x, y, z;
+                if (safeRead(addr, &x, sizeof(float)) == sizeof(float) &&
+                    safeRead(addr + 4, &y, sizeof(float)) == sizeof(float) &&
+                    safeRead(addr + 8, &z, sizeof(float)) == sizeof(float)) {
+                    
+                    if (fabsf(x) < 1000 && fabsf(y) < 1000 && fabsf(z) < 1000 &&
+                        (fabsf(x) > 0.1 || fabsf(y) > 0.1 || fabsf(z) > 0.1)) {
+                        [log appendFormat:@"📍 Позиция: 0x%lx → X=%.1f Y=%.1f Z=%.1f\n", addr, x, y, z];
+                        posCount++;
+                    }
+                }
             }
-        }
-        
-        // Ищем указатели на объекты
-        uintptr_t ptr;
-        if (safeRead(addr, &ptr, sizeof(uintptr_t)) == sizeof(uintptr_t)) {
-            if (ptr >= base && ptr < base + 0x2000000 && ptrCount < 10) {
-                [log appendFormat:@"🔗 Указатель: 0x%lx → 0x%lx\n", addr, ptr];
-                ptrCount++;
+            
+            // Ищем указатели
+            if (ptrCount < maxResults) {
+                uintptr_t ptr;
+                if (safeRead(addr, &ptr, sizeof(uintptr_t)) == sizeof(uintptr_t)) {
+                    if (ptr >= base && ptr < base + 0x800000) {
+                        [log appendFormat:@"🔗 Указатель: 0x%lx → 0x%lx\n", addr, ptr];
+                        ptrCount++;
+                    }
+                }
             }
         }
     }
     
-    [log appendString:@"\n📋 ИТОГИ:\n"];
+    [log appendString:@"\n📊 ИТОГИ:\n"];
+    [log appendFormat:@"• Проверено адресов: %d\n", totalChecks];
     [log appendFormat:@"• Найдено здоровья: %d\n", healthCount];
     [log appendFormat:@"• Найдено позиций: %d\n", posCount];
     [log appendFormat:@"• Найдено указателей: %d\n", ptrCount];
     
-    [log appendString:@"\n💡 Теперь запусти Il2CppDumper и сравни адреса"];
+    if (healthCount == 0 && posCount == 0) {
+        [log appendString:@"\n⚠️ Ничего не найдено. Возможно:\n"];
+        [log appendString:@"• Игра еще не загрузилась\n"];
+        [log appendString:@"• Значения изменились (здоровье не 100)\n"];
+        [log appendString:@"• Нужен другой диапазон\n"];
+    }
     
+    hideLoadingIndicator();
     showResultWindow(log);
 }
 
-// ===== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ДЛЯ ОКНА РЕЗУЛЬТАТОВ =====
-static UITextView *g_textView = nil;
-static UIButton *g_copyBtn = nil;
-
+// ===== КОПИРОВАНИЕ В БУФЕР =====
 void copyLogToClipboard() {
     if (g_textView) {
         UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
         pasteboard.string = g_textView.text;
         
-        // Визуальное подтверждение
         if (g_copyBtn) {
             UIColor *originalColor = g_copyBtn.backgroundColor;
             NSString *originalTitle = [g_copyBtn titleForState:UIControlStateNormal];
@@ -114,7 +205,7 @@ void copyLogToClipboard() {
     }
 }
 
-// ===== ОКНО РЕЗУЛЬТАТОВ С КНОПКОЙ КОПИРОВАНИЯ =====
+// ===== ОКНО РЕЗУЛЬТАТОВ =====
 void showResultWindow(NSString *text) {
     dispatch_async(dispatch_get_main_queue(), ^{
         UIWindow *keyWindow = nil;
@@ -150,7 +241,7 @@ void showResultWindow(NSString *text) {
         title.font = [UIFont boldSystemFontOfSize:18];
         [resultWindow addSubview:title];
         
-        // Текст с результатами
+        // Текст
         g_textView = [[UITextView alloc] initWithFrame:CGRectMake(15, 60, windowWidth - 30, 300)];
         g_textView.backgroundColor = [UIColor blackColor];
         g_textView.textColor = [UIColor greenColor];
@@ -169,7 +260,6 @@ void showResultWindow(NSString *text) {
         [g_copyBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
         g_copyBtn.layer.cornerRadius = 12;
         g_copyBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-        // ВАЖНО: используем nil вместо self
         [g_copyBtn addTarget:nil action:@selector(copyLogToClipboard) forControlEvents:UIControlEventTouchUpInside];
         [resultWindow addSubview:g_copyBtn];
         
@@ -205,13 +295,11 @@ void showResultWindow(NSString *text) {
         self.layer.borderColor = [UIColor whiteColor].CGColor;
         self.userInteractionEnabled = YES;
         
-        // Тень
         self.layer.shadowColor = [UIColor blackColor].CGColor;
         self.layer.shadowOffset = CGSizeMake(0, 4);
         self.layer.shadowOpacity = 0.5;
         self.layer.shadowRadius = 6;
         
-        // Иконка
         UILabel *label = [[UILabel alloc] initWithFrame:self.bounds];
         label.text = @"🔍";
         label.textColor = [UIColor whiteColor];
@@ -219,7 +307,6 @@ void showResultWindow(NSString *text) {
         label.font = [UIFont boldSystemFontOfSize:28];
         [self addSubview:label];
         
-        // Жесты
         UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragButton:)];
         [self addGestureRecognizer:pan];
         
@@ -238,7 +325,6 @@ void showResultWindow(NSString *text) {
     
     CGPoint newCenter = CGPointMake(self.lastLocation.x + translation.x, self.lastLocation.y + translation.y);
     
-    // Ограничения
     CGFloat half = 30;
     newCenter.x = MAX(half, MIN(self.superview.bounds.size.width - half, newCenter.x));
     newCenter.y = MAX(half + 50, MIN(self.superview.bounds.size.height - half - 50, newCenter.y));
@@ -282,7 +368,7 @@ void showResultWindow(NSString *text) {
 
 @end
 
-// ===== ПРОСТОЕ МЕНЮ =====
+// ===== МЕНЮ =====
 @interface SimpleMenuView : UIView
 @property (nonatomic, strong) UIButton *closeButton;
 @end
@@ -305,19 +391,16 @@ void showResultWindow(NSString *text) {
     
     self.frame = CGRectMake((screenWidth - width) / 2, (screenHeight - height) / 2, width, height);
     
-    // Фон
     self.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.95];
     self.layer.cornerRadius = 20;
     self.layer.borderWidth = 2;
     self.layer.borderColor = [UIColor systemBlueColor].CGColor;
     
-    // Тень
     self.layer.shadowColor = [UIColor blackColor].CGColor;
     self.layer.shadowOffset = CGSizeMake(0, 8);
     self.layer.shadowOpacity = 0.5;
     self.layer.shadowRadius = 12;
     
-    // Заголовок
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 15, width, 30)];
     title.text = @"🎯 ESP SCANNER";
     title.textColor = [UIColor systemBlueColor];
@@ -325,7 +408,6 @@ void showResultWindow(NSString *text) {
     title.font = [UIFont boldSystemFontOfSize:18];
     [self addSubview:title];
     
-    // Кнопка сканирования
     UIButton *scanBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     scanBtn.frame = CGRectMake(30, 60, 200, 50);
     [scanBtn setTitle:@"🔍 ПОЛНЫЙ СКАН" forState:UIControlStateNormal];
@@ -336,7 +418,6 @@ void showResultWindow(NSString *text) {
     scanBtn.tag = 1;
     [self addSubview:scanBtn];
     
-    // Кнопка закрытия
     self.closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
     self.closeButton.frame = CGRectMake(30, 125, 200, 45);
     [self.closeButton setTitle:@"❌ ЗАКРЫТЬ" forState:UIControlStateNormal];
@@ -392,7 +473,6 @@ void showResultWindow(NSString *text) {
     self.window.menuView = self.menuView;
     [self.window addSubview:self.menuView];
     
-    // Назначаем действия
     for (UIView *view in self.menuView.subviews) {
         if ([view isKindOfClass:[UIButton class]]) {
             UIButton *btn = (UIButton *)view;
@@ -428,9 +508,12 @@ void showResultWindow(NSString *text) {
 }
 
 - (void)scanAction {
-    [self toggleMenu]; // Закрываем меню
+    // НЕ закрываем меню сразу! Показываем индикатор
+    self.menuView.hidden = YES; // скрываем меню
+    showLoadingIndicator(); // показываем "СКАНИРУЮ..."
+    
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        fullMemoryScan(); // Сканируем в фоне
+        fullMemoryScan(); // сканируем
     });
 }
 
