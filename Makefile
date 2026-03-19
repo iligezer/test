@@ -1,3 +1,4 @@
+# Для параллельной сборки
 export PATH := $(shell brew --prefix make)/libexec/gnubin:$(PATH)
 THEOS_IGNORE_PARALLEL_BUILDING_NOTICE = yes
 
