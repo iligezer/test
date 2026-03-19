@@ -14,6 +14,10 @@ static NSMutableArray *g_logs = nil;
 static NSString *g_logFilePath = nil;
 static id g_handler = nil; // Глобальный обработчик
 
+#pragma mark - Forward Declarations (предварительные объявления)
+
+void writeLog(NSString *message);
+
 #pragma mark - Вспомогательный класс для обработки событий
 
 @interface FloatButtonHandler : NSObject
@@ -229,7 +233,7 @@ static void init() {
     initLogging();
     writeLog(@"✅ Aimbot твик загружен");
     
-    // Ждём 3 секунды, чтоб�� приложение загрузилось
+    // Ждём 3 секунды, чтобы приложение загрузилось
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), 
                    dispatch_get_main_queue(), ^{
         LOG("Создаём UI...");
