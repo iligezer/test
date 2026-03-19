@@ -89,6 +89,31 @@ void fullMemoryScan() {
     showResultWindow(log);
 }
 
+// ===== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ДЛЯ ОКНА РЕЗУЛЬТАТОВ =====
+static UITextView *g_textView = nil;
+static UIButton *g_copyBtn = nil;
+
+void copyLogToClipboard() {
+    if (g_textView) {
+        UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
+        pasteboard.string = g_textView.text;
+        
+        // Визуальное подтверждение
+        if (g_copyBtn) {
+            UIColor *originalColor = g_copyBtn.backgroundColor;
+            NSString *originalTitle = [g_copyBtn titleForState:UIControlStateNormal];
+            
+            g_copyBtn.backgroundColor = [UIColor systemOrangeColor];
+            [g_copyBtn setTitle:@"✅ СКОПИРОВАНО" forState:UIControlStateNormal];
+            
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+                g_copyBtn.backgroundColor = originalColor;
+                [g_copyBtn setTitle:originalTitle forState:UIControlStateNormal];
+            });
+        }
+    }
+}
+
 // ===== ОКНО РЕЗУЛЬТАТОВ С КНОПКОЙ КОПИРОВАНИЯ =====
 void showResultWindow(NSString *text) {
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -126,37 +151,26 @@ void showResultWindow(NSString *text) {
         [resultWindow addSubview:title];
         
         // Текст с результатами
-        UITextView *textView = [[UITextView alloc] initWithFrame:CGRectMake(15, 60, windowWidth - 30, 300)];
-        textView.backgroundColor = [UIColor blackColor];
-        textView.textColor = [UIColor greenColor];
-        textView.font = [UIFont fontWithName:@"Courier" size:12];
-        textView.text = text;
-        textView.editable = NO;
-        textView.selectable = YES;
-        textView.layer.cornerRadius = 10;
-        [resultWindow addSubview:textView];
+        g_textView = [[UITextView alloc] initWithFrame:CGRectMake(15, 60, windowWidth - 30, 300)];
+        g_textView.backgroundColor = [UIColor blackColor];
+        g_textView.textColor = [UIColor greenColor];
+        g_textView.font = [UIFont fontWithName:@"Courier" size:12];
+        g_textView.text = text;
+        g_textView.editable = NO;
+        g_textView.selectable = YES;
+        g_textView.layer.cornerRadius = 10;
+        [resultWindow addSubview:g_textView];
         
         // Кнопка копирования
-        UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        copyBtn.frame = CGRectMake(20, 380, (windowWidth - 50) / 2, 45);
-        [copyBtn setTitle:@"📋 КОПИРОВАТЬ" forState:UIControlStateNormal];
-        copyBtn.backgroundColor = [UIColor systemGreenColor];
-        [copyBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        copyBtn.layer.cornerRadius = 12;
-        copyBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-        [copyBtn addTarget:^{
-            UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
-            pasteboard.string = textView.text;
-            
-            // Визуальное подтверждение
-            copyBtn.backgroundColor = [UIColor systemOrangeColor];
-            [copyBtn setTitle:@"✅ СКОПИРОВАНО" forState:UIControlStateNormal];
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-                copyBtn.backgroundColor = [UIColor systemGreenColor];
-                [copyBtn setTitle:@"📋 КОПИРОВАТЬ" forState:UIControlStateNormal];
-            });
-        } forControlEvents:UIControlEventTouchUpInside];
-        [resultWindow addSubview:copyBtn];
+        g_copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        g_copyBtn.frame = CGRectMake(20, 380, (windowWidth - 50) / 2, 45);
+        [g_copyBtn setTitle:@"📋 КОПИРОВАТЬ" forState:UIControlStateNormal];
+        g_copyBtn.backgroundColor = [UIColor systemGreenColor];
+        [g_copyBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        g_copyBtn.layer.cornerRadius = 12;
+        g_copyBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+        [g_copyBtn addTarget:self action:@selector(copyLogToClipboard) forControlEvents:UIControlEventTouchUpInside];
+        [resultWindow addSubview:g_copyBtn];
         
         // Кнопка закрытия
         UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
