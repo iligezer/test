@@ -2,31 +2,28 @@ name: Build iOS Tweak
 
 on:
   push:
-    branches: [ main ]
-  workflow_dispatch:
+    branches:
+      - main
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout repo
+        uses: actions/checkout@v3
 
-      - name: Setup Theos
-        uses: Randomblock1/theos-action@v1
-        with:
-          theos-dir: 'theos'
-          theos-src: 'https://github.com/theos/theos'
-          theos-sdks: 'https://github.com/theos/sdks'
-
-      - name: Build Package
+      - name: Install dependencies
         run: |
-          export THEOS=./theos
-          make clean
-          make package FINALPACKAGE=1
+          sudo apt update
+          sudo apt install -y dpkg ldid clang make git
 
-      - name: Upload .deb
-        uses: actions/upload-artifact@v3
-        with:
-          name: aimbot-deb
-          path: packages/*.deb
+      - name: Install Theos
+        run: |
+          git clone --recursive https://github.com/theos/theos.git $HOME/theos
+          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+
+      - name: Build tweak
+        run: |
+          export THEOS=$HOME/theos
+          make package
