@@ -3,7 +3,7 @@
 #import <mach/mach.h>
 #import <objc/runtime.h>
 
-// ========== ТВОИ АДРЕСА ==========
+// ========== АДРЕСА ==========
 #define RVA_Camera_get_main         0x10871faf8
 #define RVA_Camera_WorldToScreen    0x10871ed5c
 #define RVA_Transform_get_position   0x108792ed0
@@ -29,7 +29,6 @@ static NSMutableArray *currentValues = nil;
 + (void)closeMenu;
 + (void)copyLog;
 + (void)showLogWindow;
-+ (void)updateLogWindow;
 + (void)addLog:(NSString*)text;
 + (void)addAddress;
 + (void)resetScan;
@@ -52,6 +51,7 @@ static NSMutableArray *currentValues = nil;
         self.backgroundColor = [UIColor systemBlueColor];
         self.layer.cornerRadius = frame.size.width/2;
         [self setTitle:@"⚡" forState:UIControlStateNormal];
+        [self setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
         
         UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:[ButtonHandler class] action:@selector(handlePan:)];
         [self addGestureRecognizer:pan];
@@ -104,71 +104,97 @@ static NSMutableArray *currentValues = nil;
     menuWindow.windowLevel = UIWindowLevelAlert + 3;
     menuWindow.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.95];
     menuWindow.layer.cornerRadius = 10;
+    menuWindow.layer.borderWidth = 1;
+    menuWindow.layer.borderColor = [UIColor whiteColor].CGColor;
     
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, menuWidth, 30)];
     title.text = @"⚡ ADDRESS TRACKER";
     title.textColor = [UIColor whiteColor];
     title.textAlignment = NSTextAlignmentCenter;
+    title.font = [UIFont boldSystemFontOfSize:18];
     [menuWindow addSubview:title];
+    
+    int yPos = 50;
+    int btnHeight = 40;
+    int btnSpacing = 5;
     
     // Кнопка: ДОБАВИТЬ АДРЕС
     UIButton *addBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    addBtn.frame = CGRectMake(20, 50, menuWidth-40, 40);
+    addBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
     addBtn.backgroundColor = [UIColor systemBlueColor];
+    addBtn.layer.cornerRadius = 8;
     [addBtn setTitle:@"➕ ДОБАВИТЬ АДРЕС" forState:UIControlStateNormal];
     [addBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [addBtn addTarget:self action:@selector(addAddress) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:addBtn];
     
+    yPos += btnHeight + btnSpacing;
+    
     // Кнопка: НАЧАТЬ СКАНИРОВАНИЕ
     UIButton *startBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    startBtn.frame = CGRectMake(20, 100, menuWidth-40, 40);
+    startBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
     startBtn.backgroundColor = [UIColor systemPurpleColor];
+    startBtn.layer.cornerRadius = 8;
     [startBtn setTitle:@"🔍 НАЧАТЬ СКАНИРОВАНИЕ" forState:UIControlStateNormal];
     [startBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [startBtn addTarget:self action:@selector(startScan) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:startBtn];
     
+    yPos += btnHeight + btnSpacing;
+    
     // Кнопка: ИЗМЕНИЛОСЬ
     UIButton *changedBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    changedBtn.frame = CGRectMake(20, 150, menuWidth-40, 40);
+    changedBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
     changedBtn.backgroundColor = [UIColor systemGreenColor];
+    changedBtn.layer.cornerRadius = 8;
     [changedBtn setTitle:@"📈 ИЗМЕНИЛОСЬ" forState:UIControlStateNormal];
     [changedBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [changedBtn addTarget:self action:@selector(refreshChanged) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:changedBtn];
     
+    yPos += btnHeight + btnSpacing;
+    
     // Кнопка: НЕ ИЗМЕНИЛОСЬ
     UIButton *unchangedBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    unchangedBtn.frame = CGRectMake(20, 200, menuWidth-40, 40);
+    unchangedBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
     unchangedBtn.backgroundColor = [UIColor systemOrangeColor];
+    unchangedBtn.layer.cornerRadius = 8;
     [unchangedBtn setTitle:@"📉 НЕ ИЗМЕНИЛОСЬ" forState:UIControlStateNormal];
     [unchangedBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [unchangedBtn addTarget:self action:@selector(refreshUnchanged) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:unchangedBtn];
     
+    yPos += btnHeight + btnSpacing;
+    
     // Кнопка: ПОКАЗАТЬ КАНДИДАТОВ
     UIButton *showBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    showBtn.frame = CGRectMake(20, 250, menuWidth-40, 40);
+    showBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
     showBtn.backgroundColor = [UIColor systemIndigoColor];
+    showBtn.layer.cornerRadius = 8;
     [showBtn setTitle:@"📋 ПОКАЗАТЬ КАНДИДАТОВ" forState:UIControlStateNormal];
     [showBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [showBtn addTarget:self action:@selector(showCandidates) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:showBtn];
     
+    yPos += btnHeight + btnSpacing;
+    
     // Кнопка: СБРОС
     UIButton *resetBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    resetBtn.frame = CGRectMake(20, 300, menuWidth-40, 40);
+    resetBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
     resetBtn.backgroundColor = [UIColor systemRedColor];
+    resetBtn.layer.cornerRadius = 8;
     [resetBtn setTitle:@"🔄 СБРОС" forState:UIControlStateNormal];
     [resetBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [resetBtn addTarget:self action:@selector(resetScan) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:resetBtn];
     
+    yPos += btnHeight + btnSpacing;
+    
     // Кнопка: ЗАКРЫТЬ
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(20, 350, menuWidth-40, 40);
+    closeBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
     closeBtn.backgroundColor = [UIColor systemGrayColor];
+    closeBtn.layer.cornerRadius = 8;
     [closeBtn setTitle:@"✖️ ЗАКРЫТЬ" forState:UIControlStateNormal];
     [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [closeBtn addTarget:self action:@selector(closeMenu) forControlEvents:UIControlEventTouchUpInside];
@@ -184,20 +210,23 @@ static NSMutableArray *currentValues = nil;
     [menuWindow resignKeyWindow];
 }
 
-// ========== ДОБАВИТЬ АДРЕС (ИСПРАВЛЕНО) ==========
+// ========== ДОБАВИТЬ АДРЕС ==========
 + (void)addAddress {
     if (!trackedAddresses) {
         trackedAddresses = [NSMutableArray array];
     }
     
+    // Используем простой UIAlertController
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Добавить адрес"
-                                                                   message:@"Введите адрес в формате 0x281764090"
+                                                                   message:@"Введите адрес в HEX формате\nПример: 0x281764090"
                                                             preferredStyle:UIAlertControllerStyleAlert];
     
     [alert addTextFieldWithConfigurationHandler:^(UITextField *textField) {
-        textField.placeholder = @"0x...";
+        textField.placeholder = @"0x281764090";
         textField.keyboardType = UIKeyboardTypeNumbersAndPunctuation;
         textField.clearButtonMode = UITextFieldViewModeWhileEditing;
+        textField.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        textField.text = @"0x";
     }];
     
     UIAlertAction *addAction = [UIAlertAction actionWithTitle:@"Добавить" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
@@ -208,27 +237,21 @@ static NSMutableArray *currentValues = nil;
             unsigned long long addr = 0;
             NSScanner *scanner = [NSScanner scannerWithString:addrStr];
             
-            // Если строка начинается с 0x, сканируем как hex
-            if ([addrStr hasPrefix:@"0x"] || [addrStr hasPrefix:@"0X"]) {
-                [scanner scanHexLongLong:&addr];
-            } else {
-                // Пробуем как десятичное
-                addr = [addrStr longLongValue];
-            }
-            
-            if (addr > 0) {
+            if ([scanner scanHexLongLong:&addr] && addr > 0) {
                 [trackedAddresses addObject:@(addr)];
                 [self addLog:[NSString stringWithFormat:@"✅ Добавлен адрес: 0x%llx", addr]];
                 [self addLog:[NSString stringWithFormat:@"📊 Всего адресов: %lu", (unsigned long)trackedAddresses.count]];
             } else {
-                [self addLog:@"❌ Неверный формат. Используй 0x281764090"];
+                [self addLog:@"❌ Неверный адрес"];
             }
         }
     }];
     
     UIAlertAction *doneAction = [UIAlertAction actionWithTitle:@"Готово" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         [self addLog:@"✅ Ввод адресов завершен"];
-        [self showCandidates];
+        if (trackedAddresses.count > 0) {
+            [self showCandidates];
+        }
     }];
     
     UIAlertAction *cancelAction = [UIAlertAction actionWithTitle:@"Отмена" style:UIAlertActionStyleCancel handler:nil];
@@ -237,8 +260,12 @@ static NSMutableArray *currentValues = nil;
     [alert addAction:doneAction];
     [alert addAction:cancelAction];
     
+    // Показываем на главном потоке
     dispatch_async(dispatch_get_main_queue(), ^{
-        [[self topViewController] presentViewController:alert animated:YES completion:nil];
+        UIViewController *vc = [self topViewController];
+        if (vc) {
+            [vc presentViewController:alert animated:YES completion:nil];
+        }
     });
 }
 
@@ -246,7 +273,6 @@ static NSMutableArray *currentValues = nil;
 + (void)startScan {
     if (!trackedAddresses || trackedAddresses.count == 0) {
         [self addLog:@"❌ Сначала добавь адреса"];
-        [self updateLogWindow];
         return;
     }
     
@@ -257,7 +283,6 @@ static NSMutableArray *currentValues = nil;
     
     for (NSNumber *addrNum in trackedAddresses) {
         vm_address_t addr = [addrNum unsignedLongLongValue];
-        
         float value = 0;
         vm_size_t data_read = 0;
         kern_return_t kr = vm_read_overwrite(task, addr, 4, (vm_address_t)&value, &data_read);
@@ -267,20 +292,17 @@ static NSMutableArray *currentValues = nil;
             [self addLog:[NSString stringWithFormat:@"📌 0x%llx = %.3f", (unsigned long long)addr, value]];
         } else {
             [currentValues addObject:@(0.0f)];
-            [self addLog:[NSString stringWithFormat:@"❌ 0x%llx = ошибка чтения", (unsigned long long)addr]];
+            [self addLog:[NSString stringWithFormat:@"❌ 0x%llx = ошибка", (unsigned long long)addr]];
         }
     }
     
-    [self addLog:@"\n✅ Начальные значения сохранены"];
-    [self addLog:@"📊 Двигайся и нажимай ИЗМЕНИЛОСЬ/НЕ ИЗМЕНИЛОСЬ"];
-    [self updateLogWindow];
+    [self addLog:@"✅ Начальные значения сохранены"];
 }
 
 // ========== ИЗМЕНИЛОСЬ ==========
 + (void)refreshChanged {
     if (!trackedAddresses || trackedAddresses.count == 0 || !currentValues) {
         [self addLog:@"❌ Сначала начни сканирование"];
-        [self updateLogWindow];
         return;
     }
     
@@ -288,19 +310,17 @@ static NSMutableArray *currentValues = nil;
     NSMutableArray *newValues = [NSMutableArray array];
     task_t task = mach_task_self();
     
-    [self addLog:@"\n📈 ПОИСК ИЗМЕНИВШИХСЯ:"];
+    [self addLog:@"\n📈 ИЗМЕНИВШИЕСЯ:"];
     
     for (int i = 0; i < trackedAddresses.count; i++) {
         NSNumber *addrNum = trackedAddresses[i];
         vm_address_t addr = [addrNum unsignedLongLongValue];
-        
         float value = 0;
         vm_size_t data_read = 0;
         kern_return_t kr = vm_read_overwrite(task, addr, 4, (vm_address_t)&value, &data_read);
         
         if (kr == KERN_SUCCESS) {
             float oldValue = [currentValues[i] floatValue];
-            
             if (fabs(value - oldValue) > 0.001f) {
                 [newAddresses addObject:addrNum];
                 [newValues addObject:@(value)];
@@ -312,16 +332,13 @@ static NSMutableArray *currentValues = nil;
     
     trackedAddresses = newAddresses;
     currentValues = newValues;
-    
-    [self addLog:[NSString stringWithFormat:@"\n📊 Осталось адресов: %lu", (unsigned long)trackedAddresses.count]];
-    [self updateLogWindow];
+    [self addLog:[NSString stringWithFormat:@"📊 Осталось: %lu", (unsigned long)trackedAddresses.count]];
 }
 
 // ========== НЕ ИЗМЕНИЛОСЬ ==========
 + (void)refreshUnchanged {
     if (!trackedAddresses || trackedAddresses.count == 0 || !currentValues) {
         [self addLog:@"❌ Сначала начни сканирование"];
-        [self updateLogWindow];
         return;
     }
     
@@ -329,19 +346,17 @@ static NSMutableArray *currentValues = nil;
     NSMutableArray *newValues = [NSMutableArray array];
     task_t task = mach_task_self();
     
-    [self addLog:@"\n📉 ПОИСК НЕИЗМЕНИВШИХСЯ:"];
+    [self addLog:@"\n📉 НЕИЗМЕНИВШИЕСЯ:"];
     
     for (int i = 0; i < trackedAddresses.count; i++) {
         NSNumber *addrNum = trackedAddresses[i];
         vm_address_t addr = [addrNum unsignedLongLongValue];
-        
         float value = 0;
         vm_size_t data_read = 0;
         kern_return_t kr = vm_read_overwrite(task, addr, 4, (vm_address_t)&value, &data_read);
         
         if (kr == KERN_SUCCESS) {
             float oldValue = [currentValues[i] floatValue];
-            
             if (fabs(value - oldValue) <= 0.001f) {
                 [newAddresses addObject:addrNum];
                 [newValues addObject:@(value)];
@@ -353,17 +368,15 @@ static NSMutableArray *currentValues = nil;
     
     trackedAddresses = newAddresses;
     currentValues = newValues;
-    
-    [self addLog:[NSString stringWithFormat:@"\n📊 Осталось адресов: %lu", (unsigned long)trackedAddresses.count]];
-    [self updateLogWindow];
+    [self addLog:[NSString stringWithFormat:@"📊 Осталось: %lu", (unsigned long)trackedAddresses.count]];
 }
 
 // ========== ПОКАЗАТЬ КАНДИДАТОВ ==========
 + (void)showCandidates {
-    [self addLog:@"\n📋 ТЕКУЩИЕ КАНДИДАТЫ:"];
+    [self addLog:@"\n📋 КАНДИДАТЫ:"];
     
     if (!trackedAddresses || trackedAddresses.count == 0) {
-        [self addLog:@"❌ Нет адресов для отслеживания"];
+        [self addLog:@"❌ Нет адресов"];
     } else {
         for (int i = 0; i < trackedAddresses.count; i++) {
             NSNumber *addrNum = trackedAddresses[i];
@@ -372,7 +385,6 @@ static NSMutableArray *currentValues = nil;
                           i+1, (unsigned long long)[addrNum unsignedLongLongValue], value]];
         }
     }
-    
     [self showLogWindow];
 }
 
@@ -380,8 +392,7 @@ static NSMutableArray *currentValues = nil;
 + (void)resetScan {
     [trackedAddresses removeAllObjects];
     [currentValues removeAllObjects];
-    [self addLog:@"🔄 СКАНИРОВАНИЕ СБРОШЕНО"];
-    [self updateLogWindow];
+    [self addLog:@"🔄 СБРОШЕНО"];
 }
 
 // ========== ЛОГ ==========
@@ -389,22 +400,6 @@ static NSMutableArray *currentValues = nil;
     if (!logText) logText = [[NSMutableString alloc] init];
     [logText appendFormat:@"%@\n", text];
     NSLog(@"%@", text);
-}
-
-+ (void)updateLogWindow {
-    if (logWindow) {
-        for (UIView *view in logWindow.subviews) {
-            if ([view isKindOfClass:[UITextView class]]) {
-                UITextView *tv = (UITextView *)view;
-                tv.text = logText;
-                if (tv.text.length > 0) {
-                    NSRange bottom = NSMakeRange(tv.text.length - 1, 1);
-                    [tv scrollRangeToVisible:bottom];
-                }
-                break;
-            }
-        }
-    }
 }
 
 + (void)showLogWindow {
@@ -451,6 +446,21 @@ static NSMutableArray *currentValues = nil;
     [logWindow addSubview:closeBtn];
     
     [logWindow makeKeyAndVisible];
+}
+
++ (void)updateLogWindow {
+    if (!logWindow) return;
+    for (UIView *view in logWindow.subviews) {
+        if ([view isKindOfClass:[UITextView class]]) {
+            UITextView *tv = (UITextView *)view;
+            tv.text = logText;
+            if (tv.text.length > 0) {
+                NSRange bottom = NSMakeRange(tv.text.length - 1, 1);
+                [tv scrollRangeToVisible:bottom];
+            }
+            break;
+        }
+    }
 }
 
 + (void)closeLogWindow {
