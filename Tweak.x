@@ -10,13 +10,42 @@
 @end
 
 // Основные классы игры
-@class FirstPersonController;
-@class INetworkPlayer;
-@class QuarkRoomPlayer;
-@class Camera;
-@class Players;
-@class Transform;
-@class Vector3;
+@interface FirstPersonController : NSObject
+- (id)RootPoint;
+@end
+
+@interface INetworkPlayer : NSObject
+- (BOOL)IsMine;
+- (BOOL)IsDead;
+- (BOOL)IsAllyOfLocalPlayer;
+- (id)Transform;
+- (float)GetCurrentHealth;
+- (id)QuarkPlayer;
+@end
+
+@interface QuarkRoomPlayer : NSObject
+- (BOOL)IsBot;
+@end
+
+@interface Camera : NSObject
++ (instancetype)main;
+- (id)WorldToScreenPoint:(id)point;
+@end
+
+@interface Transform : NSObject
+- (id)position;
+@end
+
+@interface Vector3 : NSObject  // для хранения результатов
+- (float)x;
+- (float)y;
+- (float)z;
+@end
+
+@interface Players : NSObject
+- (id)All; // список всех игроков
+- (BOOL)TryGetCurrentController:(id *)controller;
+@end
 
 // ==================== ПРОСТОЙ ESP ВЬЮ ====================
 @interface ESPView : UIView {
@@ -42,8 +71,9 @@
 }
 
 - (void)dealloc {
-    [_enemies release];
-    [super dealloc];
+    // В ARC не вызываем [release] и [super dealloc]
+    _enemies = nil;
+    _espFont = nil;
 }
 
 - (void)updateEnemies:(NSArray *)enemies {
@@ -178,32 +208,65 @@
                                                     repeats:YES];
 }
 
+- (float)distanceBetween:(id)pos1 and:(id)pos2 {
+    float x1 = [pos1 performSelector:@selector(x)];
+    float y1 = [pos1 performSelector:@selector(y)];
+    float z1 = [pos1 performSelector:@selector(z)];
+    
+    float x2 = [pos2 performSelector:@selector(x)];
+    float y2 = [pos2 performSelector:@selector(y)];
+    float z2 = [pos2 performSelector:@selector(z)];
+    
+    float dx = x1 - x2;
+    float dy = y1 - y2;
+    float dz = z1 - z2;
+    
+    return sqrt(dx*dx + dy*dy + dz*dz);
+}
+
 - (void)updateESP {
     if (!_espEnabled || !_espView) return;
     
     @autoreleasepool {
         // Получаем контекст Gameplay
-        Context *context = [Context create:@"Gameplay"];
+        Class contextClass = objc_getClass("Context");
+        if (!contextClass) return;
+        
+        Context *context = [contextClass performSelector:@selector(create:) withObject:@"Gameplay"];
         if (!context) return;
         
         // Получаем Players
-        Players *players = [context resolve:objc_getClass("Players")];
+        Class playersClass = objc_getClass("Players");
+        Players *players = [context performSelector:@selector(resolve:) withObject:playersClass];
         if (!players) return;
         
         // Получаем локального игрока
         FirstPersonController *localPlayer = nil;
-        BOOL hasLocal = [players performSelector:@selector(TryGetCurrentController:) withObject:&localPlayer];
+        NSInvocation *inv = [NSInvocation invocationWithMethodSignature:[players methodSignatureForSelector:@selector(TryGetCurrentController:)]];
+        [inv setTarget:players];
+        [inv setSelector:@selector(TryGetCurrentController:)];
+        [inv setArgument:&localPlayer atIndex:2];
+        [inv invoke];
+        
+        BOOL hasLocal = NO;
+        [inv getReturnValue:&hasLocal];
+        
         if (!hasLocal || !localPlayer) return;
         
         // Получаем камеру
-        Camera *mainCamera = [Camera main];
+        Class cameraClass = objc_getClass("Camera");
+        Camera *mainCamera = [cameraClass performSelector:@selector(main)];
         if (!mainCamera) return;
         
         // Получаем список всех игроков
-        NSArray *allPlayers = [players valueForKey:@"All"]; // public readonly List<INetworkPlayer> All;
+        NSArray *allPlayers = [players performSelector:@selector(All)];
         if (!allPlayers) return;
         
         NSMutableArray *enemiesData = [NSMutableArray array];
+        
+        // Получаем позицию локального игрока
+        id localRootPoint = [localPlayer performSelector:@selector(RootPoint)];
+        id localPos = [localRootPoint performSelector:@selector(position)];
         
         for (id player in allPlayers) {
             // Проверяем через IsMine
@@ -219,32 +282,28 @@
             if (isAlly) continue; // пропускаем союзников
             
             // Получаем позицию
-            Transform *transform = [player performSelector:@selector(Transform)];
+            id transform = [player performSelector:@selector(Transform)];
             if (!transform) continue;
             
-            Vector3 worldPos = [transform performSelector:@selector(position)];
+            id worldPos = [transform performSelector:@selector(position)];
+            if (!worldPos) continue;
             
             // Конвертируем в экранные координаты
-            Vector3 screenPos = [mainCamera performSelector:@selector(WorldToScreenPoint:) withObject:worldPos];
+            id screenPos = [mainCamera performSelector:@selector(WorldToScreenPoint:) withObject:worldPos];
+            if (!screenPos) continue;
             
             // Проверяем, что игрок перед камерой
-            float z = [screenPos performSelector:@selector(z)];
+            float z = [[screenPos performSelector:@selector(z)] floatValue];
             if (z <= 0) continue;
             
-            float x = [screenPos performSelector:@selector(x)];
-            float y = [screenPos performSelector:@selector(y)];
+            float x = [[screenPos performSelector:@selector(x)] floatValue];
+            float y = [[screenPos performSelector:@selector(y)] floatValue];
             
             // Конвертируем в CGPoint (UIKit Y перевёрнута)
             CGPoint point = CGPointMake(x, [UIScreen mainScreen].bounds.size.height - y);
             
             // Вычисляем дистанцию
-            Transform *localTransform = [localPlayer performSelector:@selector(RootPoint)];
-            Vector3 localPos = [localTransform performSelector:@selector(position)];
-            
-            float dx = [localPos performSelector:@selector(x)] - [worldPos performSelector:@selector(x)];
-            float dy = [localPos performSelector:@selector(y)] - [worldPos performSelector:@selector(y)];
-            float dz = [localPos performSelector:@selector(z)] - [worldPos performSelector:@selector(z)];
-            float distance = sqrt(dx*dx + dy*dy + dz*dz);
+            float distance = [self distanceBetween:localPos and:worldPos];
             
             // Получаем здоровье
             float health = [[player performSelector:@selector(GetCurrentHealth)] floatValue];
