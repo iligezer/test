@@ -6,65 +6,78 @@
 // ============================================
 // ПРОТОТИПЫ
 // ============================================
-void writeLog(NSString *format, ...);
+void showResultWindow(NSString *text);
 void scanClasses(void);
 
 // ============================================
-// НАСТРОЙКИ
+// ФУНКЦИЯ ПОКАЗА ОКНА С РЕЗУЛЬТАТАМИ
 // ============================================
-#define LOG_FILE_PATH @"/var/mobile/Documents/modern/aimbot_log.txt"
-
-// ============================================
-// ЛОГИРОВАНИЕ В ФАЙЛ
-// ============================================
-void writeLog(NSString *format, ...) {
-    va_list args;
-    va_start(args, format);
-    NSString *message = [[NSString alloc] initWithFormat:format arguments:args];
-    va_end(args);
-    
-    NSLog(@"[Aimbot] %@", message);
-    
-    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
-    formatter.dateFormat = @"yyyy-MM-dd HH:mm:ss";
-    NSString *timestamp = [formatter stringFromDate:[NSDate date]];
-    NSString *logEntry = [NSString stringWithFormat:@"[%@] %@\n", timestamp, message];
-    
-    NSError *error = nil;
-    NSFileManager *fm = [NSFileManager defaultManager];
-    NSString *dirPath = [LOG_FILE_PATH stringByDeletingLastPathComponent];
-    
-    // Создаём папку, если её нет
-    if (![fm fileExistsAtPath:dirPath]) {
-        [fm createDirectoryAtPath:dirPath withIntermediateDirectories:YES attributes:nil error:&error];
-        if (error) {
-            NSLog(@"[Aimbot] Ошибка создания папки: %@", error);
+void showResultWindow(NSString *text) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        // Получаем активное окно
+        UIWindow *keyWindow = nil;
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if ([scene isKindOfClass:[UIWindowScene class]]) {
+                UIWindowScene *ws = (UIWindowScene *)scene;
+                for (UIWindow *w in ws.windows) {
+                    if (w.isKeyWindow) {
+                        keyWindow = w;
+                        break;
+                    }
+                }
+            }
+            if (keyWindow) break;
         }
-    }
-    
-    // Пытаемся записать в файл
-    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:LOG_FILE_PATH];
-    if (fh) {
-        [fh seekToEndOfFile];
-        [fh writeData:[logEntry dataUsingEncoding:NSUTF8StringEncoding]];
-        [fh closeFile];
-        NSLog(@"[Aimbot] Запись добавлена в существующий файл");
-    } else {
-        // Если файла нет — создаём новый
-        [logEntry writeToFile:LOG_FILE_PATH atomically:YES encoding:NSUTF8StringEncoding error:&error];
-        if (error) {
-            NSLog(@"[Aimbot] Ошибка записи в файл: %@", error);
-        } else {
-            NSLog(@"[Aimbot] Создан новый файл и записано");
-        }
-    }
+        
+        if (!keyWindow) return;
+        
+        // Создаём окно поверх игры
+        UIWindow *resultWindow = [[UIWindow alloc] initWithFrame:CGRectMake(20, 100, keyWindow.frame.size.width - 40, 400)];
+        resultWindow.windowLevel = UIWindowLevelAlert + 2;
+        resultWindow.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.95];
+        resultWindow.layer.cornerRadius = 15;
+        resultWindow.layer.borderWidth = 2;
+        resultWindow.layer.borderColor = [UIColor systemBlueColor].CGColor;
+        resultWindow.hidden = NO;
+        
+        // Заголовок
+        UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, resultWindow.frame.size.width, 40)];
+        title.text = @"📊 Результаты сканирования";
+        title.textColor = [UIColor whiteColor];
+        title.textAlignment = NSTextAlignmentCenter;
+        title.font = [UIFont boldSystemFontOfSize:18];
+        [resultWindow addSubview:title];
+        
+        // Текстовое поле с результатами
+        UITextView *textView = [[UITextView alloc] initWithFrame:CGRectMake(10, 60, resultWindow.frame.size.width - 20, 260)];
+        textView.backgroundColor = [UIColor blackColor];
+        textView.textColor = [UIColor greenColor];
+        textView.font = [UIFont fontWithName:@"Courier" size:12];
+        textView.text = text;
+        textView.editable = NO;
+        textView.selectable = YES; // можно копировать
+        textView.layer.cornerRadius = 8;
+        [resultWindow addSubview:textView];
+        
+        // Кнопка закрытия
+        UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        closeBtn.frame = CGRectMake(resultWindow.frame.size.width/2 - 50, 340, 100, 40);
+        [closeBtn setTitle:@"Закрыть" forState:UIControlStateNormal];
+        closeBtn.backgroundColor = [UIColor systemBlueColor];
+        [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        closeBtn.layer.cornerRadius = 8;
+        [closeBtn addTarget:resultWindow action:@selector(setHidden:) forControlEvents:UIControlEventTouchUpInside];
+        [resultWindow addSubview:closeBtn];
+        
+        [resultWindow makeKeyAndVisible];
+    });
 }
 
 // ============================================
 // СКАНИРОВАНИЕ КЛАССОВ
 // ============================================
 void scanClasses() {
-    writeLog(@"=== СКАНИРОВАНИЕ КЛАССОВ ===");
+    NSMutableString *result = [NSMutableString stringWithString:@"=== РЕЗУЛЬТАТЫ СКАНИРОВАНИЯ ===\n\n"];
     
     NSArray *classNames = @[
         @"GameManager", @"PlayerManager", @"EnemyManager",
@@ -76,14 +89,17 @@ void scanClasses() {
     for (NSString *name in classNames) {
         Class cls = objc_getClass([name UTF8String]);
         if (cls) {
-            writeLog([NSString stringWithFormat:@"✅ %@", name]);
+            [result appendFormat:@"✅ %@\n", name];
             found++;
         } else {
-            writeLog([NSString stringWithFormat:@"❌ %@", name]);
+            [result appendFormat:@"❌ %@\n", name];
         }
     }
     
-    writeLog([NSString stringWithFormat:@"📊 Найдено классов: %d из %lu", found, (unsigned long)classNames.count]);
+    [result appendFormat:@"\n📊 Найдено классов: %d из %lu", found, (unsigned long)classNames.count];
+    
+    // Показываем окно с результатами
+    showResultWindow(result);
 }
 
 // ============================================
@@ -101,8 +117,6 @@ void scanClasses() {
     if (self) {
         self.backgroundColor = [UIColor systemBlueColor];
         self.layer.cornerRadius = 25;
-        self.layer.borderWidth = 2;
-        self.layer.borderColor = [UIColor whiteColor].CGColor;
         self.userInteractionEnabled = YES;
         
         UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleTap)];
@@ -112,9 +126,7 @@ void scanClasses() {
 }
 
 - (void)handleTap {
-    if (self.actionBlock) {
-        self.actionBlock();
-    }
+    if (self.actionBlock) self.actionBlock();
 }
 
 - (void)setAction:(void (^)(void))block {
@@ -172,8 +184,6 @@ void scanClasses() {
 }
 
 - (void)setupUI {
-    NSLog(@"[Aimbot] Создание интерфейса...");
-    
     self.window = [[PassthroughWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
     self.window.windowLevel = UIWindowLevelAlert + 1;
     self.window.backgroundColor = [UIColor clearColor];
@@ -189,51 +199,41 @@ void scanClasses() {
     }];
     
     [self buildMenu];
-    
-    // ТЕСТ: пишем в лог сразу при загрузке
-    writeLog(@"✅ Интерфейс создан. Папка и файл должны появиться.");
 }
 
 - (void)buildMenu {
-    self.menuView = [[UIView alloc] initWithFrame:CGRectMake(80, 160, 240, 200)];
-    self.menuView.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.9];
-    self.menuView.layer.cornerRadius = 10;
+    self.menuView = [[UIView alloc] initWithFrame:CGRectMake(80, 160, 260, 300)];
+    self.menuView.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.95];
+    self.menuView.layer.cornerRadius = 15;
     self.menuView.layer.borderWidth = 2;
-    self.menuView.layer.borderColor = [UIColor whiteColor].CGColor;
+    self.menuView.layer.borderColor = [UIColor systemBlueColor].CGColor;
     self.menuView.hidden = YES;
     self.window.menuView = self.menuView;
     
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, 240, 30)];
-    title.text = @"Aimbot Menu";
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, 260, 40)];
+    title.text = @"Aimbot Control";
     title.textColor = [UIColor whiteColor];
     title.textAlignment = NSTextAlignmentCenter;
+    title.font = [UIFont boldSystemFontOfSize:18];
     [self.menuView addSubview:title];
     
+    // Кнопка сканирования
     UIButton *scanBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    scanBtn.frame = CGRectMake(20, 50, 200, 40);
+    scanBtn.frame = CGRectMake(30, 70, 200, 50);
     [scanBtn setTitle:@"🔍 Scan Classes" forState:UIControlStateNormal];
-    scanBtn.backgroundColor = [UIColor lightGrayColor];
-    [scanBtn setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
-    scanBtn.layer.cornerRadius = 5;
+    scanBtn.backgroundColor = [UIColor systemGrayColor];
+    [scanBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    scanBtn.layer.cornerRadius = 10;
     [scanBtn addTarget:self action:@selector(scanAction) forControlEvents:UIControlEventTouchUpInside];
     [self.menuView addSubview:scanBtn];
     
-    // ТЕСТОВАЯ КНОПКА: просто пишет "тест" в файл
-    UIButton *testBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    testBtn.frame = CGRectMake(20, 150, 200, 40);
-    [testBtn setTitle:@"🧪 Тест сохранения" forState:UIControlStateNormal];
-    testBtn.backgroundColor = [UIColor lightGrayColor];
-    [testBtn setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
-    testBtn.layer.cornerRadius = 5;
-    [testBtn addTarget:self action:@selector(testSaveAction) forControlEvents:UIControlEventTouchUpInside];
-    [self.menuView addSubview:testBtn];
-    
+    // Кнопка закрытия меню
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(20, 200, 200, 40);
-    [closeBtn setTitle:@"❌ Close" forState:UIControlStateNormal];
-    closeBtn.backgroundColor = [UIColor lightGrayColor];
-    [closeBtn setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
-    closeBtn.layer.cornerRadius = 5;
+    closeBtn.frame = CGRectMake(30, 140, 200, 50);
+    [closeBtn setTitle:@"❌ Close Menu" forState:UIControlStateNormal];
+    closeBtn.backgroundColor = [UIColor systemRedColor];
+    [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    closeBtn.layer.cornerRadius = 10;
     [closeBtn addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
     [self.menuView addSubview:closeBtn];
     
@@ -243,20 +243,10 @@ void scanClasses() {
 - (void)toggleMenu {
     self.menuVisible = !self.menuVisible;
     self.menuView.hidden = !self.menuVisible;
-    writeLog(self.menuVisible ? @"Меню открыто" : @"Меню закрыто");
 }
 
 - (void)scanAction {
-    writeLog(@"\n🔍 Запуск сканирования по кнопке");
     scanClasses();
-    writeLog(@"✅ Сканирование завершено");
-}
-
-// ТЕСТОВАЯ ФУНКЦИЯ: просто пишет в файл, чтобы проверить сохранение
-- (void)testSaveAction {
-    NSLog(@"[Aimbot] Нажата тестовая кнопка");
-    writeLog(@"🧪 ТЕСТОВАЯ ЗАПИСЬ — проверка сохранения");
-    // Ничего больше не делаем, просто смотрим файл
 }
 
 @end
@@ -268,8 +258,6 @@ static AimbotUI *g_ui = nil;
 
 __attribute__((constructor))
 static void init() {
-    NSLog(@"[Aimbot] Конструктор вызван");
-    
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         g_ui = [[AimbotUI alloc] init];
     });
