@@ -17,6 +17,11 @@
 - (BOOL)IsAllyOfLocalPlayer;
 - (id)Transform;
 - (float)GetCurrentHealth;
+- (id)QuarkPlayer;
+@end
+
+@interface QuarkRoomPlayer : NSObject
+- (BOOL)IsBot;
 @end
 
 @interface Camera : NSObject
@@ -33,64 +38,93 @@
 - (BOOL)TryGetCurrentController:(id *)controller;
 @end
 
-// ========== ПЛАВАЮЩАЯ КНОПКА (РЕАЛЬНО РАБОЧАЯ) ==========
+@interface GameManager : NSObject
++ (instancetype)sharedInstance;
+- (id)getPlayers;
+- (id)players;
+@end
+
+@interface RoomController : NSObject
++ (instancetype)instance;
+- (id)getPlayers;
+- (id)players;
+@end
+
+// ========== ПЛАВАЮЩАЯ КНОПКА ==========
 @interface MenuButton : UIButton
 @end
 
+static int currentMethod = 0; // 0-3 разные методы
+static BOOL espEnabled = YES;
+
 @implementation MenuButton
+
 - (instancetype)init {
     self = [super initWithFrame:CGRectMake(20, 100, 50, 50)];
     if (self) {
         self.backgroundColor = [UIColor systemBlueColor];
         self.layer.cornerRadius = 25;
-        self.layer.shadowColor = [UIColor blackColor].CGColor;
-        self.layer.shadowOffset = CGSizeMake(0, 2);
-        self.layer.shadowOpacity = 0.5;
-        self.layer.shadowRadius = 4;
         [self addTarget:self action:@selector(showMenu) forControlEvents:UIControlEventTouchUpInside];
         
         UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(drag:)];
-        [pan setMaximumNumberOfTouches:1];
-        [pan setMinimumNumberOfTouches:1];
         [self addGestureRecognizer:pan];
     }
     return self;
 }
 
 - (void)drag:(UIPanGestureRecognizer *)pan {
-    if (pan.state == UIGestureRecognizerStateBegan || pan.state == UIGestureRecognizerStateChanged) {
+    if (pan.state == UIGestureRecognizerStateChanged) {
         CGPoint translation = [pan translationInView:self.superview];
-        CGPoint center = CGPointMake(self.center.x + translation.x, self.center.y + translation.y);
-        
-        CGFloat halfWidth = self.bounds.size.width / 2;
-        CGFloat halfHeight = self.bounds.size.height / 2;
-        center.x = MAX(halfWidth, MIN(center.x, self.superview.bounds.size.width - halfWidth));
-        center.y = MAX(halfHeight, MIN(center.y, self.superview.bounds.size.height - halfHeight));
-        
-        self.center = center;
+        self.center = CGPointMake(self.center.x + translation.x, self.center.y + translation.y);
         [pan setTranslation:CGPointZero inView:self.superview];
     }
 }
 
 - (void)showMenu {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Aimbot Menu"
-                                                                   message:nil
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"ESP Menu"
+                                                                   message:[NSString stringWithFormat:@"Текущий метод: %d", currentMethod]
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
     
-    // Состояние ESP
-    BOOL espOn = [[NSUserDefaults standardUserDefaults] boolForKey:@"esp_enabled"];
-    
-    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ ESP", espOn ? @"✅" : @"❌"]
+    // Вкл/Выкл ESP
+    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ ESP", espEnabled ? @"✅" : @"❌"]
                                                style:UIAlertActionStyleDefault
                                              handler:^(UIAlertAction *action) {
-        BOOL newState = !espOn;
-        [[NSUserDefaults standardUserDefaults] setBool:newState forKey:@"esp_enabled"];
-        [[NSUserDefaults standardUserDefaults] synchronize];
+        espEnabled = !espEnabled;
     }]];
     
-    [alert addAction:[UIAlertAction actionWithTitle:@"Закрыть"
-                                               style:UIAlertActionStyleCancel
-                                             handler:nil]];
+    // Метод 0: Context @"Gameplay"
+    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ Метод 0: Context Gameplay", currentMethod == 0 ? @"▶️" : @""]
+                                               style:UIAlertActionStyleDefault
+                                             handler:^(UIAlertAction *action) {
+        currentMethod = 0;
+        [self showToast:@"Выбран метод 0"];
+    }]];
+    
+    // Метод 1: Context @"Battle"
+    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ Метод 1: Context Battle", currentMethod == 1 ? @"▶️" : @""]
+                                               style:UIAlertActionStyleDefault
+                                             handler:^(UIAlertAction *action) {
+        currentMethod = 1;
+        [self showToast:@"Выбран метод 1"];
+    }]];
+    
+    // Метод 2: GameManager sharedInstance
+    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ Метод 2: GameManager", currentMethod == 2 ? @"▶️" : @""]
+                                               style:UIAlertActionStyleDefault
+                                             handler:^(UIAlertAction *action) {
+        currentMethod = 2;
+        [self showToast:@"Выбран метод 2"];
+    }]];
+    
+    // Метод 3: RoomController instance
+    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ Метод 3: RoomController", currentMethod == 3 ? @"▶️" : @""]
+                                               style:UIAlertActionStyleDefault
+                                             handler:^(UIAlertAction *action) {
+        currentMethod = 3;
+        [self showToast:@"Выбран метод 3"];
+    }]];
+    
+    [alert addAction:[UIAlertAction actionWithTitle:@"Закрыть" style:UIAlertActionStyleCancel handler:nil]];
     
     UIViewController *rootVC = [UIApplication sharedApplication].keyWindow.rootViewController;
     while (rootVC.presentedViewController) rootVC = rootVC.presentedViewController;
@@ -101,6 +135,20 @@
     }
     
     [rootVC presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)showToast:(NSString *)msg {
+    UILabel *toast = [[UILabel alloc] initWithFrame:CGRectMake(50, 200, 200, 40)];
+    toast.text = msg;
+    toast.backgroundColor = [UIColor blackColor];
+    toast.textColor = [UIColor whiteColor];
+    toast.textAlignment = NSTextAlignmentCenter;
+    toast.layer.cornerRadius = 10;
+    toast.clipsToBounds = YES;
+    [[UIApplication sharedApplication].keyWindow addSubview:toast];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1.5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        [toast removeFromSuperview];
+    });
 }
 @end
 
@@ -115,67 +163,96 @@
     if (self) {
         self.backgroundColor = [UIColor clearColor];
         self.userInteractionEnabled = NO;
-        
-        CADisplayLink *link = [CADisplayLink displayLinkWithTarget:self selector:@selector(update)];
+        CADisplayLink *link = [CADisplayLink displayLinkWithTarget:self selector:@selector(redraw)];
         [link addToRunLoop:[NSRunLoop currentRunLoop] forMode:NSRunLoopCommonModes];
     }
     return self;
 }
 
-- (void)update {
-    BOOL espOn = [[NSUserDefaults standardUserDefaults] boolForKey:@"esp_enabled"];
-    if (espOn) {
-        [self setNeedsDisplay];
-    }
+- (void)redraw {
+    if (espEnabled) [self setNeedsDisplay];
 }
 
 - (float)distanceBetween:(id)pos1 and:(id)pos2 {
     float x1 = [[pos1 valueForKey:@"x"] floatValue];
     float y1 = [[pos1 valueForKey:@"y"] floatValue];
     float z1 = [[pos1 valueForKey:@"z"] floatValue];
-    
     float x2 = [[pos2 valueForKey:@"x"] floatValue];
     float y2 = [[pos2 valueForKey:@"y"] floatValue];
     float z2 = [[pos2 valueForKey:@"z"] floatValue];
-    
-    float dx = x1 - x2;
-    float dy = y1 - y2;
-    float dz = z1 - z2;
-    
-    return sqrt(dx*dx + dy*dy + dz*dz);
+    return sqrt(pow(x1-x2,2) + pow(y1-y2,2) + pow(z1-z2,2));
+}
+
+- (id)getPlayersWithMethod:(int)method {
+    switch(method) {
+        case 0: {
+            // Context Gameplay
+            Class contextClass = objc_getClass("Context");
+            if (!contextClass) return nil;
+            Context *context = [contextClass performSelector:@selector(create:) withObject:@"Gameplay"];
+            if (!context) return nil;
+            Class playersClass = objc_getClass("Players");
+            return [context performSelector:@selector(resolve:) withObject:playersClass];
+        }
+        case 1: {
+            // Context Battle
+            Class contextClass = objc_getClass("Context");
+            if (!contextClass) return nil;
+            Context *context = [contextClass performSelector:@selector(create:) withObject:@"Battle"];
+            if (!context) return nil;
+            Class playersClass = objc_getClass("Players");
+            return [context performSelector:@selector(resolve:) withObject:playersClass];
+        }
+        case 2: {
+            // GameManager
+            Class gmClass = objc_getClass("GameManager");
+            if (!gmClass) return nil;
+            id gm = [gmClass performSelector:@selector(sharedInstance)];
+            if (!gm) return nil;
+            id players = [gm performSelector:@selector(getPlayers)];
+            if (!players) players = [gm performSelector:@selector(players)];
+            return players;
+        }
+        case 3: {
+            // RoomController
+            Class rcClass = objc_getClass("RoomController");
+            if (!rcClass) return nil;
+            id rc = [rcClass performSelector:@selector(instance)];
+            if (!rc) rc = [rcClass performSelector:@selector(sharedInstance)];
+            if (!rc) return nil;
+            id players = [rc performSelector:@selector(getPlayers)];
+            if (!players) players = [rc performSelector:@selector(players)];
+            return players;
+        }
+        default:
+            return nil;
+    }
+}
+
+- (FirstPersonController *)getLocalPlayer:(id)players {
+    FirstPersonController *local = nil;
+    NSMethodSignature *sig = [players methodSignatureForSelector:@selector(TryGetCurrentController:)];
+    if (!sig) return nil;
+    NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
+    [inv setTarget:players];
+    [inv setSelector:@selector(TryGetCurrentController:)];
+    [inv setArgument:&local atIndex:2];
+    [inv invoke];
+    BOOL hasLocal = NO;
+    [inv getReturnValue:&hasLocal];
+    return hasLocal ? local : nil;
 }
 
 - (void)drawRect:(CGRect)rect {
     [super drawRect:rect];
-    
-    if (![[NSUserDefaults standardUserDefaults] boolForKey:@"esp_enabled"]) return;
+    if (!espEnabled) return;
     
     @autoreleasepool {
-        Class contextClass = objc_getClass("Context");
-        if (!contextClass) return;
-        
-        Context *context = [contextClass performSelector:@selector(create:) withObject:@"Gameplay"];
-        if (!context) return;
-        
-        Class playersClass = objc_getClass("Players");
-        if (!playersClass) return;
-        
-        Players *players = [context performSelector:@selector(resolve:) withObject:playersClass];
+        id players = [self getPlayersWithMethod:currentMethod];
         if (!players) return;
         
-        FirstPersonController *localPlayer = nil;
-        NSMethodSignature *sig = [players methodSignatureForSelector:@selector(TryGetCurrentController:)];
-        if (!sig) return;
-        
-        NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
-        [inv setTarget:players];
-        [inv setSelector:@selector(TryGetCurrentController:)];
-        [inv setArgument:&localPlayer atIndex:2];
-        [inv invoke];
-        
-        BOOL hasLocal = NO;
-        [inv getReturnValue:&hasLocal];
-        if (!hasLocal || !localPlayer) return;
+        FirstPersonController *localPlayer = [self getLocalPlayer:players];
+        if (!localPlayer) return;
         
         Camera *mainCamera = [objc_getClass("Camera") performSelector:@selector(main)];
         if (!mainCamera) return;
@@ -183,13 +260,13 @@
         NSArray *allPlayers = [players valueForKey:@"All"];
         if (!allPlayers) return;
         
-        id localRootPoint = [localPlayer valueForKey:@"RootPoint"];
-        if (!localRootPoint) return;
-        
-        id localPos = [localRootPoint valueForKey:@"position"];
+        id localRoot = [localPlayer valueForKey:@"RootPoint"];
+        if (!localRoot) return;
+        id localPos = [localRoot valueForKey:@"position"];
         if (!localPos) return;
         
         CGContextRef ctx = UIGraphicsGetCurrentContext();
+        int count = 0;
         
         for (id player in allPlayers) {
             @try {
@@ -199,7 +276,6 @@
                 
                 id transform = [player valueForKey:@"Transform"];
                 if (!transform) continue;
-                
                 id worldPos = [transform valueForKey:@"position"];
                 if (!worldPos) continue;
                 
@@ -215,23 +291,31 @@
                 
                 float distance = [self distanceBetween:localPos and:worldPos];
                 float health = [[player valueForKey:@"GetCurrentHealth"] floatValue];
+                float boxSize = MIN(MAX(300.0/distance, 30), 100);
                 
-                float boxSize = MIN(MAX(300.0f / distance, 30.0f), 100.0f);
-                CGRect box = CGRectMake(x - boxSize/2, y - boxSize/2 - 10, boxSize, boxSize);
-                
+                CGRect box = CGRectMake(x-boxSize/2, y-boxSize/2-10, boxSize, boxSize);
                 CGContextSetStrokeColorWithColor(ctx, [UIColor redColor].CGColor);
                 CGContextSetLineWidth(ctx, 2);
                 CGContextStrokeRect(ctx, box);
                 
-                CGRect healthBar = CGRectMake(x - boxSize/2, y - boxSize/2 - 15, boxSize * (health/100), 3);
+                CGRect healthBar = CGRectMake(x-boxSize/2, y-boxSize/2-15, boxSize*(health/100), 3);
                 CGContextSetFillColorWithColor(ctx, [UIColor greenColor].CGColor);
                 CGContextFillRect(ctx, healthBar);
                 
                 NSString *distText = [NSString stringWithFormat:@"%.0fм", distance];
-                [distText drawAtPoint:CGPointMake(x - 20, y - boxSize/2 - 30) 
+                [distText drawAtPoint:CGPointMake(x-20, y-boxSize/2-30)
                         withAttributes:@{NSFontAttributeName: [UIFont systemFontOfSize:12],
                                         NSForegroundColorAttributeName: [UIColor whiteColor]}];
+                count++;
             } @catch (NSException *e) {}
+        }
+        
+        if (count > 0) {
+            static int lastCount = 0;
+            if (count != lastCount) {
+                NSLog(@"[ESP] Найдено врагов: %d (метод %d)", count, currentMethod);
+                lastCount = count;
+            }
         }
     }
 }
@@ -242,12 +326,8 @@ __attribute__((constructor))
 static void init() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         UIWindow *mainWindow = [UIApplication sharedApplication].keyWindow;
+        [mainWindow addSubview:[[MenuButton alloc] init]];
         
-        // Кнопка
-        MenuButton *btn = [[MenuButton alloc] init];
-        [mainWindow addSubview:btn];
-        
-        // ESP окно
         UIWindow *espWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
         espWindow.windowLevel = UIWindowLevelAlert + 1;
         espWindow.backgroundColor = [UIColor clearColor];
