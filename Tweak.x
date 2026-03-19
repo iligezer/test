@@ -22,13 +22,22 @@ void* getRealPtr(uint64_t rva) {
     return base ? (void*)(base + rva) : NULL;
 }
 
-// ========== ПОЛУЧЕНИЕ ГЛАВНОГО ОКНА (БЕЗ keyWindow) ==========
+// ========== ПОЛУЧЕНИЕ ГЛАВНОГО ОКНА (ЧЕРЕЗ СЦЕНЫ) ==========
 UIWindow* getMainWindow() {
-    NSArray<UIWindow *> *windows = [UIApplication sharedApplication].windows;
-    for (UIWindow *window in windows) {
-        if (window.isKeyWindow) return window;
+    if (@available(iOS 15.0, *)) {
+        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if ([scene isKindOfClass:[UIWindowScene class]]) {
+                UIWindowScene *windowScene = (UIWindowScene *)scene;
+                for (UIWindow *window in windowScene.windows) {
+                    if (window.isKeyWindow) return window;
+                }
+            }
+        }
+    } else {
+        // Fallback для старых версий
+        return [UIApplication sharedApplication].keyWindow;
     }
-    return windows.firstObject;
+    return nil;
 }
 
 UIViewController* getTopViewController() {
