@@ -1,6 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <mach-o/dyld.h>
 #import <mach/mach.h>
+#import <objc/runtime.h>
 
 // ========== ТВОИ АДРЕСА ==========
 #define RVA_Camera_get_main         0x10871faf8
@@ -39,75 +40,7 @@ static UIWindow *overlayWindow = nil;
 static UIWindow *logWindow = nil;
 static UIButton *floatingButton = nil;
 
-// ========== СКАНИРОВАНИЕ ПАМЯТИ ==========
-+ (void)scanMemory {
-    [self addLog:@"🔍 СКАНИРОВАНИЕ ПАМЯТИ..."];
-    
-    // Получаем базовый адрес игры
-    uint64_t base = BASE_ADDR;
-    [self addLog:[NSString stringWithFormat:@"Базовый адрес: 0x%llx", base]];
-    
-    // Получаем размер памяти
-    task_t task = mach_task_self();
-    vm_address_t address = 0;
-    vm_size_t size = 0;
-    vm_region_basic_info_data_64_t info;
-    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-    mach_port_t object_name;
-    
-    int playerCount = 0;
-    
-    // Сканируем все регионы памяти
-    while (vm_region_64(task, &address, &size, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info, &count, &object_name) == KERN_SUCCESS) {
-        
-        // Ищем регионы с данными
-        if (size > 1000) { // Не сканируем слишком маленькие регионы
-            // Читаем память
-            uint8_t *buffer = malloc(size);
-            vm_size_t data_read;
-            
-            if (vm_read_overwrite(task, address, size, (vm_address_t)buffer, &data_read) == KERN_SUCCESS) {
-                
-                // Ищем паттерны игроков (здоровье часто 100.0)
-                float healthPattern = 100.0f;
-                
-                for (int i = 0; i < data_read - 8; i++) {
-                    // Ищем float со значением 100.0
-                    float *health = (float*)(buffer + i);
-                    if (*health > 99.0f && *health < 101.0f) {
-                        
-                        // Проверяем, есть ли рядом координаты
-                        float *x = (float*)(buffer + i + 0x10);
-                        float *y = (float*)(buffer + i + 0x14);
-                        float *z = (float*)(buffer + i + 0x18);
-                        
-                        // Координаты должны быть в разумных пределах
-                        if (*x > -10000 && *x < 10000 && *y > -10000 && *y < 10000 && *z > -10000 && *z < 10000) {
-                            
-                            playerCount++;
-                            [self addLog:[NSString stringWithFormat:@"\n🎯 ИГРОК #%d:", playerCount]];
-                            [self addLog:[NSString stringWithFormat:@"   Адрес структуры: 0x%llx", address + i - 0x10]];
-                            [self addLog:[NSString stringWithFormat:@"   Здоровье: %.1f", *health]];
-                            [self addLog:[NSString stringWithFormat:@"   Позиция: (%.1f, %.1f, %.1f)", *x, *y, *z]];
-                            
-                            // Пропускаем остаток этой структуры
-                            i += 0x80;
-                        }
-                    }
-                }
-            }
-            free(buffer);
-        }
-        
-        address += size;
-        address = (address + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
-    }
-    
-    [self addLog:[NSString stringWithFormat:@"\n📊 Найдено игроков: %d", playerCount]];
-    [self addLog:@"✅ Сканирование завершено"];
-}
-
-// ========== КЛАСС-ОБРАБОТЧИК (ПОЛНАЯ ВЕРСИЯ) ==========
+// ========== ОБЪЯВЛЕНИЕ КЛАССА ==========
 @interface ButtonHandler : NSObject
 + (void)showMenu;
 + (void)copyLog;
@@ -119,12 +52,55 @@ static UIButton *floatingButton = nil;
 + (UIWindow*)mainWindow;
 + (void)handlePan:(UIPanGestureRecognizer*)gesture;
 + (void)addLog:(NSString*)text;
++ (void)toggleESP;
++ (void)closeMenu:(UIButton*)sender;
 @end
 
+// ========== ESP VIEW ==========
+@interface ESPView : UIView
+@end
+
+@implementation ESPView
+- (void)drawRect:(CGRect)rect {
+    [super drawRect:rect];
+    
+    if (!espEnabled) return;
+    
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    CGContextSetFillColorWithColor(ctx, [UIColor redColor].CGColor);
+    CGContextFillEllipseInRect(ctx, CGRectMake(100, 100, 10, 10));
+}
+@end
+
+// ========== ПЛАВАЮЩАЯ КНОПКА ==========
+@interface FloatingButton : UIButton
+@end
+
+@implementation FloatingButton
+- (instancetype)initWithFrame:(CGRect)frame {
+    self = [super initWithFrame:frame];
+    if (self) {
+        self.backgroundColor = [UIColor systemBlueColor];
+        self.layer.cornerRadius = frame.size.width / 2;
+        self.layer.masksToBounds = YES;
+        [self setTitle:@"⚡" forState:UIControlStateNormal];
+        [self setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        self.titleLabel.font = [UIFont systemFontOfSize:24];
+        
+        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:[ButtonHandler class] action:@selector(handlePan:)];
+        [self addGestureRecognizer:pan];
+        
+        [self addTarget:[ButtonHandler class] action:@selector(showMenu) forControlEvents:UIControlEventTouchUpInside];
+    }
+    return self;
+}
+@end
+
+// ========== РЕАЛИЗАЦИЯ ButtonHandler ==========
 @implementation ButtonHandler
 
 + (void)showMenu {
-    // Создаем кастомное меню (не стандартный алерт)
+    // Создаем кастомное меню
     UIWindow *menuWindow = [[UIWindow alloc] initWithFrame:CGRectMake(50, 100, 280, 400)];
     menuWindow.windowLevel = UIWindowLevelAlert + 3;
     menuWindow.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.95];
@@ -196,7 +172,7 @@ static UIButton *floatingButton = nil;
 
 + (void)toggleESP {
     espEnabled = !espEnabled;
-    [self showMenu]; // Обновляем меню
+    [self showMenu];
 }
 
 + (void)closeMenu:(UIButton*)sender {
@@ -218,7 +194,6 @@ static UIButton *floatingButton = nil;
     UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
     pasteboard.string = logText;
     
-    // Показываем уведомление
     UILabel *toast = [[UILabel alloc] initWithFrame:CGRectMake(100, 300, 120, 40)];
     toast.backgroundColor = [UIColor blackColor];
     toast.textColor = [UIColor whiteColor];
@@ -308,13 +283,11 @@ static UIButton *floatingButton = nil;
     
     while (vm_region_64(task, &address, &size, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info, &count, &object_name) == KERN_SUCCESS) {
         
-        if (size > 1000 && size < 1024*1024) { // Регионы от 1KB до 1MB
+        if (size > 1000 && size < 1024*1024) {
             uint8_t *buffer = malloc(size);
             vm_size_t data_read;
             
             if (vm_read_overwrite(task, address, size, (vm_address_t)buffer, &data_read) == KERN_SUCCESS) {
-                
-                float healthPattern = 100.0f;
                 
                 for (int i = 0; i < data_read - 32; i += 4) {
                     float *health = (float*)(buffer + i);
@@ -328,7 +301,7 @@ static UIButton *floatingButton = nil;
                             
                             playerCount++;
                             [self addLog:[NSString stringWithFormat:@"\n🎯 ИГРОК #%d:", playerCount]];
-                            [self addLog:[NSString stringWithFormat:@"   Адрес: 0x%llx", address + i]];
+                            [self addLog:[NSString stringWithFormat:@"   Адрес: 0x%lx", (unsigned long)(address + i)]];
                             [self addLog:[NSString stringWithFormat:@"   Здоровье: %.1f", *health]];
                             [self addLog:[NSString stringWithFormat:@"   Позиция: (%.1f, %.1f, %.1f)", *x, *y, *z]];
                             
@@ -375,45 +348,6 @@ static UIButton *floatingButton = nil;
     return nil;
 }
 
-@end
-
-// ========== ESP VIEW ==========
-@interface ESPView : UIView
-@end
-
-@implementation ESPView
-- (void)drawRect:(CGRect)rect {
-    [super drawRect:rect];
-    if (!espEnabled) return;
-    
-    CGContextRef ctx = UIGraphicsGetCurrentContext();
-    CGContextSetFillColorWithColor(ctx, [UIColor redColor].CGColor);
-    CGContextFillEllipseInRect(ctx, CGRectMake(100, 100, 10, 10));
-}
-@end
-
-// ========== ПЛАВАЮЩАЯ КНОПКА ==========
-@interface FloatingButton : UIButton
-@end
-
-@implementation FloatingButton
-- (instancetype)initWithFrame:(CGRect)frame {
-    self = [super initWithFrame:frame];
-    if (self) {
-        self.backgroundColor = [UIColor systemBlueColor];
-        self.layer.cornerRadius = frame.size.width / 2;
-        self.layer.masksToBounds = YES;
-        [self setTitle:@"⚡" forState:UIControlStateNormal];
-        [self setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        self.titleLabel.font = [UIFont systemFontOfSize:24];
-        
-        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:[ButtonHandler class] action:@selector(handlePan:)];
-        [self addGestureRecognizer:pan];
-        
-        [self addTarget:[ButtonHandler class] action:@selector(showMenu) forControlEvents:UIControlEventTouchUpInside];
-    }
-    return self;
-}
 @end
 
 // ========== ИНИЦИАЛИЗАЦИЯ ==========
