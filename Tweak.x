@@ -16,17 +16,6 @@ typedef void *(*t_get_main_camera)();
 typedef void *(*t_world_to_screen)(void *camera, void *worldPos);
 typedef void *(*t_get_position)(void *transform);
 
-static t_get_main_camera Camera_main = NULL;
-static t_world_to_screen Camera_WorldToScreen = NULL;
-static t_get_position Transform_get_position = NULL;
-
-static NSMutableString *logText = nil;
-static UIWindow *logWindow = nil;
-static UIButton *floatingButton = nil;
-static NSMutableArray *foundPlayers = nil;
-static NSMutableArray *safeRegions = nil;
-static PlayerData *myPlayer = nil;
-
 // ========== МОДЕЛЬ ИГРОКА ==========
 @interface PlayerData : NSObject
 @property (assign) float health;
@@ -44,6 +33,18 @@ static PlayerData *myPlayer = nil;
 }
 @end
 
+// ========== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ==========
+static t_get_main_camera Camera_main = NULL;
+static t_world_to_screen Camera_WorldToScreen = NULL;
+static t_get_position Transform_get_position = NULL;
+
+static NSMutableString *logText = nil;
+static UIWindow *logWindow = nil;
+static UIButton *floatingButton = nil;
+static NSMutableArray *foundPlayers = nil;
+static NSMutableArray *safeRegions = nil;
+static PlayerData *myPlayer = nil;
+
 // ========== ОБЪЯВЛЕНИЕ ==========
 @interface ButtonHandler : NSObject
 + (void)showMenu;
@@ -55,7 +56,6 @@ static PlayerData *myPlayer = nil;
 + (void)resetScan;
 + (void)findSafeRegions;
 + (void)scanByCoordinates;
-+ (void)findMyNickAtAddress:(unsigned long)addr buffer:(uint8_t*)buffer offset:(int)offset;
 + (void)refineScanAroundMyPlayer;
 + (UIWindow*)mainWindow;
 + (void)handlePan:(UIPanGestureRecognizer*)gesture;
@@ -230,30 +230,6 @@ static PlayerData *myPlayer = nil;
     
     [self addLog:[NSString stringWithFormat:@"📊 Найдено безопасных регионов: %d", safeCount]];
     [self updateLogWindow];
-}
-
-// ========== ФУНКЦИЯ ПОИСКА НИКА ПО АДРЕСУ ==========
-+ (void)findMyNickAtAddress:(unsigned long)addr buffer:(uint8_t*)buffer offset:(int)offset {
-    const char *myNickC = [MY_NICK UTF8String];
-    NSUInteger myNickLen = strlen(myNickC);
-    
-    // Ищем UTF-16 версию ника рядом
-    for (int off = -0x100; off < 0x100; off += 2) {
-        uint16_t *chars = (uint16_t*)(buffer + offset + off);
-        
-        BOOL match = YES;
-        for (int j = 0; j < myNickLen; j++) {
-            if (chars[j] != myNickC[j]) {
-                match = NO;
-                break;
-            }
-        }
-        
-        if (match) {
-            [self addLog:[NSString stringWithFormat:@"   ✅ НАЙДЕН НИК по смещению %d", off]];
-            return;
-        }
-    }
 }
 
 // ========== СКАНИРОВАНИЕ ПО КООРДИНАТАМ ==========
@@ -443,7 +419,7 @@ static PlayerData *myPlayer = nil;
                         float dz = *z - myPlayer.z;
                         float dist = sqrt(dx*dx + dy*dy + dz*dz);
                         
-                        if (dist < searchRadius && dist > 1.0f) { // не сам себя
+                        if (dist < searchRadius && dist > 1.0f) {
                             enemies++;
                             
                             PlayerData *p = [[PlayerData alloc] init];
