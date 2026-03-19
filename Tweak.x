@@ -9,31 +9,10 @@
 #define RVA_Transform_get_position   0x108792ed0
 #define BASE_ADDR 0x1042c4000
 
-// ========== ТВОЙ НИК ==========
-#define MY_NICK @"giviNgGrebe"
-
 typedef void *(*t_get_main_camera)();
 typedef void *(*t_world_to_screen)(void *camera, void *worldPos);
 typedef void *(*t_get_position)(void *transform);
 
-// ========== МОДЕЛЬ ИГРОКА ==========
-@interface PlayerData : NSObject
-@property (assign) float health;
-@property (assign) float x, y, z;
-@property (assign) unsigned long address;
-@property (strong) NSString *name;
-@property (assign) BOOL isMyPlayer;
-@end
-
-@implementation PlayerData
-- (NSString *)description {
-    return [NSString stringWithFormat:@"%@ HP:%.1f (%.1f,%.1f,%.1f) 0x%lx",
-            self.isMyPlayer ? @"👤 СВОЙ" : @"👾 ВРАГ",
-            self.health, self.x, self.y, self.z, self.address];
-}
-@end
-
-// ========== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ==========
 static t_get_main_camera Camera_main = NULL;
 static t_world_to_screen Camera_WorldToScreen = NULL;
 static t_get_position Transform_get_position = NULL;
@@ -41,9 +20,10 @@ static t_get_position Transform_get_position = NULL;
 static NSMutableString *logText = nil;
 static UIWindow *logWindow = nil;
 static UIButton *floatingButton = nil;
-static NSMutableArray *foundPlayers = nil;
-static NSMutableArray *safeRegions = nil;
-static PlayerData *myPlayer = nil;
+static NSMutableArray *trackedAddresses = nil; // массив отслеживаемых адресов
+static NSMutableArray *currentValues = nil;    // текущие значения
+static NSMutableArray *previousValues = nil;   // предыдущие значения для сравнения
+static int scanStep = 0;
 
 // ========== ОБЪЯВЛЕНИЕ ==========
 @interface ButtonHandler : NSObject
@@ -53,10 +33,12 @@ static PlayerData *myPlayer = nil;
 + (void)showLogWindow;
 + (void)updateLogWindow;
 + (void)addLog:(NSString*)text;
++ (void)addAddress;
 + (void)resetScan;
-+ (void)findSafeRegions;
-+ (void)scanRealPlayers;
-+ (void)refineScanAroundMyPlayer;
++ (void)startScan;
++ (void)refreshChanged;
++ (void)refreshUnchanged;
++ (void)showCandidates;
 + (UIWindow*)mainWindow;
 + (void)handlePan:(UIPanGestureRecognizer*)gesture;
 @end
@@ -105,7 +87,7 @@ static PlayerData *myPlayer = nil;
 
 + (void)showMenu {
     CGFloat menuWidth = 280;
-    CGFloat menuHeight = 450;
+    CGFloat menuHeight = 500;
     CGFloat menuX = ([UIScreen mainScreen].bounds.size.width - menuWidth) / 2;
     CGFloat menuY = ([UIScreen mainScreen].bounds.size.height - menuHeight) / 2;
     
@@ -115,60 +97,69 @@ static PlayerData *myPlayer = nil;
     menuWindow.layer.cornerRadius = 10;
     
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, menuWidth, 30)];
-    title.text = @"⚡ REAL PLAYER SCANNER";
+    title.text = @"⚡ ADDRESS TRACKER";
     title.textColor = [UIColor whiteColor];
     title.textAlignment = NSTextAlignmentCenter;
     [menuWindow addSubview:title];
     
-    // Кнопка 1: СБРОС
+    // Кнопка: ДОБАВИТЬ АДРЕС
+    UIButton *addBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    addBtn.frame = CGRectMake(20, 50, menuWidth-40, 40);
+    addBtn.backgroundColor = [UIColor systemBlueColor];
+    [addBtn setTitle:@"➕ ДОБАВИТЬ АДРЕС" forState:UIControlStateNormal];
+    [addBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [addBtn addTarget:self action:@selector(addAddress) forControlEvents:UIControlEventTouchUpInside];
+    [menuWindow addSubview:addBtn];
+    
+    // Кнопка: НАЧАТЬ СКАНИРОВАНИЕ
+    UIButton *startBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    startBtn.frame = CGRectMake(20, 100, menuWidth-40, 40);
+    startBtn.backgroundColor = [UIColor systemPurpleColor];
+    [startBtn setTitle:@"🔍 НАЧАТЬ СКАНИРОВАНИЕ" forState:UIControlStateNormal];
+    [startBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [startBtn addTarget:self action:@selector(startScan) forControlEvents:UIControlEventTouchUpInside];
+    [menuWindow addSubview:startBtn];
+    
+    // Кнопка: ИЗМЕНИЛОСЬ
+    UIButton *changedBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    changedBtn.frame = CGRectMake(20, 150, menuWidth-40, 40);
+    changedBtn.backgroundColor = [UIColor systemGreenColor];
+    [changedBtn setTitle:@"📈 ИЗМЕНИЛОСЬ" forState:UIControlStateNormal];
+    [changedBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [changedBtn addTarget:self action:@selector(refreshChanged) forControlEvents:UIControlEventTouchUpInside];
+    [menuWindow addSubview:changedBtn];
+    
+    // Кнопка: НЕ ИЗМЕНИЛОСЬ
+    UIButton *unchangedBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    unchangedBtn.frame = CGRectMake(20, 200, menuWidth-40, 40);
+    unchangedBtn.backgroundColor = [UIColor systemOrangeColor];
+    [unchangedBtn setTitle:@"📉 НЕ ИЗМЕНИЛОСЬ" forState:UIControlStateNormal];
+    [unchangedBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [unchangedBtn addTarget:self action:@selector(refreshUnchanged) forControlEvents:UIControlEventTouchUpInside];
+    [menuWindow addSubview:unchangedBtn];
+    
+    // Кнопка: ПОКАЗАТЬ КАНДИДАТОВ
+    UIButton *showBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    showBtn.frame = CGRectMake(20, 250, menuWidth-40, 40);
+    showBtn.backgroundColor = [UIColor systemIndigoColor];
+    [showBtn setTitle:@"📋 ПОКАЗАТЬ КАНДИДАТОВ" forState:UIControlStateNormal];
+    [showBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [showBtn addTarget:self action:@selector(showCandidates) forControlEvents:UIControlEventTouchUpInside];
+    [menuWindow addSubview:showBtn];
+    
+    // Кнопка: СБРОС
     UIButton *resetBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    resetBtn.frame = CGRectMake(20, 50, menuWidth-40, 40);
-    resetBtn.backgroundColor = [UIColor systemOrangeColor];
-    [resetBtn setTitle:@"🔄 СБРОС (ПЕРЕД МАТЧЕМ)" forState:UIControlStateNormal];
+    resetBtn.frame = CGRectMake(20, 300, menuWidth-40, 40);
+    resetBtn.backgroundColor = [UIColor systemRedColor];
+    [resetBtn setTitle:@"🔄 СБРОС" forState:UIControlStateNormal];
     [resetBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [resetBtn addTarget:self action:@selector(resetScan) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:resetBtn];
     
-    // Кнопка 2: НАЙТИ РЕГИОНЫ
-    UIButton *findRegionsBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    findRegionsBtn.frame = CGRectMake(20, 100, menuWidth-40, 40);
-    findRegionsBtn.backgroundColor = [UIColor systemBlueColor];
-    [findRegionsBtn setTitle:@"🔍 НАЙТИ РЕГИОНЫ" forState:UIControlStateNormal];
-    [findRegionsBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    [findRegionsBtn addTarget:self action:@selector(findSafeRegions) forControlEvents:UIControlEventTouchUpInside];
-    [menuWindow addSubview:findRegionsBtn];
-    
-    // Кнопка 3: СКАНИРОВАТЬ РЕАЛЬНЫХ ИГРОКОВ
-    UIButton *realScanBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    realScanBtn.frame = CGRectMake(20, 150, menuWidth-40, 40);
-    realScanBtn.backgroundColor = [UIColor systemPurpleColor];
-    [realScanBtn setTitle:@"🎯 СКАНИРОВАТЬ РЕАЛЬНЫХ ИГРОКОВ" forState:UIControlStateNormal];
-    [realScanBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    [realScanBtn addTarget:self action:@selector(scanRealPlayers) forControlEvents:UIControlEventTouchUpInside];
-    [menuWindow addSubview:realScanBtn];
-    
-    // Кнопка 4: УТОЧНИТЬ ВОКРУГ СЕБЯ
-    UIButton *refineBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    refineBtn.frame = CGRectMake(20, 200, menuWidth-40, 40);
-    refineBtn.backgroundColor = [UIColor systemGreenColor];
-    [refineBtn setTitle:@"🎯 УТОЧНИТЬ ВОКРУГ СЕБЯ" forState:UIControlStateNormal];
-    [refineBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    [refineBtn addTarget:self action:@selector(refineScanAroundMyPlayer) forControlEvents:UIControlEventTouchUpInside];
-    [menuWindow addSubview:refineBtn];
-    
-    // Кнопка 5: ПОКАЗАТЬ ЛОГ
-    UIButton *logBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    logBtn.frame = CGRectMake(20, 250, menuWidth-40, 40);
-    logBtn.backgroundColor = [UIColor systemIndigoColor];
-    [logBtn setTitle:@"📋 ПОКАЗАТЬ ЛОГ" forState:UIControlStateNormal];
-    [logBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    [logBtn addTarget:self action:@selector(showLogWindow) forControlEvents:UIControlEventTouchUpInside];
-    [menuWindow addSubview:logBtn];
-    
-    // Кнопка 6: ЗАКРЫТЬ
+    // Кнопка: ЗАКРЫТЬ
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(20, 300, menuWidth-40, 40);
-    closeBtn.backgroundColor = [UIColor systemRedColor];
+    closeBtn.frame = CGRectMake(20, 350, menuWidth-40, 40);
+    closeBtn.backgroundColor = [UIColor systemGrayColor];
     [closeBtn setTitle:@"✖️ ЗАКРЫТЬ" forState:UIControlStateNormal];
     [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [closeBtn addTarget:self action:@selector(closeMenu) forControlEvents:UIControlEventTouchUpInside];
@@ -184,226 +175,194 @@ static PlayerData *myPlayer = nil;
     [menuWindow resignKeyWindow];
 }
 
+// ========== ДОБАВИТЬ АДРЕС ==========
++ (void)addAddress {
+    if (!trackedAddresses) trackedAddresses = [NSMutableArray array];
+    
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Введите адрес"
+                                                                   message:@"Формат: 0x281764090"
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *textField) {
+        textField.placeholder = @"0x...";
+        textField.keyboardType = UIKeyboardTypeDefault;
+    }];
+    
+    UIAlertAction *addAction = [UIAlertAction actionWithTitle:@"Добавить" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        NSString *addrStr = alert.textFields[0].text;
+        if (addrStr.length > 0) {
+            unsigned long long addr = 0;
+            NSScanner *scanner = [NSScanner scannerWithString:addrStr];
+            [scanner scanHexLongLong:&addr];
+            
+            if (addr > 0) {
+                [trackedAddresses addObject:@(addr)];
+                [self addLog:[NSString stringWithFormat:@"✅ Добавлен адрес: 0x%llx", addr]];
+                [self addLog:[NSString stringWithFormat:@"📊 Всего адресов: %lu", (unsigned long)trackedAddresses.count]];
+            } else {
+                [self addLog:@"❌ Неверный формат адреса"];
+            }
+        }
+    }];
+    
+    UIAlertAction *doneAction = [UIAlertAction actionWithTitle:@"Готово" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        [self addLog:@"✅ Ввод адресов завершен"];
+    }];
+    
+    UIAlertAction *cancelAction = [UIAlertAction actionWithTitle:@"Отмена" style:UIAlertActionStyleCancel handler:nil];
+    
+    [alert addAction:addAction];
+    [alert addAction:doneAction];
+    [alert addAction:cancelAction];
+    
+    [[self topViewController] presentViewController:alert animated:YES completion:nil];
+}
+
+// ========== НАЧАТЬ СКАНИРОВАНИЕ ==========
++ (void)startScan {
+    if (!trackedAddresses || trackedAddresses.count == 0) {
+        [self addLog:@"❌ Сначала добавь адреса"];
+        [self updateLogWindow];
+        return;
+    }
+    
+    currentValues = [NSMutableArray array];
+    previousValues = [NSMutableArray array];
+    
+    task_t task = mach_task_self();
+    
+    for (NSNumber *addrNum in trackedAddresses) {
+        vm_address_t addr = [addrNum unsignedLongLongValue];
+        
+        // Читаем текущее значение
+        float value = 0;
+        vm_size_t data_read = 0;
+        kern_return_t kr = vm_read_overwrite(task, addr, 4, (vm_address_t)&value, &data_read);
+        
+        if (kr == KERN_SUCCESS) {
+            [currentValues addObject:@(value)];
+            [self addLog:[NSString stringWithFormat:@"📌 Адрес 0x%llx = %.3f", (unsigned long long)addr, value]];
+        } else {
+            [currentValues addObject:@(0.0f)];
+            [self addLog:[NSString stringWithFormat:@"❌ Не удалось прочитать 0x%llx", (unsigned long long)addr]];
+        }
+    }
+    
+    previousValues = [currentValues mutableCopy];
+    scanStep = 1;
+    
+    [self addLog:@"\n✅ Начальное сканирование завершено"];
+    [self addLog:@"📊 Двигайся и нажимай ИЗМЕНИЛОСЬ/НЕ ИЗМЕНИЛОСЬ"];
+    [self updateLogWindow];
+}
+
+// ========== ИЗМЕНИЛОСЬ ==========
++ (void)refreshChanged {
+    if (!trackedAddresses || trackedAddresses.count == 0) {
+        [self addLog:@"❌ Сначала начни сканирование"];
+        [self updateLogWindow];
+        return;
+    }
+    
+    NSMutableArray *newAddresses = [NSMutableArray array];
+    NSMutableArray *newValues = [NSMutableArray array];
+    task_t task = mach_task_self();
+    
+    for (int i = 0; i < trackedAddresses.count; i++) {
+        NSNumber *addrNum = trackedAddresses[i];
+        vm_address_t addr = [addrNum unsignedLongLongValue];
+        
+        // Читаем текущее значение
+        float value = 0;
+        vm_size_t data_read = 0;
+        kern_return_t kr = vm_read_overwrite(task, addr, 4, (vm_address_t)&value, &data_read);
+        
+        if (kr == KERN_SUCCESS) {
+            float oldValue = [currentValues[i] floatValue];
+            
+            // Если значение изменилось (с допуском 0.001)
+            if (fabs(value - oldValue) > 0.001f) {
+                [newAddresses addObject:addrNum];
+                [newValues addObject:@(value)];
+                [self addLog:[NSString stringWithFormat:@"✅ ИЗМЕНИЛОСЬ 0x%llx: %.3f -> %.3f", 
+                              (unsigned long long)addr, oldValue, value]];
+            }
+        }
+    }
+    
+    trackedAddresses = newAddresses;
+    currentValues = newValues;
+    
+    [self addLog:[NSString stringWithFormat:@"\n📊 Осталось адресов: %lu", (unsigned long)trackedAddresses.count]];
+    [self updateLogWindow];
+}
+
+// ========== НЕ ИЗМЕНИЛОСЬ ==========
++ (void)refreshUnchanged {
+    if (!trackedAddresses || trackedAddresses.count == 0) {
+        [self addLog:@"❌ Сначала начни сканирование"];
+        [self updateLogWindow];
+        return;
+    }
+    
+    NSMutableArray *newAddresses = [NSMutableArray array];
+    NSMutableArray *newValues = [NSMutableArray array];
+    task_t task = mach_task_self();
+    
+    for (int i = 0; i < trackedAddresses.count; i++) {
+        NSNumber *addrNum = trackedAddresses[i];
+        vm_address_t addr = [addrNum unsignedLongLongValue];
+        
+        // Читаем текущее значение
+        float value = 0;
+        vm_size_t data_read = 0;
+        kern_return_t kr = vm_read_overwrite(task, addr, 4, (vm_address_t)&value, &data_read);
+        
+        if (kr == KERN_SUCCESS) {
+            float oldValue = [currentValues[i] floatValue];
+            
+            // Если значение НЕ изменилось
+            if (fabs(value - oldValue) <= 0.001f) {
+                [newAddresses addObject:addrNum];
+                [newValues addObject:@(value)];
+                [self addLog:[NSString stringWithFormat:@"✅ НЕ ИЗМЕНИЛОСЬ 0x%llx: %.3f", 
+                              (unsigned long long)addr, value]];
+            }
+        }
+    }
+    
+    trackedAddresses = newAddresses;
+    currentValues = newValues;
+    
+    [self addLog:[NSString stringWithFormat:@"\n📊 Осталось адресов: %lu", (unsigned long)trackedAddresses.count]];
+    [self updateLogWindow];
+}
+
+// ========== ПОКАЗАТЬ КАНДИДАТОВ ==========
++ (void)showCandidates {
+    [self addLog:@"\n📋 ТЕКУЩИЕ КАНДИДАТЫ:"];
+    
+    if (!trackedAddresses || trackedAddresses.count == 0) {
+        [self addLog:@"❌ Нет адресов для отслеживания"];
+    } else {
+        for (int i = 0; i < trackedAddresses.count; i++) {
+            NSNumber *addrNum = trackedAddresses[i];
+            float value = [currentValues[i] floatValue];
+            [self addLog:[NSString stringWithFormat:@"%d. 0x%llx = %.3f", 
+                          i+1, (unsigned long long)[addrNum unsignedLongLongValue], value]];
+        }
+    }
+    
+    [self showLogWindow];
+}
+
 // ========== СБРОС ==========
 + (void)resetScan {
-    [safeRegions removeAllObjects];
-    [foundPlayers removeAllObjects];
-    myPlayer = nil;
-    [logText setString:@""];
-    [self addLog:@"🔄 ПАМЯТЬ ОЧИЩЕНА"];
-    [self addLog:@"1. Зайди в матч"];
-    [self addLog:@"2. Нажми НАЙТИ РЕГИОНЫ"];
-    [self addLog:@"3. Нажми СКАНИРОВАТЬ РЕАЛЬНЫХ ИГРОКОВ"];
-    [self updateLogWindow];
-}
-
-// ========== НАЙТИ БЕЗОПАСНЫЕ РЕГИОНЫ ==========
-+ (void)findSafeRegions {
-    [self addLog:@"🔍 ПОИСК БЕЗОПАСНЫХ РЕГИОНОВ..."];
-    
-    safeRegions = [NSMutableArray array];
-    task_t task = mach_task_self();
-    vm_address_t address = 0;
-    vm_size_t size = 0;
-    vm_region_basic_info_data_64_t info;
-    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-    mach_port_t object_name;
-    
-    int safeCount = 0;
-    
-    while (vm_region_64(task, &address, &size, VM_REGION_BASIC_INFO_64, 
-                        (vm_region_info_t)&info, &count, &object_name) == KERN_SUCCESS) {
-        
-        if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
-            if (size >= 4096 && size <= 10*1024*1024) {
-                safeCount++;
-                [safeRegions addObject:@{
-                    @"address": @(address),
-                    @"size": @(size)
-                }];
-            }
-        }
-        
-        address += size;
-        if (safeCount % 100 == 0) usleep(1000);
-    }
-    
-    [self addLog:[NSString stringWithFormat:@"📊 Найдено безопасных регионов: %d", safeCount]];
-    [self updateLogWindow];
-}
-
-// ========== СКАНИРОВАНИЕ РЕАЛЬНЫХ ИГРОКОВ (С ЖЕСТКИМИ ФИЛЬТРАМИ) ==========
-+ (void)scanRealPlayers {
-    if (!safeRegions || safeRegions.count == 0) {
-        [self addLog:@"❌ Сначала найди регионы"];
-        [self updateLogWindow];
-        return;
-    }
-    
-    [foundPlayers removeAllObjects];
-    myPlayer = nil;
-    
-    [self addLog:@"\n🎯 СКАНИРОВАНИЕ РЕАЛЬНЫХ ИГРОКОВ"];
-    [self addLog:@"================================="];
-    
-    task_t task = mach_task_self();
-    int realPlayers = 0;
-    int candidates = 0;
-    int regionCount = 0;
-    int totalRegions = (int)safeRegions.count;
-    
-    for (NSDictionary *region in safeRegions) {
-        regionCount++;
-        
-        vm_address_t addr = [region[@"address"] unsignedLongLongValue];
-        vm_size_t size = [region[@"size"] unsignedLongValue];
-        
-        uint8_t *buffer = malloc(size);
-        vm_size_t data_read = 0;
-        
-        kern_return_t kr = vm_read_overwrite(task, addr, size, (vm_address_t)buffer, &data_read);
-        
-        if (kr == KERN_SUCCESS && data_read == size) {
-            
-            // Проходим с шагом 4 байта
-            for (int i = 0; i < data_read - 256; i += 4) {
-                
-                // Сначала ищем здоровье (главный признак)
-                float *healthPtr = (float*)(buffer + i);
-                
-                // Здоровье должно быть от 10 до 200
-                if (isfinite(*healthPtr) && *healthPtr >= 10 && *healthPtr <= 200) {
-                    
-                    // Ищем координаты рядом (обычно через 0x10-0x20 байт)
-                    for (int offset = 0x10; offset < 0x40; offset += 4) {
-                        float *x = (float*)(buffer + i + offset);
-                        float *y = (float*)(buffer + i + offset + 4);
-                        float *z = (float*)(buffer + i + offset + 8);
-                        
-                        // Проверяем координаты
-                        if (isfinite(*x) && isfinite(*y) && isfinite(*z) &&
-                            fabs(*x) > 1.0 && fabs(*y) > 1.0 && fabs(*z) > 1.0 && // не около нуля
-                            fabs(*x) < 5000 && fabs(*y) < 5000 && fabs(*z) < 5000) { // разумные пределы
-                            
-                            candidates++;
-                            
-                            PlayerData *p = [[PlayerData alloc] init];
-                            p.health = *healthPtr;
-                            p.x = *x;
-                            p.y = *y;
-                            p.z = *z;
-                            p.address = addr + i;
-                            
-                            // Ищем имя рядом (UTF-16)
-                            for (int nameOff = -0x80; nameOff < 0x80; nameOff += 2) {
-                                uint16_t *chars = (uint16_t*)(buffer + i + nameOff);
-                                
-                                int validChars = 0;
-                                for (int j = 0; j < 16; j++) {
-                                    if (chars[j] > 0x20 && chars[j] < 0x7F) {
-                                        validChars++;
-                                    } else if (chars[j] >= 0x0400 && chars[j] <= 0x04FF) {
-                                        validChars++;
-                                    } else if (chars[j] == 0) {
-                                        break;
-                                    } else {
-                                        validChars = 0;
-                                        break;
-                                    }
-                                }
-                                
-                                if (validChars > 2 && validChars < 16) {
-                                    p.name = [[NSString alloc] initWithCharacters:chars length:validChars];
-                                    break;
-                                }
-                            }
-                            
-                            // Проверяем, не мой ли это ник
-                            if (p.name && [p.name isEqualToString:MY_NICK]) {
-                                p.isMyPlayer = YES;
-                                myPlayer = p;
-                                realPlayers++;
-                                [self addLog:[NSString stringWithFormat:@"\n✅ НАЙДЕН СВОЙ ИГРОК #%d:", realPlayers]];
-                                [self addLog:[NSString stringWithFormat:@"   Адрес здоровья: 0x%lx", p.address]];
-                                [self addLog:[NSString stringWithFormat:@"   Координаты: (%.1f, %.1f, %.1f)", p.x, p.y, p.z]];
-                                [self addLog:[NSString stringWithFormat:@"   Здоровье: %.1f", p.health]];
-                                [self addLog:[NSString stringWithFormat:@"   Имя: %@", p.name]];
-                            } else {
-                                // Показываем только реальных игроков (не кандидатов)
-                                realPlayers++;
-                                [self addLog:[NSString stringWithFormat:@"\n👾 РЕАЛЬНЫЙ ИГРОК #%d: (%.1f,%.1f,%.1f) HP:%.0f %@",
-                                              realPlayers, p.x, p.y, p.z, p.health, p.name ?: @"?"]];
-                            }
-                            
-                            [foundPlayers addObject:p];
-                            
-                            // Пропускаем структуру
-                            i += 0x80;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        free(buffer);
-        
-        if (regionCount % 500 == 0) {
-            [self addLog:[NSString stringWithFormat:@"📊 Прогресс: %d/%d регионов, найдено игроков: %d", 
-                          regionCount, totalRegions, realPlayers]];
-            [self updateLogWindow];
-        }
-        usleep(1000);
-    }
-    
-    [self addLog:@"\n📊 СТАТИСТИКА:"];
-    [self addLog:[NSString stringWithFormat:@"📁 Регионов: %d", totalRegions]];
-    [self addLog:[NSString stringWithFormat:@"🎯 Найдено реальных игроков: %d", realPlayers]];
-    
-    if (myPlayer) {
-        [self addLog:@"\n✅ СВОЙ ИГРОК УСПЕШНО ИДЕНТИФИЦИРОВАН"];
-    } else {
-        [self addLog:@"\n❌ Свой игрок не найден. Попробуй УТОЧНИТЬ ВОКРУГ СЕБЯ"];
-        [self addLog:@"   Возможно твой ник не giviNgGrebe?"];
-    }
-    
-    [self updateLogWindow];
-}
-
-// ========== УТОЧНЕНИЕ ВОКРУГ СВОЕГО ИГРОКА ==========
-+ (void)refineScanAroundMyPlayer {
-    if (!myPlayer) {
-        [self addLog:@"❌ Сначала найди своего игрока"];
-        [self updateLogWindow];
-        return;
-    }
-    
-    [self addLog:@"\n🎯 УТОЧНЕНИЕ ВОКРУГ СВОЕГО ИГРОКА"];
-    [self addLog:@"================================="];
-    
-    task_t task = mach_task_self();
-    int enemies = 0;
-    float searchRadius = 500.0f;
-    
-    [self addLog:[NSString stringWithFormat:@"📍 Мои координаты: (%.1f, %.1f, %.1f)", 
-                  myPlayer.x, myPlayer.y, myPlayer.z]];
-    [self addLog:[NSString stringWithFormat:@"🔍 Поиск врагов в радиусе %.0f", searchRadius]];
-    
-    for (PlayerData *p in foundPlayers) {
-        if (p.isMyPlayer) continue;
-        
-        float dx = p.x - myPlayer.x;
-        float dy = p.y - myPlayer.y;
-        float dz = p.z - myPlayer.z;
-        float dist = sqrt(dx*dx + dy*dy + dz*dz);
-        
-        if (dist < searchRadius) {
-            enemies++;
-            [self addLog:[NSString stringWithFormat:@"👾 Враг #%d: (%.1f,%.1f,%.1f) HP:%.0f Дист:%.0f %@",
-                          enemies, p.x, p.y, p.z, p.health, dist, p.name ?: @""]];
-        }
-    }
-    
-    [self addLog:[NSString stringWithFormat:@"\n📊 Найдено врагов рядом: %d", enemies]];
+    [trackedAddresses removeAllObjects];
+    [currentValues removeAllObjects];
+    [previousValues removeAllObjects];
+    scanStep = 0;
+    [self addLog:@"🔄 СКАНИРОВАНИЕ СБРОШЕНО"];
     [self updateLogWindow];
 }
 
@@ -497,6 +456,16 @@ static PlayerData *myPlayer = nil;
     });
 }
 
++ (UIViewController*)topViewController {
+    UIWindow *window = [self mainWindow];
+    if (!window) return nil;
+    UIViewController *vc = window.rootViewController;
+    while (vc.presentedViewController) {
+        vc = vc.presentedViewController;
+    }
+    return vc;
+}
+
 @end
 
 // ========== ИНИЦИАЛИЗАЦИЯ ==========
@@ -518,7 +487,7 @@ static void init() {
             [mainWindow addSubview:floatingButton];
             
             [ButtonHandler addLog:@"✅ Твик загружен"];
-            [ButtonHandler addLog:@"⚡ Нажми СБРОС перед матчем"];
+            [ButtonHandler addLog:@"⚡ Нажми кнопку для меню"];
         });
     }
 }
