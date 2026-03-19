@@ -8,51 +8,32 @@ on:
 jobs:
   build:
     runs-on: macos-latest
-    
+
     steps:
       - name: Checkout
         uses: actions/checkout@v3
-      
-      - name: Install Theos Dependencies
+
+      - name: Install Theos and SDKs
+        uses: Randomblock1/theos-action@v1
+        with:
+          theos-dir: 'theos'
+          theos-src: 'https://github.com/theos/theos'
+          theos-sdks: 'https://github.com/theos/sdks'
+          orion: 'false'
+
+      - name: Build Package
         run: |
-          brew install ldid xz
-      
-      - name: Clone Theos
-        run: |
-          git clone https://github.com/theos/theos.git $HOME/theos
-          cd $HOME/theos
-          git submodule update --init --recursive
-          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
-      
-      - name: Download iOS SDK
-        run: |
-          cd $HOME/theos
-          curl -LO https://github.com/theos/sdks/releases/latest/download/iPhoneOS16.0.sdk.tar.xz
-          tar -xf iPhoneOS16.0.sdk.tar.xz -C sdks/
-          rm iPhoneOS16.0.sdk.tar.xz
-      
-      - name: Verify Setup
-        run: |
-          echo "THEOS=$THEOS"
-          ls -la $THEOS/sdks/
-          which ldid || echo "ldid not found"
-      
-      - name: Build
-        run: |
-          make clean || true
-          make package FINALPACKAGE=1
-      
+          export THEOS=./theos
+          make clean package FINALPACKAGE=1
+
       - name: Upload .deb
         uses: actions/upload-artifact@v3
         with:
           name: aimbot-deb
           path: packages/*.deb
-      
-      - name: Upload .dylib directly
+
+      - name: Upload .dylib
         uses: actions/upload-artifact@v3
         with:
           name: aimbot-dylib
-          path: .theos/obj/debug/*.dylib        uses: actions/upload-artifact@v3
-        with:
-          name: aimbot-deb
-          path: packages/*.deb
+          path: .theos/obj/debug/*.dylib
