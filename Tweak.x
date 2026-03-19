@@ -295,7 +295,6 @@ static NSMutableDictionary *scanStats = nil;
     int healthCandidates = 0;
     int nameCandidates = 0;
 
-    NSMutableDictionary *offsetStats = [NSMutableDictionary dictionary];
     NSMutableDictionary *healthValueStats = [NSMutableDictionary dictionary];
 
     while (vm_region_64(task, &address, &size, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info, &count, &object_name) == KERN_SUCCESS) {
