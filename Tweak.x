@@ -3,12 +3,11 @@
 #import <mach-o/dyld.h>
 #import <mach-o/loader.h>
 
-// ===== ПРОТОТИПЫ ФУНКЦИЙ =====
+// ===== ПРОТОТИПЫ =====
 void showResultWindow(NSString *text);
+uintptr_t getBaseAddress();
 
-// ===== УТИЛИТЫ ДЛЯ РАБОТЫ С ПАМЯТЬЮ =====
-
-// Получение базового адреса UnityFramework
+// ===== РАБОТА С ПАМЯТЬЮ =====
 uintptr_t getBaseAddress() {
     uint32_t count = _dyld_image_count();
     for (uint32_t i = 0; i < count; i++) {
@@ -20,88 +19,17 @@ uintptr_t getBaseAddress() {
     return 0;
 }
 
-// Поиск значения в памяти
-void searchMemory(float value, NSMutableString *log) {
-    uintptr_t base = getBaseAddress();
-    if (base == 0) {
-        [log appendString:@"❌ UnityFramework не найден\n"];
-        return;
-    }
-    
-    [log appendFormat:@"📌 Базовый адрес: 0x%lx\n", base];
-    [log appendFormat:@"🔍 Ищем значение: %f (float)\n\n", value];
-    
-    // Здесь будет код поиска в памяти
-    // Пока просто заглушка для теста
-    [log appendString:@"⚠️ Функция поиска в разработке\n"];
-    [log appendString:@"📝 Будет искать:\n"];
-    [log appendString:@"   - Здоровье игрока (100.0)\n"];
-    [log appendString:@"   - Здоровье врагов (100.0)\n"];
-    [log appendString:@"   - Позиции X, Y, Z\n"];
-}
-
-// Поиск всех экземпляров PlayerController
-void findPlayers(NSMutableString *log) {
-    [log appendString:@"🔍 ПОИСК ИГРОКОВ\n\n"];
-    
-    // Теоретически, PlayerController должен быть где-то в памяти
-    // Будем искать по паттернам или через GameManager
-    
-    [log appendString:@"⚠️ Нужно получить адреса из Il2CppDumper:\n"];
-    [log appendString:@"1. GameManager::Instance\n"];
-    [log appendString:@"2. GameManager::GetAllPlayers()\n"];
-    [log appendString:@"3. PlayerController::_health\n"];
-    [log appendString:@"4. PlayerController::_transform\n"];
-}
-
-// Тестовое сканирование памяти
 void scanMemory() {
     NSMutableString *log = [NSMutableString stringWithString:@"🔬 СКАНИРОВАНИЕ ПАМЯТИ\n\n"];
-    
-    // 1. Базовый адрес
     uintptr_t base = getBaseAddress();
     [log appendFormat:@"📍 UnityFramework: 0x%lx\n", base];
-    
-    // 2. Информация о загруженных библиотеках
-    [log appendString:@"\n📚 ЗАГРУЖЕННЫЕ БИБЛИОТЕКИ:\n"];
-    uint32_t count = _dyld_image_count();
-    for (uint32_t i = 0; i < count && i < 10; i++) {
-        const char *name = _dyld_get_image_name(i);
-        const char *shortName = strrchr(name, '/');
-        if (shortName) shortName++; else shortName = name;
-        [log appendFormat:@"   %d: %s\n", i, shortName];
-    }
-    
-    // 3. Поиск возможных классов
-    [log appendString:@"\n🎯 ПОИСК КЛАССОВ ИЗ PROJECT.GAME.DLL:\n"];
-    
-    // В IL2CPP классы не регистрируются в ObjC runtime
-    [log appendString:@"   ❌ IL2CPP - классы не видны через objc_getClass\n"];
-    [log appendString:@"   ✅ Нужно искать в памяти по сигнатурам\n"];
-    
-    // 4. Поиск значений здоровья (100.0)
-    [log appendString:@"\n❤️ ПОИСК ЗДОРОВЬЯ (100.0):\n"];
-    [log appendString:@"   ⏳ Будет реализовано после получения адресов\n"];
-    
-    // 5. Поиск позиций
-    [log appendString:@"\n📍 ПОИСК ПОЗИЦИЙ (X, Y, Z):\n"];
-    [log appendString:@"   ⏳ Будет реализовано после получения адресов\n"];
-    
-    // 6. Что нужно сделать дальше
-    [log appendString:@"\n📋 ПЛАН ДЕЙСТВИЙ:\n"];
-    [log appendString:@"1. Запустить Il2CppDumper с UnityFramework\n"];
-    [log appendString:@"2. Найти в script.json:\n"];
-    [log appendString:@"   - GameManager::Instance\n"];
-    [log appendString:@"   - GameManager::GetAllPlayers\n"];
-    [log appendString:@"   - PlayerController::_health\n"];
-    [log appendString:@"   - PlayerController::_transform\n"];
-    [log appendString:@"3. Подставить адреса в код\n"];
-    [log appendString:@"4. Реализовать ESP\n"];
-    
+    [log appendString:@"\n📋 Для ESP нужно найти:\n"];
+    [log appendString:@"• GameManager::Instance\n"];
+    [log appendString:@"• PlayerController::_health\n"];
+    [log appendString:@"• PlayerController::_transform\n"];
     showResultWindow(log);
 }
 
-// ===== ФУНКЦИЯ ПОКАЗА РЕЗУЛЬТАТОВ =====
 void showResultWindow(NSString *text) {
     dispatch_async(dispatch_get_main_queue(), ^{
         UIWindow *keyWindow = nil;
@@ -120,7 +48,7 @@ void showResultWindow(NSString *text) {
         
         if (!keyWindow) return;
         
-        UIWindow *resultWindow = [[UIWindow alloc] initWithFrame:CGRectMake(20, 100, keyWindow.frame.size.width - 40, 450)];
+        UIWindow *resultWindow = [[UIWindow alloc] initWithFrame:CGRectMake(20, 100, keyWindow.frame.size.width - 40, 400)];
         resultWindow.windowLevel = UIWindowLevelAlert + 2;
         resultWindow.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.95];
         resultWindow.layer.cornerRadius = 15;
@@ -129,13 +57,13 @@ void showResultWindow(NSString *text) {
         resultWindow.hidden = NO;
         
         UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, resultWindow.frame.size.width, 40)];
-        title.text = @"🔬 РЕЗУЛЬТАТЫ СКАНИРОВАНИЯ";
+        title.text = @"🔬 РЕЗУЛЬТАТЫ";
         title.textColor = [UIColor cyanColor];
         title.textAlignment = NSTextAlignmentCenter;
         title.font = [UIFont boldSystemFontOfSize:16];
         [resultWindow addSubview:title];
         
-        UITextView *textView = [[UITextView alloc] initWithFrame:CGRectMake(10, 60, resultWindow.frame.size.width - 20, 310)];
+        UITextView *textView = [[UITextView alloc] initWithFrame:CGRectMake(10, 60, resultWindow.frame.size.width - 20, 260)];
         textView.backgroundColor = [UIColor blackColor];
         textView.textColor = [UIColor greenColor];
         textView.font = [UIFont fontWithName:@"Courier" size:11];
@@ -145,7 +73,7 @@ void showResultWindow(NSString *text) {
         [resultWindow addSubview:textView];
         
         UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        closeBtn.frame = CGRectMake(resultWindow.frame.size.width/2 - 50, 390, 100, 40);
+        closeBtn.frame = CGRectMake(resultWindow.frame.size.width/2 - 50, 340, 100, 40);
         [closeBtn setTitle:@"ЗАКРЫТЬ" forState:UIControlStateNormal];
         closeBtn.backgroundColor = [UIColor systemBlueColor];
         [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
@@ -161,32 +89,65 @@ void showResultWindow(NSString *text) {
 // ===== ПЛАВАЮЩАЯ КНОПКА =====
 @interface FloatButton : UIImageView
 @property (nonatomic, copy) void (^actionBlock)(void);
+@property (nonatomic, assign) CGPoint lastLocation;
 - (void)setAction:(void (^)(void))block;
 @end
 
 @implementation FloatButton
 
 - (instancetype)init {
-    self = [super initWithFrame:CGRectMake(20, 100, 60, 60)];
+    self = [super initWithFrame:CGRectMake(20, 100, 65, 65)];
     if (self) {
         self.backgroundColor = [UIColor systemBlueColor];
-        self.layer.cornerRadius = 30;
+        self.layer.cornerRadius = 32.5;
         self.layer.borderWidth = 3;
         self.layer.borderColor = [UIColor whiteColor].CGColor;
         self.userInteractionEnabled = YES;
+        self.layer.shadowColor = [UIColor blackColor].CGColor;
+        self.layer.shadowOffset = CGSizeMake(0, 4);
+        self.layer.shadowOpacity = 0.5;
+        self.layer.shadowRadius = 6;
         
-        // Добавим иконку (текст "ESP")
+        // Иконка меню
         UILabel *label = [[UILabel alloc] initWithFrame:self.bounds];
-        label.text = @"ESP";
+        label.text = @"⚡";
         label.textColor = [UIColor whiteColor];
         label.textAlignment = NSTextAlignmentCenter;
-        label.font = [UIFont boldSystemFontOfSize:16];
+        label.font = [UIFont boldSystemFontOfSize:28];
         [self addSubview:label];
         
+        // Жест для перетаскивания
+        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragButton:)];
+        [self addGestureRecognizer:pan];
+        
+        // Жест для нажатия
         UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleTap)];
         [self addGestureRecognizer:tap];
     }
     return self;
+}
+
+- (void)dragButton:(UIPanGestureRecognizer *)gesture {
+    CGPoint translation = [gesture translationInView:self.superview];
+    
+    if (gesture.state == UIGestureRecognizerStateBegan) {
+        self.lastLocation = self.center;
+    }
+    
+    CGPoint newCenter = CGPointMake(self.lastLocation.x + translation.x, self.lastLocation.y + translation.y);
+    
+    // Ограничиваем, чтобы кнопка не уходила за края
+    CGFloat halfWidth = self.frame.size.width / 2;
+    CGFloat halfHeight = self.frame.size.height / 2;
+    CGFloat minX = halfWidth;
+    CGFloat maxX = self.superview.bounds.size.width - halfWidth;
+    CGFloat minY = halfHeight + 50; // Отступ сверху для статус-бара
+    CGFloat maxY = self.superview.bounds.size.height - halfHeight - 50; // Отступ снизу
+    
+    newCenter.x = MAX(minX, MIN(maxX, newCenter.x));
+    newCenter.y = MAX(minY, MIN(maxY, newCenter.y));
+    
+    self.center = newCenter;
 }
 
 - (void)handleTap {
@@ -225,11 +186,147 @@ void showResultWindow(NSString *text) {
 
 @end
 
+// ===== КРАСИВОЕ СОВРЕМЕННОЕ МЕНЮ =====
+@interface ModernMenuView : UIView
+@property (nonatomic, strong) UILabel *titleLabel;
+@property (nonatomic, strong) UIView *headerView;
+@property (nonatomic, strong) UIButton *closeButton;
+@property (nonatomic, strong) UIVisualEffectView *blurView;
+@end
+
+@implementation ModernMenuView
+
+- (instancetype)initWithFrame:(CGRect)frame {
+    self = [super initWithFrame:frame];
+    if (self) {
+        [self setupModernStyle];
+    }
+    return self;
+}
+
+- (void)setupModernStyle {
+    // Размеры меню
+    CGFloat menuWidth = 300;
+    CGFloat menuHeight = 400;
+    CGFloat screenWidth = [UIScreen mainScreen].bounds.size.width;
+    CGFloat screenHeight = [UIScreen mainScreen].bounds.size.height;
+    
+    // Центрируем меню на экране
+    self.frame = CGRectMake((screenWidth - menuWidth) / 2, (screenHeight - menuHeight) / 2, menuWidth, menuHeight);
+    
+    // Блюр эффект (стекло)
+    UIBlurEffect *blur = [UIBlurEffect effectWithStyle:UIBlurEffectStyleDark];
+    self.blurView = [[UIVisualEffectView alloc] initWithEffect:blur];
+    self.blurView.frame = self.bounds;
+    self.blurView.layer.cornerRadius = 25;
+    self.blurView.layer.masksToBounds = YES;
+    self.blurView.alpha = 0.98;
+    [self addSubview:self.blurView];
+    
+    // Градиентная обводка
+    self.layer.cornerRadius = 25;
+    self.layer.borderWidth = 2;
+    self.layer.borderColor = [UIColor clearColor].CGColor;
+    
+    // Тень
+    self.layer.shadowColor = [UIColor blackColor].CGColor;
+    self.layer.shadowOffset = CGSizeMake(0, 10);
+    self.layer.shadowOpacity = 0.5;
+    self.layer.shadowRadius = 20;
+    
+    // Хедер
+    self.headerView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, menuWidth, 60)];
+    self.headerView.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.5];
+    
+    // Верхний акцент (полоска)
+    UIView *topAccent = [[UIView alloc] initWithFrame:CGRectMake(0, 0, menuWidth, 3)];
+    topAccent.backgroundColor = [UIColor systemBlueColor];
+    [self.headerView addSubview:topAccent];
+    
+    // Заголовок
+    self.titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 15, menuWidth - 80, 30)];
+    self.titleLabel.text = @"🎯 ESP CONTROL";
+    self.titleLabel.textColor = [UIColor whiteColor];
+    self.titleLabel.font = [UIFont boldSystemFontOfSize:18];
+    [self.headerView addSubview:self.titleLabel];
+    
+    // Кнопка закрытия
+    self.closeButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    self.closeButton.frame = CGRectMake(menuWidth - 45, 15, 30, 30);
+    [self.closeButton setTitle:@"✕" forState:UIControlStateNormal];
+    [self.closeButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    self.closeButton.titleLabel.font = [UIFont boldSystemFontOfSize:20];
+    self.closeButton.backgroundColor = [UIColor colorWithWhite:0.3 alpha:0.8];
+    self.closeButton.layer.cornerRadius = 15;
+    [self.closeButton addTarget:self action:@selector(hideMenu) forControlEvents:UIControlEventTouchUpInside];
+    [self.headerView addSubview:self.closeButton];
+    
+    [self addSubview:self.headerView];
+}
+
+- (void)hideMenu {
+    self.hidden = YES;
+}
+
+- (UIButton *)createButtonWithTitle:(NSString *)title color:(UIColor *)color yPos:(CGFloat)yPos {
+    UIButton *button = [UIButton buttonWithType:UIButtonTypeCustom];
+    button.frame = CGRectMake(20, yPos, self.frame.size.width - 40, 50);
+    button.backgroundColor = [UIColor colorWithWhite:0.15 alpha:0.8];
+    button.layer.cornerRadius = 15;
+    
+    // Градиент для кнопки
+    CAGradientLayer *gradient = [CAGradientLayer layer];
+    gradient.frame = button.bounds;
+    gradient.colors = @[(id)[color colorWithAlphaComponent:0.8].CGColor, (id)[color colorWithAlphaComponent:0.4].CGColor];
+    gradient.startPoint = CGPointMake(0, 0);
+    gradient.endPoint = CGPointMake(1, 0);
+    gradient.cornerRadius = 15;
+    [button.layer insertSublayer:gradient atIndex:0];
+    
+    // Заголовок
+    [button setTitle:title forState:UIControlStateNormal];
+    [button setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    button.titleLabel.font = [UIFont boldSystemFontOfSize:16];
+    button.contentHorizontalAlignment = UIControlContentHorizontalAlignmentLeft;
+    button.titleEdgeInsets = UIEdgeInsetsMake(0, 20, 0, 0);
+    
+    // Иконка справа
+    UILabel *arrow = [[UILabel alloc] initWithFrame:CGRectMake(button.frame.size.width - 40, 0, 30, 50)];
+    arrow.text = @"→";
+    arrow.textColor = [UIColor whiteColor];
+    arrow.font = [UIFont boldSystemFontOfSize:20];
+    arrow.textAlignment = NSTextAlignmentRight;
+    [button addSubview:arrow];
+    
+    return button;
+}
+
+- (void)addSwitchButtonWithTitle:(NSString *)title yPos:(CGFloat)yPos target:(id)target selector:(SEL)selector {
+    UIView *rowView = [[UIView alloc] initWithFrame:CGRectMake(20, yPos, self.frame.size.width - 40, 50)];
+    rowView.backgroundColor = [UIColor colorWithWhite:0.15 alpha:0.8];
+    rowView.layer.cornerRadius = 15;
+    
+    UILabel *label = [[UILabel alloc] initWithFrame:CGRectMake(20, 0, 180, 50)];
+    label.text = title;
+    label.textColor = [UIColor whiteColor];
+    label.font = [UIFont systemFontOfSize:16];
+    [rowView addSubview:label];
+    
+    UISwitch *switchCtrl = [[UISwitch alloc] initWithFrame:CGRectMake(rowView.frame.size.width - 70, 10, 50, 30)];
+    switchCtrl.onTintColor = [UIColor systemBlueColor];
+    switchCtrl.tag = 100; // Можно использовать для идентификации
+    [rowView addSubview:switchCtrl];
+    
+    [self addSubview:rowView];
+}
+
+@end
+
 // ===== UI ТВИКА =====
 @interface AimbotUI : NSObject
 @property (nonatomic, strong) PassthroughWindow *window;
 @property (nonatomic, strong) FloatButton *floatButton;
-@property (nonatomic, strong) UIView *menuView;
+@property (nonatomic, strong) ModernMenuView *menuView;
 @property (nonatomic, assign) BOOL menuVisible;
 @end
 
@@ -259,109 +356,74 @@ void showResultWindow(NSString *text) {
         }
     }];
     
-    [self buildMenu];
+    [self buildModernMenu];
 }
 
-- (void)buildMenu {
-    self.menuView = [[UIView alloc] initWithFrame:CGRectMake(80, 160, 280, 320)];
-    self.menuView.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.95];
-    self.menuView.layer.cornerRadius = 15;
-    self.menuView.layer.borderWidth = 2;
-    self.menuView.layer.borderColor = [UIColor cyanColor].CGColor;
+- (void)buildModernMenu {
+    self.menuView = [[ModernMenuView alloc] initWithFrame:CGRectZero];
     self.menuView.hidden = YES;
     self.window.menuView = self.menuView;
+    [self.window addSubview:self.menuView];
     
-    // Заголовок
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 15, 280, 30)];
-    title.text = @"🎯 ESP ДЛЯ MODERN STRIKE";
-    title.textColor = [UIColor cyanColor];
-    title.textAlignment = NSTextAlignmentCenter;
-    title.font = [UIFont boldSystemFontOfSize:16];
-    [self.menuView addSubview:title];
+    // Добавляем кнопки
+    CGFloat yPos = 80;
     
-    // Кнопка 1: Сканирование памяти
-    UIButton *scanBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    scanBtn.frame = CGRectMake(40, 70, 200, 45);
-    [scanBtn setTitle:@"🔍 СКАНИРОВАТЬ ПАМЯТЬ" forState:UIControlStateNormal];
-    scanBtn.backgroundColor = [UIColor systemIndigoColor];
-    [scanBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    scanBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-    scanBtn.layer.cornerRadius = 8;
+    // Сканирование памяти
+    UIButton *scanBtn = [self.menuView createButtonWithTitle:@"🔍 SCAN MEMORY" color:[UIColor systemIndigoColor] yPos:yPos];
     [scanBtn addTarget:self action:@selector(scanMemoryAction) forControlEvents:UIControlEventTouchUpInside];
     [self.menuView addSubview:scanBtn];
     
-    // Кнопка 2: Поиск игроков
-    UIButton *playersBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    playersBtn.frame = CGRectMake(40, 130, 200, 45);
-    [playersBtn setTitle:@"👥 ПОИСК ИГРОКОВ" forState:UIControlStateNormal];
-    playersBtn.backgroundColor = [UIColor systemOrangeColor];
-    [playersBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    playersBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-    playersBtn.layer.cornerRadius = 8;
-    [playersBtn addTarget:self action:@selector(findPlayersAction) forControlEvents:UIControlEventTouchUpInside];
-    [self.menuView addSubview:playersBtn];
+    yPos += 70;
     
-    // Кнопка 3: Инфо о памяти
-    UIButton *infoBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    infoBtn.frame = CGRectMake(40, 190, 200, 45);
-    [infoBtn setTitle:@"ℹ️ БАЗОВАЯ ИНФО" forState:UIControlStateNormal];
-    infoBtn.backgroundColor = [UIColor systemGrayColor];
-    [infoBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    infoBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-    infoBtn.layer.cornerRadius = 8;
+    // ESP Toggle
+    [self.menuView addSwitchButtonWithTitle:@"👁️ ESP WALLHACK" yPos:yPos target:self selector:nil];
+    
+    yPos += 70;
+    
+    // Aimbot Toggle
+    [self.menuView addSwitchButtonWithTitle:@"🎯 AIMBOT" yPos:yPos target:self selector:nil];
+    
+    yPos += 70;
+    
+    // Инфо кнопка
+    UIButton *infoBtn = [self.menuView createButtonWithTitle:@"ℹ️ INFORMATION" color:[UIColor systemGrayColor] yPos:yPos];
     [infoBtn addTarget:self action:@selector(infoAction) forControlEvents:UIControlEventTouchUpInside];
     [self.menuView addSubview:infoBtn];
-    
-    // Кнопка 4: Закрыть
-    UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(40, 250, 200, 45);
-    [closeBtn setTitle:@"❌ ЗАКРЫТЬ МЕНЮ" forState:UIControlStateNormal];
-    closeBtn.backgroundColor = [UIColor systemRedColor];
-    [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    closeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-    closeBtn.layer.cornerRadius = 8;
-    [closeBtn addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
-    [self.menuView addSubview:closeBtn];
-    
-    [self.window addSubview:self.menuView];
 }
 
 - (void)toggleMenu {
     self.menuVisible = !self.menuVisible;
-    self.menuView.hidden = !self.menuVisible;
+    
+    if (self.menuVisible) {
+        self.menuView.hidden = NO;
+        self.menuView.transform = CGAffineTransformMakeScale(0.8, 0.8);
+        self.menuView.alpha = 0;
+        [UIView animateWithDuration:0.3 delay:0 usingSpringWithDamping:0.7 initialSpringVelocity:0.5 options:0 animations:^{
+            self.menuView.transform = CGAffineTransformIdentity;
+            self.menuView.alpha = 1;
+        } completion:nil];
+    } else {
+        [UIView animateWithDuration:0.2 animations:^{
+            self.menuView.transform = CGAffineTransformMakeScale(0.8, 0.8);
+            self.menuView.alpha = 0;
+        } completion:^(BOOL finished) {
+            self.menuView.hidden = YES;
+            self.menuView.transform = CGAffineTransformIdentity;
+        }];
+    }
 }
 
 - (void)scanMemoryAction {
     scanMemory();
 }
 
-- (void)findPlayersAction {
-    NSMutableString *log = [NSMutableString stringWithString:@"👥 ПОИСК ИГРОКОВ\n\n"];
-    findPlayers(log);
-    showResultWindow(log);
-}
-
 - (void)infoAction {
     NSMutableString *log = [NSMutableString stringWithString:@"ℹ️ ИНФОРМАЦИЯ\n\n"];
-    
     uintptr_t base = getBaseAddress();
-    [log appendFormat:@"📌 UnityFramework: 0x%lx\n", base];
-    
-    [log appendString:@"\n📚 Классы для поиска:\n"];
-    [log appendString:@"• GameManager\n"];
-    [log appendString:@"• PlayerController\n"];
-    [log appendString:@"• GameUIManager\n"];
-    [log appendString:@"• PlayerHealth\n"];
-    [log appendString:@"• EnemyBaseScript\n"];
-    
-    [log appendString:@"\n🔍 Смещения (предположительно):\n"];
-    [log appendString:@"• health: 0x10\n"];
-    [log appendString:@"• isDead: 0x14\n"];
-    [log appendString:@"• team: 0x30\n"];
-    [log appendString:@"• position: 0x20 (x,y,z)\n"];
-    
-    [log appendString:@"\n⚠️ Для точных адресов нужен Il2CppDumper"];
-    
+    [log appendFormat:@"📍 UnityFramework: 0x%lx\n", base];
+    [log appendString:@"\n📋 Modern Strike Online\n"];
+    [log appendString:@"🎯 ESP Development\n"];
+    [log appendString:@"⚡ Waiting for Il2CppDumper\n"];
     showResultWindow(log);
 }
 
@@ -374,6 +436,6 @@ __attribute__((constructor))
 static void init() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         g_ui = [[AimbotUI alloc] init];
-        NSLog(@"[ESP] Твик загружен!");
+        NSLog(@"[Modern Strike] Твик загружен!");
     });
 }
