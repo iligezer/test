@@ -1,8 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 
-// ==================== ОБЪЯВЛЕНИЕ КЛАССОВ ====================
-
+// ========== ОБЪЯВЛЕНИЯ КЛАССОВ ==========
 @interface Context : NSObject
 + (instancetype)create:(NSString *)name;
 - (id)resolve:(Class)type;
@@ -18,11 +17,6 @@
 - (BOOL)IsAllyOfLocalPlayer;
 - (id)Transform;
 - (float)GetCurrentHealth;
-- (id)QuarkPlayer;
-@end
-
-@interface QuarkRoomPlayer : NSObject
-- (BOOL)IsBot;
 @end
 
 @interface Camera : NSObject
@@ -34,453 +28,105 @@
 - (id)position;
 @end
 
-@interface Vector3 : NSObject
-- (float)x;
-- (float)y;
-- (float)z;
-@end
-
 @interface Players : NSObject
 - (id)All;
 - (BOOL)TryGetCurrentController:(id *)controller;
 @end
 
-// ==================== ПЛАВАЮЩАЯ КНОПКА ====================
-
-@interface FloatButton : UIImageView
-@property (nonatomic, copy) void (^actionBlock)(void);
-@property (nonatomic, assign) CGPoint initialCenter;
-- (void)setAction:(void (^)(void))block;
+// ========== ПЛАВАЮЩАЯ КНОПКА (РЕАЛЬНО РАБОЧАЯ) ==========
+@interface MenuButton : UIButton
 @end
 
-@implementation FloatButton
-
+@implementation MenuButton
 - (instancetype)init {
     self = [super initWithFrame:CGRectMake(20, 100, 50, 50)];
     if (self) {
         self.backgroundColor = [UIColor systemBlueColor];
         self.layer.cornerRadius = 25;
-        self.userInteractionEnabled = YES;
         self.layer.shadowColor = [UIColor blackColor].CGColor;
         self.layer.shadowOffset = CGSizeMake(0, 2);
         self.layer.shadowOpacity = 0.5;
         self.layer.shadowRadius = 4;
+        [self addTarget:self action:@selector(showMenu) forControlEvents:UIControlEventTouchUpInside];
         
-        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleTap)];
-        [self addGestureRecognizer:tap];
-        
-        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
+        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(drag:)];
+        [pan setMaximumNumberOfTouches:1];
+        [pan setMinimumNumberOfTouches:1];
         [self addGestureRecognizer:pan];
     }
     return self;
 }
 
-- (void)handleTap {
-    if (self.actionBlock) {
-        self.actionBlock();
+- (void)drag:(UIPanGestureRecognizer *)pan {
+    if (pan.state == UIGestureRecognizerStateBegan || pan.state == UIGestureRecognizerStateChanged) {
+        CGPoint translation = [pan translationInView:self.superview];
+        CGPoint center = CGPointMake(self.center.x + translation.x, self.center.y + translation.y);
+        
+        CGFloat halfWidth = self.bounds.size.width / 2;
+        CGFloat halfHeight = self.bounds.size.height / 2;
+        center.x = MAX(halfWidth, MIN(center.x, self.superview.bounds.size.width - halfWidth));
+        center.y = MAX(halfHeight, MIN(center.y, self.superview.bounds.size.height - halfHeight));
+        
+        self.center = center;
+        [pan setTranslation:CGPointZero inView:self.superview];
     }
 }
 
-- (void)handlePan:(UIPanGestureRecognizer *)pan {
-    if (pan.state == UIGestureRecognizerStateBegan) {
-        self.initialCenter = self.center;
+- (void)showMenu {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Aimbot Menu"
+                                                                   message:nil
+                                                            preferredStyle:UIAlertControllerStyleActionSheet];
+    
+    // Состояние ESP
+    BOOL espOn = [[NSUserDefaults standardUserDefaults] boolForKey:@"esp_enabled"];
+    
+    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ ESP", espOn ? @"✅" : @"❌"]
+                                               style:UIAlertActionStyleDefault
+                                             handler:^(UIAlertAction *action) {
+        BOOL newState = !espOn;
+        [[NSUserDefaults standardUserDefaults] setBool:newState forKey:@"esp_enabled"];
+        [[NSUserDefaults standardUserDefaults] synchronize];
+    }]];
+    
+    [alert addAction:[UIAlertAction actionWithTitle:@"Закрыть"
+                                               style:UIAlertActionStyleCancel
+                                             handler:nil]];
+    
+    UIViewController *rootVC = [UIApplication sharedApplication].keyWindow.rootViewController;
+    while (rootVC.presentedViewController) rootVC = rootVC.presentedViewController;
+    
+    if (UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad) {
+        alert.popoverPresentationController.sourceView = self;
+        alert.popoverPresentationController.sourceRect = self.bounds;
     }
     
-    CGPoint translation = [pan translationInView:self.superview];
-    CGPoint newCenter = CGPointMake(self.initialCenter.x + translation.x, 
-                                     self.initialCenter.y + translation.y);
-    
-    // Ограничения, чтобы кнопка не уходила за края
-    CGFloat halfWidth = self.bounds.size.width / 2;
-    CGFloat halfHeight = self.bounds.size.height / 2;
-    newCenter.x = MAX(halfWidth, MIN(newCenter.x, self.superview.bounds.size.width - halfWidth));
-    newCenter.y = MAX(halfHeight, MIN(newCenter.y, self.superview.bounds.size.height - halfHeight));
-    
-    self.center = newCenter;
+    [rootVC presentViewController:alert animated:YES completion:nil];
 }
-
-- (void)setAction:(void (^)(void))block {
-    self.actionBlock = block;
-}
-
 @end
 
-// ==================== ОКНО ДЛЯ ЛОГОВ ====================
-
-@interface LogWindow : UIWindow
-@property (nonatomic, retain) UITextView *textView;
-@property (nonatomic, retain) UIButton *closeButton;
-@property (nonatomic, retain) UIButton *logCopyButton; // ИСПРАВЛЕНО: было copyLogButton
-- (void)showLog:(NSString *)log;
-@end
-
-@implementation LogWindow
-
-- (instancetype)init {
-    self = [super initWithFrame:CGRectMake(20, 100, [UIScreen mainScreen].bounds.size.width - 40, 300)];
-    if (self) {
-        self.windowLevel = UIWindowLevelAlert + 2;
-        self.backgroundColor = [UIColor colorWithWhite:0 alpha:0.9];
-        self.layer.cornerRadius = 10;
-        self.layer.borderColor = [UIColor whiteColor].CGColor;
-        self.layer.borderWidth = 1;
-        self.userInteractionEnabled = YES;
-        
-        // Заголовок
-        UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 0, self.frame.size.width, 40)];
-        title.text = @"📋 Логи ESP";
-        title.textColor = [UIColor whiteColor];
-        title.textAlignment = NSTextAlignmentCenter;
-        title.font = [UIFont boldSystemFontOfSize:18];
-        [self addSubview:title];
-        
-        // Текстовое поле
-        _textView = [[UITextView alloc] initWithFrame:CGRectMake(10, 50, self.frame.size.width - 20, 200)];
-        _textView.backgroundColor = [UIColor blackColor];
-        _textView.textColor = [UIColor greenColor];
-        _textView.font = [UIFont fontWithName:@"Courier" size:12];
-        _textView.editable = NO;
-        _textView.layer.cornerRadius = 5;
-        [self addSubview:_textView];
-        
-        // Кнопка копирования - ИСПРАВЛЕНО: logCopyButton
-        _logCopyButton = [UIButton buttonWithType:UIButtonTypeSystem];
-        _logCopyButton.frame = CGRectMake(10, 260, 100, 30);
-        [_logCopyButton setTitle:@"📋 Копировать" forState:UIControlStateNormal];
-        [_logCopyButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        _logCopyButton.backgroundColor = [UIColor darkGrayColor];
-        _logCopyButton.layer.cornerRadius = 5;
-        [_logCopyButton addTarget:self action:@selector(copyLog) forControlEvents:UIControlEventTouchUpInside];
-        [self addSubview:_logCopyButton];
-        
-        // Кнопка закрытия
-        _closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
-        _closeButton.frame = CGRectMake(self.frame.size.width - 110, 260, 100, 30);
-        [_closeButton setTitle:@"❌ Закрыть" forState:UIControlStateNormal];
-        [_closeButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        _closeButton.backgroundColor = [UIColor redColor];
-        _closeButton.layer.cornerRadius = 5;
-        [_closeButton addTarget:self action:@selector(closeLog) forControlEvents:UIControlEventTouchUpInside];
-        [self addSubview:_closeButton];
-        
-        self.hidden = YES;
-    }
-    return self;
-}
-
-- (void)showLog:(NSString *)log {
-    _textView.text = log;
-    self.hidden = NO;
-    [self makeKeyAndVisible];
-}
-
-- (void)copyLog {
-    UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
-    pasteboard.string = _textView.text;
-    
-    // Показываем уведомление
-    UILabel *toast = [[UILabel alloc] initWithFrame:CGRectMake(50, 200, 200, 40)];
-    toast.text = @"✅ Скопировано!";
-    toast.textColor = [UIColor whiteColor];
-    toast.backgroundColor = [UIColor blackColor];
-    toast.textAlignment = NSTextAlignmentCenter;
-    toast.layer.cornerRadius = 10;
-    toast.clipsToBounds = YES;
-    [self addSubview:toast];
-    
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1.5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        [toast removeFromSuperview];
-    });
-}
-
-- (void)closeLog {
-    self.hidden = YES;
-}
-
-@end
-
-// ==================== ESP ВЬЮ ====================
-
-@interface ESPView : UIView {
-    NSMutableArray *_enemies;
-    UIFont *_espFont;
-    BOOL _espEnabled;
-    BOOL _espBox;
-    BOOL _espHealth;
-    BOOL _espDistance;
-}
-@property (nonatomic, retain) NSMutableArray *enemies;
-@property (nonatomic, assign) BOOL espEnabled;
-@property (nonatomic, assign) BOOL espBox;
-@property (nonatomic, assign) BOOL espHealth;
-@property (nonatomic, assign) BOOL espDistance;
-- (void)updateEnemies:(NSArray *)enemies;
+// ========== ESP ВЬЮ ==========
+@interface ESPView : UIView
 @end
 
 @implementation ESPView
-@synthesize enemies = _enemies;
-@synthesize espEnabled = _espEnabled;
-@synthesize espBox = _espBox;
-@synthesize espHealth = _espHealth;
-@synthesize espDistance = _espDistance;
 
 - (id)initWithFrame:(CGRect)frame {
     self = [super initWithFrame:frame];
     if (self) {
         self.backgroundColor = [UIColor clearColor];
         self.userInteractionEnabled = NO;
-        _enemies = [[NSMutableArray alloc] init];
-        _espFont = [UIFont boldSystemFontOfSize:14];
-        _espEnabled = YES;
-        _espBox = YES;
-        _espHealth = YES;
-        _espDistance = YES;
-    }
-    return self;
-}
-
-- (void)dealloc {
-    _enemies = nil;
-    _espFont = nil;
-}
-
-- (void)updateEnemies:(NSArray *)enemies {
-    @synchronized(self) {
-        [_enemies removeAllObjects];
-        [_enemies addObjectsFromArray:enemies];
-    }
-    [self setNeedsDisplay];
-}
-
-- (void)drawRect:(CGRect)rect {
-    [super drawRect:rect];
-    
-    if (!_espEnabled) return;
-    
-    @synchronized(self) {
-        CGContextRef ctx = UIGraphicsGetCurrentContext();
         
-        for (NSDictionary *enemy in _enemies) {
-            NSValue *screenPosValue = [enemy objectForKey:@"screenPos"];
-            if (!screenPosValue) continue;
-            
-            CGPoint screenPos = [screenPosValue CGPointValue];
-            float distance = [[enemy objectForKey:@"distance"] floatValue];
-            BOOL isBot = [[enemy objectForKey:@"isBot"] boolValue];
-            float health = [[enemy objectForKey:@"health"] floatValue];
-            NSString *name = [enemy objectForKey:@"name"];
-            
-            if (screenPos.x < 0 || screenPos.x > self.frame.size.width || 
-                screenPos.y < 0 || screenPos.y > self.frame.size.height) {
-                continue;
-            }
-            
-            UIColor *color = isBot ? [UIColor orangeColor] : [UIColor redColor];
-            
-            float boxSize = 60.0f;
-            if (distance > 0) {
-                boxSize = MIN(MAX(300.0f / distance, 30.0f), 120.0f);
-            }
-            
-            // Рисуем прямоугольник
-            if (_espBox) {
-                CGRect box = CGRectMake(screenPos.x - boxSize/2, 
-                                        screenPos.y - boxSize/2 - 15, 
-                                        boxSize, boxSize);
-                
-                CGContextSetStrokeColorWithColor(ctx, color.CGColor);
-                CGContextSetLineWidth(ctx, 2.0f);
-                CGContextStrokeRect(ctx, box);
-                
-                CGContextSetStrokeColorWithColor(ctx, color.CGColor);
-                CGContextSetLineWidth(ctx, 1.5f);
-                CGContextMoveToPoint(ctx, screenPos.x, screenPos.y - boxSize/2 - 15);
-                CGContextAddLineToPoint(ctx, screenPos.x, screenPos.y + boxSize/2 - 15);
-                CGContextStrokePath(ctx);
-            }
-            
-            // Рисуем здоровье
-            if (_espHealth && health > 0) {
-                CGRect healthBar = CGRectMake(screenPos.x - boxSize/2, 
-                                              screenPos.y - boxSize/2 - 25, 
-                                              boxSize * (health / 100.0f), 3);
-                CGContextSetFillColorWithColor(ctx, [UIColor greenColor].CGColor);
-                CGContextFillRect(ctx, healthBar);
-            }
-            
-            // Рисуем дистанцию и имя
-            if (_espDistance) {
-                NSString *distanceText = [NSString stringWithFormat:@"%.1fм", distance];
-                if (name) {
-                    distanceText = [NSString stringWithFormat:@"%@\n%.1fм%@", name, distance, isBot ? @" (бот)" : @""];
-                } else {
-                    distanceText = [NSString stringWithFormat:@"%.1fм%@", distance, isBot ? @" (бот)" : @""];
-                }
-                
-                NSDictionary *attrs = @{
-                    NSFontAttributeName: _espFont,
-                    NSForegroundColorAttributeName: [UIColor whiteColor]
-                };
-                [distanceText drawAtPoint:CGPointMake(screenPos.x - 40, screenPos.y - boxSize/2 - 40) 
-                            withAttributes:attrs];
-            }
-        }
-    }
-}
-
-@end
-
-// ==================== ОСНОВНОЙ ТВИК ====================
-
-@interface AimbotTweak : NSObject
-@property (nonatomic, retain) UIWindow *espWindow;
-@property (nonatomic, retain) ESPView *espView;
-@property (nonatomic, retain) FloatButton *floatButton;
-@property (nonatomic, retain) LogWindow *logWindow;
-@property (nonatomic, assign) BOOL espEnabled;
-@property (nonatomic, assign) BOOL espBox;
-@property (nonatomic, assign) BOOL espHealth;
-@property (nonatomic, assign) BOOL espDistance;
-@property (nonatomic, retain) NSTimer *updateTimer;
-@property (nonatomic, retain) NSMutableString *logBuffer;
-@end
-
-@implementation AimbotTweak
-
-+ (instancetype)sharedInstance {
-    static AimbotTweak *instance = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        instance = [[AimbotTweak alloc] init];
-    });
-    return instance;
-}
-
-- (id)init {
-    self = [super init];
-    if (self) {
-        _espEnabled = YES;
-        _espBox = YES;
-        _espHealth = YES;
-        _espDistance = YES;
-        _logBuffer = [[NSMutableString alloc] init];
+        CADisplayLink *link = [CADisplayLink displayLinkWithTarget:self selector:@selector(update)];
+        [link addToRunLoop:[NSRunLoop currentRunLoop] forMode:NSRunLoopCommonModes];
     }
     return self;
 }
 
-- (void)setupUI {
-    // Создаём окно для ESP
-    _espWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-    _espWindow.windowLevel = UIWindowLevelAlert + 1;
-    _espWindow.backgroundColor = [UIColor clearColor];
-    _espWindow.userInteractionEnabled = NO;
-    
-    _espView = [[ESPView alloc] initWithFrame:_espWindow.bounds];
-    _espView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-    _espView.espEnabled = _espEnabled;
-    _espView.espBox = _espBox;
-    _espView.espHealth = _espHealth;
-    _espView.espDistance = _espDistance;
-    [_espWindow addSubview:_espView];
-    
-    [_espWindow makeKeyAndVisible];
-    
-    // Создаём плавающую кнопку
-    UIWindow *mainWindow = [UIApplication sharedApplication].keyWindow;
-    _floatButton = [[FloatButton alloc] init];
-    __weak typeof(self) weakSelf = self;
-    [_floatButton setAction:^{
-        [weakSelf showMenu];
-    }];
-    [mainWindow addSubview:_floatButton];
-    
-    // Создаём окно для логов
-    _logWindow = [[LogWindow alloc] init];
-    
-    NSLog(@"[Aimbot] UI created");
-}
-
-- (void)showMenu {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🎯 Aimbot Menu"
-                                                                   message:@"Выберите опции"
-                                                            preferredStyle:UIAlertControllerStyleActionSheet];
-    
-    // Переключатели ESP
-    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ ESP", _espEnabled ? @"✅" : @"❌"]
-                                               style:UIAlertActionStyleDefault
-                                             handler:^(UIAlertAction *action) {
-        self.espEnabled = !self.espEnabled;
-        self.espView.espEnabled = self.espEnabled;
-    }]];
-    
-    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ ESP Box", _espBox ? @"✅" : @"❌"]
-                                               style:UIAlertActionStyleDefault
-                                             handler:^(UIAlertAction *action) {
-        self.espBox = !self.espBox;
-        self.espView.espBox = self.espBox;
-    }]];
-    
-    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ ESP Health", _espHealth ? @"✅" : @"❌"]
-                                               style:UIAlertActionStyleDefault
-                                             handler:^(UIAlertAction *action) {
-        self.espHealth = !self.espHealth;
-        self.espView.espHealth = self.espHealth;
-    }]];
-    
-    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ ESP Distance", _espDistance ? @"✅" : @"❌"]
-                                               style:UIAlertActionStyleDefault
-                                             handler:^(UIAlertAction *action) {
-        self.espDistance = !self.espDistance;
-        self.espView.espDistance = self.espDistance;
-    }]];
-    
-    // Кнопка для логов
-    [alert addAction:[UIAlertAction actionWithTitle:@"📋 Показать логи"
-                                               style:UIAlertActionStyleDefault
-                                             handler:^(UIAlertAction *action) {
-        [self showLogs];
-    }]];
-    
-    // Кнопка закрытия
-    [alert addAction:[UIAlertAction actionWithTitle:@"Закрыть"
-                                               style:UIAlertActionStyleCancel
-                                             handler:nil]];
-    
-    UIViewController *rootVC = [UIApplication sharedApplication].keyWindow.rootViewController;
-    while (rootVC.presentedViewController) {
-        rootVC = rootVC.presentedViewController;
+- (void)update {
+    BOOL espOn = [[NSUserDefaults standardUserDefaults] boolForKey:@"esp_enabled"];
+    if (espOn) {
+        [self setNeedsDisplay];
     }
-    
-    // Для iPad
-    if (UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad) {
-        alert.popoverPresentationController.sourceView = self.floatButton;
-        alert.popoverPresentationController.sourceRect = self.floatButton.bounds;
-    }
-    
-    [rootVC presentViewController:alert animated:YES completion:nil];
-}
-
-- (void)showLogs {
-    if (_logBuffer.length > 0) {
-        [_logWindow showLog:_logBuffer];
-    } else {
-        [_logWindow showLog:@"Логов пока нет"];
-    }
-}
-
-- (void)addLog:(NSString *)format, ... {
-    va_list args;
-    va_start(args, format);
-    NSString *message = [[NSString alloc] initWithFormat:format arguments:args];
-    va_end(args);
-    
-    NSString *timestamp = [NSDateFormatter localizedStringFromDate:[NSDate date]
-                                                          dateStyle:NSDateFormatterShortStyle
-                                                          timeStyle:NSDateFormatterMediumStyle];
-    NSString *logLine = [NSString stringWithFormat:@"[%@] %@\n", timestamp, message];
-    
-    [_logBuffer appendString:logLine];
-    NSLog(@"[Aimbot] %@", message);
 }
 
 - (float)distanceBetween:(id)pos1 and:(id)pos2 {
@@ -499,20 +145,10 @@
     return sqrt(dx*dx + dy*dy + dz*dz);
 }
 
-- (void)startESP {
-    [self setupUI];
+- (void)drawRect:(CGRect)rect {
+    [super drawRect:rect];
     
-    _updateTimer = [NSTimer scheduledTimerWithTimeInterval:0.033
-                                                     target:self
-                                                   selector:@selector(updateESP)
-                                                   userInfo:nil
-                                                    repeats:YES];
-    
-    [self addLog:@"ESP запущен"];
-}
-
-- (void)updateESP {
-    if (!_espEnabled || !_espView) return;
+    if (![[NSUserDefaults standardUserDefaults] boolForKey:@"esp_enabled"]) return;
     
     @autoreleasepool {
         Class contextClass = objc_getClass("Context");
@@ -527,7 +163,6 @@
         Players *players = [context performSelector:@selector(resolve:) withObject:playersClass];
         if (!players) return;
         
-        // Получаем локального игрока
         FirstPersonController *localPlayer = nil;
         NSMethodSignature *sig = [players methodSignatureForSelector:@selector(TryGetCurrentController:)];
         if (!sig) return;
@@ -540,19 +175,13 @@
         
         BOOL hasLocal = NO;
         [inv getReturnValue:&hasLocal];
-        
         if (!hasLocal || !localPlayer) return;
         
-        Class cameraClass = objc_getClass("Camera");
-        if (!cameraClass) return;
-        
-        Camera *mainCamera = [cameraClass performSelector:@selector(main)];
+        Camera *mainCamera = [objc_getClass("Camera") performSelector:@selector(main)];
         if (!mainCamera) return;
         
         NSArray *allPlayers = [players valueForKey:@"All"];
         if (!allPlayers) return;
-        
-        NSMutableArray *enemiesData = [NSMutableArray array];
         
         id localRootPoint = [localPlayer valueForKey:@"RootPoint"];
         if (!localRootPoint) return;
@@ -560,18 +189,13 @@
         id localPos = [localRootPoint valueForKey:@"position"];
         if (!localPos) return;
         
-        int enemyCount = 0;
+        CGContextRef ctx = UIGraphicsGetCurrentContext();
         
         for (id player in allPlayers) {
             @try {
-                BOOL isMine = [[player valueForKey:@"IsMine"] boolValue];
-                if (isMine) continue;
-                
-                BOOL isDead = [[player valueForKey:@"IsDead"] boolValue];
-                if (isDead) continue;
-                
-                BOOL isAlly = [[player valueForKey:@"IsAllyOfLocalPlayer"] boolValue];
-                if (isAlly) continue;
+                if ([[player valueForKey:@"IsMine"] boolValue]) continue;
+                if ([[player valueForKey:@"IsDead"] boolValue]) continue;
+                if ([[player valueForKey:@"IsAllyOfLocalPlayer"] boolValue]) continue;
                 
                 id transform = [player valueForKey:@"Transform"];
                 if (!transform) continue;
@@ -587,63 +211,50 @@
                 
                 float x = [[screenPos valueForKey:@"x"] floatValue];
                 float y = [[screenPos valueForKey:@"y"] floatValue];
-                
-                CGPoint point = CGPointMake(x, [UIScreen mainScreen].bounds.size.height - y);
+                y = [UIScreen mainScreen].bounds.size.height - y;
                 
                 float distance = [self distanceBetween:localPos and:worldPos];
                 float health = [[player valueForKey:@"GetCurrentHealth"] floatValue];
                 
-                BOOL isBot = NO;
-                NSString *playerName = @"Unknown";
+                float boxSize = MIN(MAX(300.0f / distance, 30.0f), 100.0f);
+                CGRect box = CGRectMake(x - boxSize/2, y - boxSize/2 - 10, boxSize, boxSize);
                 
-                id quarkPlayer = [player valueForKey:@"QuarkPlayer"];
-                if (quarkPlayer) {
-                    isBot = [[quarkPlayer valueForKey:@"IsBot"] boolValue];
-                    playerName = [quarkPlayer valueForKey:@"Username"];
-                    if (!playerName) playerName = @"Bot";
-                }
+                CGContextSetStrokeColorWithColor(ctx, [UIColor redColor].CGColor);
+                CGContextSetLineWidth(ctx, 2);
+                CGContextStrokeRect(ctx, box);
                 
-                [enemiesData addObject:@{
-                    @"screenPos": [NSValue valueWithCGPoint:point],
-                    @"distance": @(distance),
-                    @"isBot": @(isBot),
-                    @"health": @(health),
-                    @"name": playerName ?: @""
-                }];
+                CGRect healthBar = CGRectMake(x - boxSize/2, y - boxSize/2 - 15, boxSize * (health/100), 3);
+                CGContextSetFillColorWithColor(ctx, [UIColor greenColor].CGColor);
+                CGContextFillRect(ctx, healthBar);
                 
-                enemyCount++;
-                
-            } @catch (NSException *e) {
-                [self addLog:@"Ошибка: %@", e];
-            }
+                NSString *distText = [NSString stringWithFormat:@"%.0fм", distance];
+                [distText drawAtPoint:CGPointMake(x - 20, y - boxSize/2 - 30) 
+                        withAttributes:@{NSFontAttributeName: [UIFont systemFontOfSize:12],
+                                        NSForegroundColorAttributeName: [UIColor whiteColor]}];
+            } @catch (NSException *e) {}
         }
-        
-        if (enemyCount > 0) {
-            static int lastCount = 0;
-            if (enemyCount != lastCount) {
-                [self addLog:@"Найдено врагов: %d", enemyCount];
-                lastCount = enemyCount;
-            }
-        }
-        
-        [_espView updateEnemies:enemiesData];
     }
 }
-
 @end
 
-// ==================== ТОЧКА ВХОДА ====================
+// ========== ТОЧКА ВХОДА ==========
 __attribute__((constructor))
 static void init() {
-    NSLog(@"[Aimbot] Загружается...");
-    
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        NSLog(@"[Aimbot] Инициализация...");
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        UIWindow *mainWindow = [UIApplication sharedApplication].keyWindow;
         
-        AimbotTweak *tweak = [AimbotTweak sharedInstance];
-        [tweak startESP];
-        [tweak addLog:@"✅ Твик успешно загружен"];
+        // Кнопка
+        MenuButton *btn = [[MenuButton alloc] init];
+        [mainWindow addSubview:btn];
         
-        NSLog(@"[Aimbot] Готов к работе");
+        // ESP окно
+        UIWindow *espWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+        espWindow.windowLevel = UIWindowLevelAlert + 1;
+        espWindow.backgroundColor = [UIColor clearColor];
+        espWindow.userInteractionEnabled = NO;
+        [espWindow addSubview:[[ESPView alloc] initWithFrame:espWindow.bounds]];
+        [espWindow makeKeyAndVisible];
+        
+        NSLog(@"[Aimbot] Загружено");
     });
 }
