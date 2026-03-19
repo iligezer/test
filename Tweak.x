@@ -142,9 +142,16 @@ UIWindow* createOverlayWindow() {
     
     // Создаем плавающую кнопку
     self.floatButton = [[FloatButton alloc] init];
+    
+    // ИСПРАВЛЕНО: weakSelf для избежания retain cycle
+    __weak typeof(self) weakSelf = self;
     [self.floatButton setAction:^{
-        [self toggleMenu];
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (strongSelf) {
+            [strongSelf toggleMenu];
+        }
     }];
+    
     [self.window addSubview:self.floatButton];
     
     // Создаем меню
