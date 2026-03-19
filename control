@@ -3,7 +3,7 @@ Name: Aimbot
 Depends: mobilesubstrate
 Version: 1.0
 Architecture: iphoneos-arm
-Description: Simple aimbot for testing
+Description: Minimal aimbot test
 Maintainer: You
 Author: You
 Section: Tweaks
