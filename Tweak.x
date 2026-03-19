@@ -3,6 +3,9 @@
 #import <mach-o/dyld.h>
 #import <mach-o/loader.h>
 
+// ===== ПРОТОТИПЫ ФУНКЦИЙ =====
+void showResultWindow(NSString *text);
+
 // ===== УТИЛИТЫ ДЛЯ РАБОТЫ С ПАМЯТЬЮ =====
 
 // Получение базового адреса UnityFramework
@@ -25,7 +28,7 @@ void searchMemory(float value, NSMutableString *log) {
         return;
     }
     
-    [log appendFormat:@"📌 Базовый адрес: 0x%llx\n", base];
+    [log appendFormat:@"📌 Базовый адрес: 0x%lx\n", base];
     [log appendFormat:@"🔍 Ищем значение: %f (float)\n\n", value];
     
     // Здесь будет код поиска в памяти
@@ -51,19 +54,13 @@ void findPlayers(NSMutableString *log) {
     [log appendString:@"4. PlayerController::_transform\n"];
 }
 
-// Поиск по сигнатуре (паттерну)
-void findPattern(const char *pattern, const char *mask, NSMutableString *log) {
-    [log appendFormat:@"🔍 Поиск паттерна: %s\n", pattern];
-    // Заглушка
-}
-
 // Тестовое сканирование памяти
 void scanMemory() {
     NSMutableString *log = [NSMutableString stringWithString:@"🔬 СКАНИРОВАНИЕ ПАМЯТИ\n\n"];
     
     // 1. Базовый адрес
     uintptr_t base = getBaseAddress();
-    [log appendFormat:@"📍 UnityFramework: 0x%llx\n", base];
+    [log appendFormat:@"📍 UnityFramework: 0x%lx\n", base];
     
     // 2. Информация о загруженных библиотеках
     [log appendString:@"\n📚 ЗАГРУЖЕННЫЕ БИБЛИОТЕКИ:\n"];
@@ -77,15 +74,6 @@ void scanMemory() {
     
     // 3. Поиск возможных классов
     [log appendString:@"\n🎯 ПОИСК КЛАССОВ ИЗ PROJECT.GAME.DLL:\n"];
-    NSArray *classNames = @[
-        @"GameManager",
-        @"PlayerController",
-        @"GameUIManager",
-        @"PlayerHealth",
-        @"EnemyBaseScript",
-        @"PlayerManager",
-        @"EnemyManager"
-    ];
     
     // В IL2CPP классы не регистрируются в ObjC runtime
     [log appendString:@"   ❌ IL2CPP - классы не видны через objc_getClass\n"];
@@ -357,7 +345,7 @@ void showResultWindow(NSString *text) {
     NSMutableString *log = [NSMutableString stringWithString:@"ℹ️ ИНФОРМАЦИЯ\n\n"];
     
     uintptr_t base = getBaseAddress();
-    [log appendFormat:@"📌 UnityFramework: 0x%llx\n", base];
+    [log appendFormat:@"📌 UnityFramework: 0x%lx\n", base];
     
     [log appendString:@"\n📚 Классы для поиска:\n"];
     [log appendString:@"• GameManager\n"];
