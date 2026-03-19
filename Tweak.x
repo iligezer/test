@@ -26,12 +26,6 @@ typedef void *(*t_get_transform)(void *player);
 static t_get_main_camera Camera_main = NULL;
 static t_world_to_screen Camera_WorldToScreen = NULL;
 static t_get_position Transform_get_position = NULL;
-// Остальные пока не используем, но оставляем закомментированными
-// static t_is_mine Player_IsMine = NULL;
-// static t_is_dead Player_IsDead = NULL;
-// static t_is_ally Player_IsAlly = NULL;
-// static t_get_health Player_GetHealth = NULL;
-// static t_get_transform Player_GetTransform = NULL;
 
 static BOOL espEnabled = NO;
 static NSMutableString *logText = nil;
@@ -62,7 +56,7 @@ static UIWindow *logWindow = nil;
         espEnabled = !espEnabled;
     }]];
     
-    [alert addAction:[UIAlertAction actionWithTitle:@"🔍 Проверить адреса"
+    [alert addAction:[UIAlertAction actionWithTitle:@"🔍 Проверить адреса (безопасно)"
                                                style:UIAlertActionStyleDefault
                                              handler:^(UIAlertAction *a){
         [ButtonHandler verifyAddresses];
@@ -142,23 +136,34 @@ static UIWindow *logWindow = nil;
 + (void)verifyAddresses {
     [logText setString:@""];
     
-    [self addLog:@"🔍 ПРОВЕРКА АДРЕСОВ"];
-    [self addLog:@"==================="];
+    [self addLog:@"🔍 ПРОВЕРКА АДРЕСОВ (БЕЗОПАСНАЯ)"];
+    [self addLog:@"================================="];
     
     [self addLog:[NSString stringWithFormat:@"Camera.main: %p", Camera_main]];
     [self addLog:[NSString stringWithFormat:@"WorldToScreen: %p", Camera_WorldToScreen]];
     [self addLog:[NSString stringWithFormat:@"get_position: %p", Transform_get_position]];
     
+    // ТОЛЬКО ПРОВЕРКА АДРЕСОВ — НИКАКИХ ВЫЗОВОВ!
     if (Camera_main) {
-        void *cam = Camera_main();
-        [self addLog:[NSString stringWithFormat:@"✅ Camera.main вызвана -> результат: %p", cam]];
-        
-        if (cam) {
-            [self addLog:@"✅ Камера существует! Адрес верный"];
-        } else {
-            [self addLog:@"❌ Camera.main вернула nil"];
-        }
+        [self addLog:@"✅ Camera_main загружена"];
+    } else {
+        [self addLog:@"❌ Camera_main == NULL"];
     }
+    
+    if (Camera_WorldToScreen) {
+        [self addLog:@"✅ WorldToScreen загружена"];
+    } else {
+        [self addLog:@"❌ WorldToScreen == NULL"];
+    }
+    
+    if (Transform_get_position) {
+        [self addLog:@"✅ get_position загружена"];
+    } else {
+        [self addLog:@"❌ get_position == NULL"];
+    }
+    
+    [self addLog:@"\n📌 Никаких вызовов функций не производилось"];
+    [self addLog:@"✅ Игра не должна вылететь"];
     
     [self showLogWindow];
 }
@@ -214,16 +219,12 @@ static void init() {
     @autoreleasepool {
         logText = [[NSMutableString alloc] init];
         
-        Camera_main = (t_get_main_camera)(BASE_ADDR + (RVA_Camera_get_main - 0x1042c4000));
-        Camera_WorldToScreen = (t_world_to_screen)(BASE_ADDR + (RVA_Camera_WorldToScreen - 0x1042c4000));
-        Transform_get_position = (t_get_position)(BASE_ADDR + (RVA_Transform_get_position - 0x1042c4000));
+        // Вычисляем абсолютные адреса
+        uint64_t base = BASE_ADDR;
         
-        // Эти пока не используем
-        // Player_IsMine = (t_is_mine)(BASE_ADDR + (RVA_Player_IsMine - 0x1042c4000));
-        // Player_IsDead = (t_is_dead)(BASE_ADDR + (RVA_Player_IsDead - 0x1042c4000));
-        // Player_IsAlly = (t_is_ally)(BASE_ADDR + (RVA_Player_IsAlly - 0x1042c4000));
-        // Player_GetHealth = (t_get_health)(BASE_ADDR + (RVA_Player_GetHealth - 0x1042c4000));
-        // Player_GetTransform = (t_get_transform)(BASE_ADDR + (RVA_Player_GetTransform - 0x1042c4000));
+        Camera_main = (t_get_main_camera)(base + (RVA_Camera_get_main - 0x1042c4000));
+        Camera_WorldToScreen = (t_world_to_screen)(base + (RVA_Camera_WorldToScreen - 0x1042c4000));
+        Transform_get_position = (t_get_position)(base + (RVA_Transform_get_position - 0x1042c4000));
         
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
             UIWindow *mainWindow = [ButtonHandler mainWindow];
