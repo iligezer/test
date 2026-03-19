@@ -34,16 +34,16 @@ static NSMutableDictionary *scanStats = nil;
 @property (assign) unsigned long address;
 @property (strong) NSString *name;
 @property (assign) BOOL isLocal;
-@property (assign) int confidence; // 0-100 насколько похоже на игрока
+@property (assign) int confidence;
 @end
 
 @implementation PlayerData
 - (NSString *)description {
-    return [NSString stringWithFormat:@"[%d%%] %@ [%.1f] (%.1f, %.1f, %.1f) 0x%lx", 
+    return [NSString stringWithFormat:@"[%d%%] %@ [%.1f] (%.1f, %.1f, %.1f) 0x%lx",
             self.confidence,
-            self.name ?: @"???", 
-            self.health, 
-            self.x, self.y, self.z, 
+            self.name ?: @"???",
+            self.health,
+            self.x, self.y, self.z,
             self.address];
 }
 @end
@@ -61,6 +61,8 @@ static NSMutableDictionary *scanStats = nil;
 + (void)addLog:(NSString*)text;
 + (void)toggleESP;
 + (void)closeMenu:(UIButton*)sender;
++ (void)checkAddresses;
++ (void)showStats;
 @end
 
 @interface ESPView : UIView
@@ -73,39 +75,36 @@ static NSMutableDictionary *scanStats = nil;
 @implementation ESPView
 - (void)drawRect:(CGRect)rect {
     [super drawRect:rect];
-    
+
     if (!espEnabled || !foundPlayers.count) return;
     if (!Camera_main || !Camera_WorldToScreen || !Transform_get_position) return;
-    
+
     void *cam = Camera_main();
     if (!cam) return;
-    
+
     CGContextRef ctx = UIGraphicsGetCurrentContext();
-    
+
     for (PlayerData *player in foundPlayers) {
-        if (player.isLocal) continue; // не рисуем себя
-        if (player.confidence < 50) continue; // рисуем только уверенных
-        
+        if (player.isLocal) continue;
+        if (player.confidence < 50) continue;
+
         float position[3] = {player.x, player.y, player.z};
         void *screenPos = Camera_WorldToScreen(cam, position);
-        
+
         if (screenPos) {
             float *screen = (float*)screenPos;
             float screenX = screen[0] * rect.size.width;
             float screenY = screen[1] * rect.size.height;
-            
-            // Пропускаем, если за экраном
-            if (screenX < 0 || screenX > rect.size.width || 
+
+            if (screenX < 0 || screenX > rect.size.width ||
                 screenY < 0 || screenY > rect.size.height) continue;
-            
-            // Рисуем врага (цвет зависит от уверенности)
-            UIColor *color = player.confidence > 80 ? [UIColor redColor] : 
+
+            UIColor *color = player.confidence > 80 ? [UIColor redColor] :
                             (player.confidence > 50 ? [UIColor orangeColor] : [UIColor yellowColor]);
             CGContextSetFillColorWithColor(ctx, color.CGColor);
             CGContextFillEllipseInRect(ctx, CGRectMake(screenX - 5, screenY - 5, 10, 10));
-            
-            // Рисуем ник и здоровье
-            NSString *displayText = [NSString stringWithFormat:@"%@ [%.0f] %d%%", 
+
+            NSString *displayText = [NSString stringWithFormat:@"%@ [%.0f] %d%%",
                                       player.name ?: @"Enemy", player.health, player.confidence];
             [displayText drawAtPoint:CGPointMake(screenX + 10, screenY - 10) withAttributes:@{
                 NSFontAttributeName: [UIFont boldSystemFontOfSize:12],
@@ -129,10 +128,10 @@ static NSMutableDictionary *scanStats = nil;
         [self setTitle:@"⚡" forState:UIControlStateNormal];
         [self setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
         self.titleLabel.font = [UIFont systemFontOfSize:24];
-        
+
         UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:[ButtonHandler class] action:@selector(handlePan:)];
         [self addGestureRecognizer:pan];
-        
+
         [self addTarget:[ButtonHandler class] action:@selector(showMenu) forControlEvents:UIControlEventTouchUpInside];
     }
     return self;
@@ -147,22 +146,21 @@ static NSMutableDictionary *scanStats = nil;
     CGFloat menuHeight = 450;
     CGFloat menuX = ([UIScreen mainScreen].bounds.size.width - menuWidth) / 2;
     CGFloat menuY = ([UIScreen mainScreen].bounds.size.height - menuHeight) / 2;
-    
+
     UIWindow *menuWindow = [[UIWindow alloc] initWithFrame:CGRectMake(menuX, menuY, menuWidth, menuHeight)];
     menuWindow.windowLevel = UIWindowLevelAlert + 3;
     menuWindow.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.95];
     menuWindow.layer.cornerRadius = 15;
     menuWindow.layer.borderWidth = 2;
     menuWindow.layer.borderColor = [UIColor systemBlueColor].CGColor;
-    
+
     UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, menuWidth, 40)];
     titleLabel.text = @"⚡ AIMBOT SCANNER";
     titleLabel.textColor = [UIColor whiteColor];
     titleLabel.textAlignment = NSTextAlignmentCenter;
     titleLabel.font = [UIFont boldSystemFontOfSize:18];
     [menuWindow addSubview:titleLabel];
-    
-    // Кнопка ESP
+
     UIButton *espBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     espBtn.frame = CGRectMake(20, 60, menuWidth-40, 45);
     espBtn.backgroundColor = espEnabled ? [UIColor systemGreenColor] : [UIColor systemGrayColor];
@@ -171,8 +169,7 @@ static NSMutableDictionary *scanStats = nil;
     [espBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [espBtn addTarget:self action:@selector(toggleESP) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:espBtn];
-    
-    // Кнопка умного сканирования
+
     UIButton *scanBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     scanBtn.frame = CGRectMake(20, 115, menuWidth-40, 45);
     scanBtn.backgroundColor = [UIColor systemPurpleColor];
@@ -181,8 +178,7 @@ static NSMutableDictionary *scanStats = nil;
     [scanBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [scanBtn addTarget:self action:@selector(smartScan) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:scanBtn];
-    
-    // Кнопка проверки адресов
+
     UIButton *checkBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     checkBtn.frame = CGRectMake(20, 170, menuWidth-40, 45);
     checkBtn.backgroundColor = [UIColor systemOrangeColor];
@@ -191,8 +187,7 @@ static NSMutableDictionary *scanStats = nil;
     [checkBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [checkBtn addTarget:self action:@selector(checkAddresses) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:checkBtn];
-    
-    // Кнопка лога
+
     UIButton *logBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     logBtn.frame = CGRectMake(20, 225, menuWidth-40, 45);
     logBtn.backgroundColor = [UIColor systemBlueColor];
@@ -201,8 +196,7 @@ static NSMutableDictionary *scanStats = nil;
     [logBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [logBtn addTarget:self action:@selector(showLogWindow) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:logBtn];
-    
-    // Кнопка статистики
+
     UIButton *statsBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     statsBtn.frame = CGRectMake(20, 280, menuWidth-40, 45);
     statsBtn.backgroundColor = [UIColor systemTealColor];
@@ -211,8 +205,7 @@ static NSMutableDictionary *scanStats = nil;
     [statsBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [statsBtn addTarget:self action:@selector(showStats) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:statsBtn];
-    
-    // Кнопка закрыть
+
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     closeBtn.frame = CGRectMake(20, 335, menuWidth-40, 45);
     closeBtn.backgroundColor = [UIColor systemRedColor];
@@ -221,7 +214,7 @@ static NSMutableDictionary *scanStats = nil;
     [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [closeBtn addTarget:self action:@selector(closeMenu:) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:closeBtn];
-    
+
     [menuWindow makeKeyAndVisible];
     objc_setAssociatedObject(self, @selector(closeMenu:), menuWindow, OBJC_ASSOCIATION_RETAIN);
 }
@@ -256,12 +249,12 @@ static NSMutableDictionary *scanStats = nil;
     [self addLog:[NSString stringWithFormat:@"Camera.main: %p", Camera_main]];
     [self addLog:[NSString stringWithFormat:@"WorldToScreen: %p", Camera_WorldToScreen]];
     [self addLog:[NSString stringWithFormat:@"get_position: %p", Transform_get_position]];
-    
+
     if (Camera_main) {
         void *cam = Camera_main();
         [self addLog:[NSString stringWithFormat:@"Camera instance: %p", cam]];
     }
-    
+
     [self showLogWindow];
 }
 
@@ -269,7 +262,7 @@ static NSMutableDictionary *scanStats = nil;
     [logText setString:@""];
     [self addLog:@"📊 СТАТИСТИКА СКАНИРОВАНИЯ"];
     [self addLog:@"========================"];
-    
+
     if (scanStats) {
         for (NSString *key in scanStats) {
             [self addLog:[NSString stringWithFormat:@"%@: %@", key, scanStats[key]]];
@@ -277,7 +270,7 @@ static NSMutableDictionary *scanStats = nil;
     } else {
         [self addLog:@"Нет данных. Запустите сканирование."];
     }
-    
+
     [self showLogWindow];
 }
 
@@ -286,76 +279,67 @@ static NSMutableDictionary *scanStats = nil;
     [logText setString:@""];
     [self addLog:@"🔍 УМНОЕ СКАНИРОВАНИЕ ПАМЯТИ"];
     [self addLog:@"================================="];
-    
+
     foundPlayers = [NSMutableArray array];
     scanStats = [NSMutableDictionary dictionary];
-    
+
     task_t task = mach_task_self();
     vm_address_t address = 0;
     vm_size_t size = 0;
     vm_region_basic_info_data_64_t info;
     mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
     mach_port_t object_name;
-    
+
     int regionCount = 0;
     int totalCandidates = 0;
     int healthCandidates = 0;
-    int vectorCandidates = 0;
     int nameCandidates = 0;
-    
+
     NSMutableDictionary *offsetStats = [NSMutableDictionary dictionary];
     NSMutableDictionary *healthValueStats = [NSMutableDictionary dictionary];
-    
+
     while (vm_region_64(task, &address, &size, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info, &count, &object_name) == KERN_SUCCESS) {
-        
+
         regionCount++;
-        
-        if (size > 1000 && size < 1024*1024) { // регионы 1KB - 1MB
+
+        if (size > 1000 && size < 1024*1024) {
             uint8_t *buffer = malloc(size);
             vm_size_t data_read;
-            
+
             if (vm_read_overwrite(task, address, size, (vm_address_t)buffer, &data_read) == KERN_SUCCESS) {
-                
-                // Сканируем память в поисках интересных паттернов
+
                 for (int i = 0; i < data_read - 128; i += 4) {
-                    
-                    // ПРИЗНАК 1: Похоже на здоровье (0-200)
+
                     float *health = (float*)(buffer + i);
                     if (*health >= 0 && *health <= 200) {
-                        
-                        // Запоминаем значения здоровья для статистики
+
                         int healthInt = (int)*health;
                         NSString *healthKey = [NSString stringWithFormat:@"health_%d", healthInt];
-                        offsetStats[healthKey] = @([offsetStats[healthKey] intValue] + 1);
-                        
-                        // Смотрим, что рядом
+                        healthValueStats[healthKey] = @([healthValueStats[healthKey] intValue] + 1);
+
                         float *x = (float*)(buffer + i + 0x10);
                         float *y = (float*)(buffer + i + 0x14);
                         float *z = (float*)(buffer + i + 0x18);
-                        
-                        // ПРИЗНАК 2: Есть координаты (в разумных пределах)
-                        BOOL hasValidCoords = (*x > -10000 && *x < 10000 && 
-                                               *y > -10000 && *y < 10000 && 
+
+                        BOOL hasValidCoords = (*x > -10000 && *x < 10000 &&
+                                               *y > -10000 && *y < 10000 &&
                                                *z > -10000 && *z < 10000);
-                        
+
                         if (hasValidCoords) {
                             healthCandidates++;
-                            
-                            // ПРИЗНАК 3: Ищем рядом имя (ASCII строку)
+
                             NSString *foundName = nil;
                             int nameOffset = 0;
-                            
+
                             for (int j = -0x40; j < 0x80; j += 4) {
                                 char *namePtr = (char*)(buffer + i + j);
-                                
-                                // Проверяем, похоже ли на имя (печатные символы)
+
                                 if (namePtr[0] > 32 && namePtr[0] < 127 &&
                                     namePtr[1] > 32 && namePtr[1] < 127 &&
                                     namePtr[2] > 32 && namePtr[2] < 127) {
-                                    
+
                                     NSString *candidate = @(namePtr);
                                     if (candidate.length > 3 && candidate.length < 20) {
-                                        // Проверяем, есть ли буквы
                                         NSRange letterRange = [candidate rangeOfCharacterFromSet:[NSCharacterSet letterCharacterSet]];
                                         if (letterRange.location != NSNotFound) {
                                             foundName = candidate;
@@ -366,17 +350,15 @@ static NSMutableDictionary *scanStats = nil;
                                     }
                                 }
                             }
-                            
+
                             totalCandidates++;
-                            
-                            // Рассчитываем уверенность
-                            int confidence = 30; // базовая уверенность
-                            if (*health > 90 && *health < 110) confidence += 30; // похоже на здоровье
-                            if (hasValidCoords) confidence += 20; // есть координаты
-                            if (foundName) confidence += 30; // есть имя
-                            if (*x != 0 || *y != 0 || *z != 0) confidence += 10; // не нулевые координаты
-                            
-                            // Создаем запись
+
+                            int confidence = 30;
+                            if (*health > 90 && *health < 110) confidence += 30;
+                            if (hasValidCoords) confidence += 20;
+                            if (foundName) confidence += 30;
+                            if (*x != 0 || *y != 0 || *z != 0) confidence += 10;
+
                             PlayerData *player = [[PlayerData alloc] init];
                             player.health = *health;
                             player.x = *x;
@@ -385,28 +367,23 @@ static NSMutableDictionary *scanStats = nil;
                             player.address = (unsigned long)(address + i);
                             player.name = foundName;
                             player.confidence = confidence;
-                            
-                            // Проверяем, не本地 ли это (по близости к центру или другим признакам)
-                            // Это нужно будет уточнить
                             player.isLocal = NO;
-                            
+
                             [foundPlayers addObject:player];
-                            
-                            // Логируем только если уверенность > 60
+
                             if (confidence > 60) {
-                                [self addLog:[NSString stringWithFormat:@"\n🎯 [%d%%] ИГРОК #%lu:", 
+                                [self addLog:[NSString stringWithFormat:@"\n🎯 [%d%%] ИГРОК #%lu:",
                                               confidence, (unsigned long)foundPlayers.count]];
                                 [self addLog:[NSString stringWithFormat:@"   Адрес: 0x%lx", player.address]];
                                 [self addLog:[NSString stringWithFormat:@"   Здоровье: %.1f", player.health]];
-                                [self addLog:[NSString stringWithFormat:@"   Позиция: (%.1f, %.1f, %.1f)", 
+                                [self addLog:[NSString stringWithFormat:@"   Позиция: (%.1f, %.1f, %.1f)",
                                               player.x, player.y, player.z]];
                                 if (foundName) {
-                                    [self addLog:[NSString stringWithFormat:@"   Имя: %@ (смещение %d)", 
+                                    [self addLog:[NSString stringWithFormat:@"   Имя: %@ (смещение %d)",
                                                   foundName, nameOffset]];
                                 }
                             }
-                            
-                            // Пропускаем область вокруг найденной структуры
+
                             i += 0x80;
                         }
                     }
@@ -414,57 +391,59 @@ static NSMutableDictionary *scanStats = nil;
             }
             free(buffer);
         }
-        
+
         address += size;
         address = (address + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
     }
-    
-    // Сохраняем статистику
+
     scanStats[@"Просканировано регионов"] = @(regionCount);
     scanStats[@"Всего кандидатов"] = @(totalCandidates);
-    scanStats[@"С здоровьем"] = @(healthCandidates);
-    scanStats[@"С координатами"] = @(vectorCandidates);
+    scanStats[@"С здоровьем и координатами"] = @(healthCandidates);
     scanStats[@"С именами"] = @(nameCandidates);
     scanStats[@"Найдено игроков (уверенность >60)"] = @([foundPlayers count]);
-    
+
     [self addLog:@"\n📊 СТАТИСТИКА:"];
     [self addLog:[NSString stringWithFormat:@"Просканировано регионов: %d", regionCount]];
     [self addLog:[NSString stringWithFormat:@"Всего кандидатов: %d", totalCandidates]];
     [self addLog:[NSString stringWithFormat:@"С найденными именами: %d", nameCandidates]];
     [self addLog:[NSString stringWithFormat:@"Игроков с уверенностью >60%%: %lu", (unsigned long)foundPlayers.count]];
-    
-    // Показываем распределение уверенности
+
+    [self addLog:@"\n📊 Распределение значений здоровья:"];
+    NSArray *sortedHealth = [healthValueStats.allKeys sortedArrayUsingSelector:@selector(localizedStandardCompare:)];
+    for (NSString *key in sortedHealth) {
+        [self addLog:[NSString stringWithFormat:@"  %@: %@", key, healthValueStats[key]]];
+    }
+
     NSMutableDictionary *confDist = [NSMutableDictionary dictionary];
     for (PlayerData *p in foundPlayers) {
         int range = (p.confidence / 10) * 10;
         NSString *key = [NSString stringWithFormat:@"%d-%d%%", range, range+9];
         confDist[key] = @([confDist[key] intValue] + 1);
     }
-    
+
     [self addLog:@"\n📈 Распределение уверенности:"];
     NSArray *sortedKeys = [confDist.allKeys sortedArrayUsingSelector:@selector(localizedStandardCompare:)];
     for (NSString *key in sortedKeys) {
         [self addLog:[NSString stringWithFormat:@"  %@: %@", key, confDist[key]]];
     }
-    
-    // Показываем топ-10 самых уверенных
+
     NSArray *sortedPlayers = [foundPlayers sortedArrayUsingComparator:^NSComparisonResult(PlayerData *p1, PlayerData *p2) {
         return p2.confidence - p1.confidence;
     }];
-    
+
     [self addLog:@"\n🏆 ТОП-10 САМЫХ УВЕРЕННЫХ:"];
     for (int i = 0; i < MIN(10, sortedPlayers.count); i++) {
         PlayerData *p = sortedPlayers[i];
         [self addLog:[NSString stringWithFormat:@"%d. %@", i+1, p]];
     }
-    
+
     [self showLogWindow];
 }
 
 + (void)copyLog {
     UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
     pasteboard.string = logText;
-    
+
     UILabel *toast = [[UILabel alloc] initWithFrame:CGRectMake(100, 300, 120, 40)];
     toast.backgroundColor = [UIColor blackColor];
     toast.textColor = [UIColor whiteColor];
@@ -473,7 +452,7 @@ static NSMutableDictionary *scanStats = nil;
     toast.layer.cornerRadius = 10;
     toast.layer.masksToBounds = YES;
     [[self mainWindow] addSubview:toast];
-    
+
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         [toast removeFromSuperview];
     });
@@ -489,19 +468,19 @@ static NSMutableDictionary *scanStats = nil;
         [logWindow makeKeyAndVisible];
         return;
     }
-    
+
     CGFloat logWidth = [UIScreen mainScreen].bounds.size.width - 40;
     CGFloat logHeight = [UIScreen mainScreen].bounds.size.height - 100;
     CGFloat logX = 20;
     CGFloat logY = 50;
-    
+
     logWindow = [[UIWindow alloc] initWithFrame:CGRectMake(logX, logY, logWidth, logHeight)];
     logWindow.windowLevel = UIWindowLevelAlert + 2;
     logWindow.backgroundColor = [UIColor colorWithWhite:0 alpha:0.95];
     logWindow.layer.cornerRadius = 15;
     logWindow.layer.borderWidth = 2;
     logWindow.layer.borderColor = [UIColor greenColor].CGColor;
-    
+
     UITextView *textView = [[UITextView alloc] initWithFrame:CGRectMake(10, 10, logWidth-20, logHeight-80)];
     textView.backgroundColor = [UIColor blackColor];
     textView.textColor = [UIColor greenColor];
@@ -510,7 +489,7 @@ static NSMutableDictionary *scanStats = nil;
     textView.editable = NO;
     textView.layer.cornerRadius = 10;
     [logWindow addSubview:textView];
-    
+
     UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     copyBtn.frame = CGRectMake(20, logHeight-60, 100, 40);
     copyBtn.backgroundColor = [UIColor systemBlueColor];
@@ -519,7 +498,7 @@ static NSMutableDictionary *scanStats = nil;
     [copyBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [copyBtn addTarget:self action:@selector(copyLog) forControlEvents:UIControlEventTouchUpInside];
     [logWindow addSubview:copyBtn];
-    
+
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     closeBtn.frame = CGRectMake(logWidth-120, logHeight-60, 100, 40);
     closeBtn.backgroundColor = [UIColor systemRedColor];
@@ -528,7 +507,7 @@ static NSMutableDictionary *scanStats = nil;
     [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [closeBtn addTarget:self action:@selector(closeLogWindow) forControlEvents:UIControlEventTouchUpInside];
     [logWindow addSubview:closeBtn];
-    
+
     [logWindow makeKeyAndVisible];
 }
 
@@ -566,37 +545,37 @@ __attribute__((constructor))
 static void init() {
     @autoreleasepool {
         logText = [[NSMutableString alloc] init];
-        
+
         uint64_t base = BASE_ADDR;
-        
+
         Camera_main = (t_get_main_camera)(base + (RVA_Camera_get_main - 0x1042c4000));
         Camera_WorldToScreen = (t_world_to_screen)(base + (RVA_Camera_WorldToScreen - 0x1042c4000));
         Transform_get_position = (t_get_position)(base + (RVA_Transform_get_position - 0x1042c4000));
-        
+
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
             UIWindow *mainWindow = [ButtonHandler mainWindow];
             if (!mainWindow) return;
-            
+
             floatingButton = [[FloatingButton alloc] initWithFrame:CGRectMake(20, 150, 60, 60)];
             [mainWindow addSubview:floatingButton];
-            
+
             overlayWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
             overlayWindow.windowLevel = UIWindowLevelAlert + 1;
             overlayWindow.backgroundColor = [UIColor clearColor];
             overlayWindow.userInteractionEnabled = NO;
-            
+
             ESPView *espView = [[ESPView alloc] initWithFrame:[UIScreen mainScreen].bounds];
             espView.backgroundColor = [UIColor clearColor];
             [overlayWindow addSubview:espView];
-            
+
             [overlayWindow makeKeyAndVisible];
-            
+
             [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *t){
                 if (espEnabled) {
                     [espView setNeedsDisplay];
                 }
             }];
-            
+
             [ButtonHandler addLog:@"✅ Твик загружен"];
         });
     }
