@@ -1,9 +1,9 @@
 Package: com.yourname.aimbot
-Name: Aimbot
+Name: Aimbot Test
 Depends: mobilesubstrate
 Version: 1.0
 Architecture: iphoneos-arm
-Description: Minimal aimbot test
+Description: Простая кнопка с алертом
 Maintainer: You
 Author: You
 Section: Tweaks
