@@ -174,10 +174,8 @@ void scanClasses() {
     // 4. Добавляем кнопку в окно
     [self.window addSubview:self.floatButton];
     
-    // 5. Устанавливаем действие на кнопку (БЕЗ weakSelf, так как блок не держит self)
-    __weak typeof(self) weakSelf = self;
+    // 5. Устанавливаем действие на кнопку (без weakSelf)
     [self.floatButton setAction:^{
-        // Здесь вызываем сканирование
         writeLog(@"\n🔍 Запуск сканирования по нажатию");
         scanClasses();
         writeLog(@"✅ Сканирование завершено");
