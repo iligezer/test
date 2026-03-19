@@ -169,7 +169,8 @@ void showResultWindow(NSString *text) {
         [g_copyBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
         g_copyBtn.layer.cornerRadius = 12;
         g_copyBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-        [g_copyBtn addTarget:self action:@selector(copyLogToClipboard) forControlEvents:UIControlEventTouchUpInside];
+        // ВАЖНО: используем nil вместо self
+        [g_copyBtn addTarget:nil action:@selector(copyLogToClipboard) forControlEvents:UIControlEventTouchUpInside];
         [resultWindow addSubview:g_copyBtn];
         
         // Кнопка закрытия
