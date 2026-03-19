@@ -1,99 +1,95 @@
 #import <UIKit/UIKit.h>
 #import <mach-o/dyld.h>
+#import <mach/mach.h>
 
-// ========== ТВОИ RVA ==========
-#define RVA_Camera_get_main         0x10871faf8
-#define RVA_Camera_WorldToScreen    0x10871ed5c
-#define RVA_Transform_get_position   0x108792ed0
-#define RVA_Player_IsMine            0x10716cbe4
-#define RVA_Player_IsDead            0x107166230
-#define RVA_Player_IsAlly            0x10715fe28
-#define RVA_Player_GetHealth         0x10717f44
-#define RVA_Player_GetTransform      0x10716cc10
+// ========== ТВОИ АДРЕСА ==========
 #define BASE_ADDR 0x1042c4000
+#define RVA_Camera_main 0x10871faf8
+#define RVA_WorldToScreen 0x10871ed5c
+#define RVA_GetPosition 0x108792ed0
 
 // ========== ТИПЫ ФУНКЦИЙ ==========
 typedef void *(*t_get_main_camera)();
 typedef void *(*t_world_to_screen)(void *camera, void *worldPos);
 typedef void *(*t_get_position)(void *transform);
-typedef bool (*t_is_mine)(void *player);
-typedef bool (*t_is_dead)(void *player);
-typedef bool (*t_is_ally)(void *player);
-typedef float (*t_get_health)(void *player);
-typedef void *(*t_get_transform)(void *player);
 
-// ========== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ==========
 static t_get_main_camera Camera_main = NULL;
-static t_world_to_screen Camera_WorldToScreen = NULL;
-static t_get_position Transform_get_position = NULL;
+static t_world_to_screen WorldToScreen = NULL;
+static t_get_position GetPosition = NULL;
 
-static BOOL espEnabled = NO;
 static NSMutableString *logText = nil;
-static UIWindow *overlayWindow = nil;
 static UIWindow *logWindow = nil;
+static BOOL espEnabled = NO;
 
-// ========== КЛАСС-ОБРАБОТЧИК ==========
-@interface ButtonHandler : NSObject
-+ (void)showMenu;
-+ (void)copyLog;
-+ (void)closeLogWindow;
-+ (void)verifyAddresses;
-+ (void)showLogWindow;
-+ (UIViewController*)topViewController;
-+ (UIWindow*)mainWindow;
-@end
+// ========== ПОИСК В ПАМЯТИ ==========
+typedef struct {
+    uint64_t address;
+    float health;
+    float position[3];
+    int team;
+    bool isAlive;
+} PlayerData;
 
-@implementation ButtonHandler
-
-+ (void)showMenu {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Aimbot Control"
-                                                                   message:@""
-                                                            preferredStyle:UIAlertControllerStyleActionSheet];
+void scanMemoryForPlayers() {
+    [logText setString:@""];
+    [self addLog:@"🔍 СКАНИРОВАНИЕ ПАМЯТИ..."];
     
-    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"ESP %@", espEnabled ? @"✅" : @"❌"]
-                                               style:UIAlertActionStyleDefault
-                                             handler:^(UIAlertAction *a){
-        espEnabled = !espEnabled;
-    }]];
+    // Получаем информацию о памяти процесса
+    mach_port_t task = mach_task_self();
+    vm_address_t address = 0;
+    vm_size_t size = 0;
+    vm_region_flavor_t flavor = VM_REGION_BASIC_INFO;
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT;
+    struct vm_region_basic_info info;
     
-    [alert addAction:[UIAlertAction actionWithTitle:@"🔍 Проверить адреса (безопасно)"
-                                               style:UIAlertActionStyleDefault
-                                             handler:^(UIAlertAction *a){
-        [ButtonHandler verifyAddresses];
-    }]];
+    int playerCount = 0;
     
-    [alert addAction:[UIAlertAction actionWithTitle:@"📋 Показать лог"
-                                               style:UIAlertActionStyleDefault
-                                             handler:^(UIAlertAction *a){
-        [ButtonHandler showLogWindow];
-    }]];
+    while (vm_region(task, &address, &size, flavor, (vm_region_info_t)&info, &count, &info) == KERN_SUCCESS) {
+        // Ищем регионы с данными (rw-)
+        if (info.protection & VM_PROT_READ && info.protection & VM_PROT_WRITE) {
+            // Читаем память в поисках паттернов
+            uint8_t *buffer = malloc(size);
+            vm_size_t data_read;
+            
+            if (vm_read_overwrite(task, address, size, (vm_address_t)buffer, &data_read) == KERN_SUCCESS) {
+                // Ищем значения здоровья (обычно float от 0 до 100)
+                for (int i = 0; i < data_read - 8; i += 4) {
+                    float *f = (float*)&buffer[i];
+                    if (*f >= 0 && *f <= 100 && *f == (int)*f) { // Похоже на здоровье
+                        // Проверяем, что рядом есть координаты
+                        float *x = (float*)&buffer[i - 12];
+                        float *y = (float*)&buffer[i - 8];
+                        float *z = (float*)&buffer[i - 4];
+                        
+                        if (x && y && z && 
+                            *x >= -10000 && *x <= 10000 &&
+                            *y >= -10000 && *y <= 10000 &&
+                            *z >= -10000 && *z <= 10000) {
+                            
+                            [self addLog:[NSString stringWithFormat:@"Найден игрок: адрес 0x%llx, здоровье %.1f, позиция (%.1f, %.1f, %.1f)", 
+                                         address + i, *f, *x, *y, *z]];
+                            playerCount++;
+                        }
+                    }
+                }
+            }
+            free(buffer);
+        }
+        address += size;
+    }
     
-    [alert addAction:[UIAlertAction actionWithTitle:@"Отмена"
-                                               style:UIAlertActionStyleCancel
-                                             handler:nil]];
-    
-    [[self topViewController] presentViewController:alert animated:YES completion:nil];
+    [self addLog:[NSString stringWithFormat:@"Найдено игроков: %d", playerCount]];
+    [self showLogWindow];
 }
 
-+ (void)copyLog {
-    UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
-    pasteboard.string = logText;
-    
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"✅"
-                                                                   message:@"Скопировано"
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-    [[self topViewController] presentViewController:alert animated:YES completion:^{
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-            [alert dismissViewControllerAnimated:YES completion:nil];
-        });
-    }];
+// ========== ЛОГИРОВАНИЕ ==========
+void addLog(NSString *text) {
+    if (!logText) logText = [[NSMutableString alloc] init];
+    [logText appendFormat:@"%@\n", text];
+    NSLog(@"%@", text);
 }
 
-+ (void)closeLogWindow {
-    logWindow.hidden = YES;
-}
-
-+ (void)showLogWindow {
+void showLogWindow() {
     if (logWindow) {
         logWindow.hidden = NO;
         return;
@@ -109,7 +105,6 @@ static UIWindow *logWindow = nil;
     textView.font = [UIFont fontWithName:@"Courier" size:12];
     textView.text = logText;
     textView.editable = NO;
-    textView.layer.cornerRadius = 10;
     [logWindow addSubview:textView];
     
     UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -117,7 +112,6 @@ static UIWindow *logWindow = nil;
     copyBtn.backgroundColor = [UIColor systemBlueColor];
     copyBtn.layer.cornerRadius = 10;
     [copyBtn setTitle:@"📋 Копировать" forState:UIControlStateNormal];
-    [copyBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [copyBtn addTarget:[ButtonHandler class] action:@selector(copyLog) forControlEvents:UIControlEventTouchUpInside];
     [logWindow addSubview:copyBtn];
     
@@ -126,61 +120,67 @@ static UIWindow *logWindow = nil;
     closeBtn.backgroundColor = [UIColor systemRedColor];
     closeBtn.layer.cornerRadius = 10;
     [closeBtn setTitle:@"❌ Закрыть" forState:UIControlStateNormal];
-    [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [closeBtn addTarget:[ButtonHandler class] action:@selector(closeLogWindow) forControlEvents:UIControlEventTouchUpInside];
     [logWindow addSubview:closeBtn];
     
     [logWindow makeKeyAndVisible];
 }
 
-+ (void)verifyAddresses {
-    [logText setString:@""];
+// ========== КЛАСС-ОБРАБОТЧИК ==========
+@interface ButtonHandler : NSObject
++ (void)showMenu;
++ (void)copyLog;
++ (void)closeLogWindow;
++ (void)scanMemory;
++ (UIViewController*)topViewController;
++ (UIWindow*)mainWindow;
+@end
+
+@implementation ButtonHandler
+
++ (void)showMenu {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Memory Scanner"
+                                                                   message:@""
+                                                            preferredStyle:UIAlertControllerStyleActionSheet];
     
-    [self addLog:@"🔍 ПРОВЕРКА АДРЕСОВ (БЕЗОПАСНАЯ)"];
-    [self addLog:@"================================="];
+    [alert addAction:[UIAlertAction actionWithTitle:@"🔍 Сканировать память"
+                                               style:UIAlertActionStyleDefault
+                                             handler:^(UIAlertAction *a){
+        scanMemoryForPlayers();
+    }]];
     
-    [self addLog:[NSString stringWithFormat:@"Camera.main: %p", Camera_main]];
-    [self addLog:[NSString stringWithFormat:@"WorldToScreen: %p", Camera_WorldToScreen]];
-    [self addLog:[NSString stringWithFormat:@"get_position: %p", Transform_get_position]];
+    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"ESP %@", espEnabled ? @"✅" : @"❌"]
+                                               style:UIAlertActionStyleDefault
+                                             handler:^(UIAlertAction *a){
+        espEnabled = !espEnabled;
+    }]];
     
-    // ТОЛЬКО ПРОВЕРКА АДРЕСОВ — НИКАКИХ ВЫЗОВОВ!
-    if (Camera_main) {
-        [self addLog:@"✅ Camera_main загружена"];
-    } else {
-        [self addLog:@"❌ Camera_main == NULL"];
-    }
+    [alert addAction:[UIAlertAction actionWithTitle:@"📋 Показать лог"
+                                               style:UIAlertActionStyleDefault
+                                             handler:^(UIAlertAction *a){
+        showLogWindow();
+    }]];
     
-    if (Camera_WorldToScreen) {
-        [self addLog:@"✅ WorldToScreen загружена"];
-    } else {
-        [self addLog:@"❌ WorldToScreen == NULL"];
-    }
+    [alert addAction:[UIAlertAction actionWithTitle:@"Отмена"
+                                               style:UIAlertActionStyleCancel
+                                             handler:nil]];
     
-    if (Transform_get_position) {
-        [self addLog:@"✅ get_position загружена"];
-    } else {
-        [self addLog:@"❌ get_position == NULL"];
-    }
-    
-    [self addLog:@"\n📌 Никаких вызовов функций не производилось"];
-    [self addLog:@"✅ Игра не должна вылететь"];
-    
-    [self showLogWindow];
+    [[self topViewController] presentViewController:alert animated:YES completion:nil];
 }
 
-+ (void)addLog:(NSString *)text {
-    if (!logText) logText = [[NSMutableString alloc] init];
-    [logText appendFormat:@"%@\n", text];
-    NSLog(@"%@", text);
++ (void)copyLog {
+    UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
+    pasteboard.string = logText;
+}
+
++ (void)closeLogWindow {
+    logWindow.hidden = YES;
 }
 
 + (UIViewController*)topViewController {
     UIWindow *window = [self mainWindow];
-    if (!window) return nil;
     UIViewController *vc = window.rootViewController;
-    while (vc.presentedViewController) {
-        vc = vc.presentedViewController;
-    }
+    while (vc.presentedViewController) vc = vc.presentedViewController;
     return vc;
 }
 
@@ -204,9 +204,9 @@ static UIWindow *logWindow = nil;
 @implementation ESPView
 - (void)drawRect:(CGRect)rect {
     [super drawRect:rect];
-    
     if (!espEnabled) return;
     
+    // Пока просто точка
     CGContextRef ctx = UIGraphicsGetCurrentContext();
     CGContextSetFillColorWithColor(ctx, [UIColor redColor].CGColor);
     CGContextFillEllipseInRect(ctx, CGRectMake(100, 100, 10, 10));
@@ -219,12 +219,9 @@ static void init() {
     @autoreleasepool {
         logText = [[NSMutableString alloc] init];
         
-        // Вычисляем абсолютные адреса
-        uint64_t base = BASE_ADDR;
-        
-        Camera_main = (t_get_main_camera)(base + (RVA_Camera_get_main - 0x1042c4000));
-        Camera_WorldToScreen = (t_world_to_screen)(base + (RVA_Camera_WorldToScreen - 0x1042c4000));
-        Transform_get_position = (t_get_position)(base + (RVA_Transform_get_position - 0x1042c4000));
+        Camera_main = (t_get_main_camera)(BASE_ADDR + (RVA_Camera_main - 0x1042c4000));
+        WorldToScreen = (t_world_to_screen)(BASE_ADDR + (RVA_WorldToScreen - 0x1042c4000));
+        GetPosition = (t_get_position)(BASE_ADDR + (RVA_GetPosition - 0x1042c4000));
         
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
             UIWindow *mainWindow = [ButtonHandler mainWindow];
@@ -235,7 +232,6 @@ static void init() {
             menuBtn.backgroundColor = [UIColor systemBlueColor];
             menuBtn.layer.cornerRadius = 30;
             [menuBtn setTitle:@"M" forState:UIControlStateNormal];
-            [menuBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
             [menuBtn addTarget:[ButtonHandler class] action:@selector(showMenu) forControlEvents:UIControlEventTouchUpInside];
             [mainWindow addSubview:menuBtn];
             
@@ -245,16 +241,8 @@ static void init() {
             overlayWindow.userInteractionEnabled = NO;
             
             ESPView *espView = [[ESPView alloc] initWithFrame:[UIScreen mainScreen].bounds];
-            espView.backgroundColor = [UIColor clearColor];
             [overlayWindow addSubview:espView];
-            
             [overlayWindow makeKeyAndVisible];
-            
-            [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *t){
-                if (espEnabled) {
-                    [espView setNeedsDisplay];
-                }
-            }];
         });
     }
 }
