@@ -7,5 +7,9 @@ TWEAK_NAME = aimbot
 aimbot_FILES = Tweak.x
 aimbot_CFLAGS = -fobjc-arc
 aimbot_FRAMEWORKS = UIKit Foundation
+aimbot_PRIVATE_FRAMEWORKS = BackBoardServices
 
 include $(THEOS_MAKE_PATH)/tweak.mk
+
+after-package::
+	@echo "✅ Готово!"
