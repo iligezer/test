@@ -9,19 +9,6 @@
 #define SCAN_INTERVAL 2.0 // сканировать каждые 2 секунды
 
 // ============================================
-// СТРУКТУРЫ ДАННЫХ
-// ============================================
-typedef struct {
-    float x, y, z;
-} Vector3;
-
-typedef struct {
-    float Pitch;
-    float Yaw;
-    float Roll;
-} FRotator;
-
-// ============================================
 // ЛОГИРОВАНИЕ
 // ============================================
 void writeLog(NSString *format, ...) {
@@ -59,40 +46,13 @@ void writeLog(NSString *format, ...) {
 void scanAllClasses() {
     writeLog(@"\n=== СКАНИРОВАНИЕ КЛАССОВ ===");
     
-    // Список возможных классов из дампа
     NSArray *classNames = @[
-        // Основные классы игры
-        @"GameManager",
-        @"PlayerManager",
-        @"EnemyManager",
-        @"PlayerController",
-        @"EnemyController",
-        @"AIController",
-        @"WeaponController",
-        @"WeaponManager",
-        @"CameraController",
-        @"CameraManager",
-        
-        // Unity специфичные
-        @"UnityEngine_GameObject",
-        @"UnityEngine_Transform",
-        @"UnityEngine_Camera",
-        @"UnityEngine_Component",
-        @"UnityEngine_MonoBehaviour",
-        @"UnityEngine_Object",
-        
-        // Дополнительные
-        @"ViewController",
-        @"GameViewController",
-        @"SceneController",
-        @"GameInstance",
-        @"World",
-        @"Level",
-        @"Actor",
-        @"Pawn",
-        @"Character",
-        @"PlayerCharacter",
-        @"EnemyCharacter"
+        @"GameManager", @"PlayerManager", @"EnemyManager",
+        @"PlayerController", @"EnemyController", @"AIController",
+        @"WeaponController", @"WeaponManager", @"CameraController",
+        @"UnityEngine_GameObject", @"UnityEngine_Transform",
+        @"UnityEngine_Camera", @"UnityEngine_Component",
+        @"ViewController", @"GameViewController"
     ];
     
     int found = 0;
@@ -102,25 +62,12 @@ void scanAllClasses() {
             writeLog([NSString stringWithFormat:@"✅ %@", name]);
             found++;
             
-            // Пытаемся получить методы класса
+            // Получаем методы класса
             unsigned int methodCount = 0;
             Method *methods = class_copyMethodList(cls, &methodCount);
             if (methodCount > 0) {
                 writeLog([NSString stringWithFormat:@"   📌 методов: %d", methodCount]);
-                // Показываем первые 5 методов
-                for (int i = 0; i < methodCount && i < 5; i++) {
-                    SEL selector = method_getName(methods[i]);
-                    writeLog([NSString stringWithFormat:@"      - %s", sel_getName(selector)]);
-                }
                 free(methods);
-            }
-            
-            // Пытаемся получить свойства
-            unsigned int propCount = 0;
-            objc_property_t *properties = class_copyPropertyList(cls, &propCount);
-            if (propCount > 0) {
-                writeLog([NSString stringWithFormat:@"   📌 свойств: %d", propCount]);
-                free(properties);
             }
         }
     }
@@ -134,30 +81,36 @@ void scanAllClasses() {
 void findPlayers() {
     writeLog(@"\n=== ПОИСК ИГРОКОВ ===");
     
-    // Пробуем найти GameManager
+    // Пробуем GameManager
     Class gameManagerClass = objc_getClass("GameManager");
     if (gameManagerClass) {
         writeLog(@"✅ GameManager найден");
         
-        // Пробуем получить sharedInstance
-        id gameManager = nil;
-        SEL sharedInstanceSel = NSSelectorFromString(@"sharedInstance");
-        if ([gameManagerClass respondsToSelector:sharedInstanceSel]) {
-            gameManager = [gameManagerClass sharedInstance];
-            writeLog(@"✅ sharedInstance доступен");
-        }
-        
-        // Пробуем получить всех игроков
-        SEL getAllPlayersSel = NSSelectorFromString(@"getAllPlayers");
-        if (gameManager && [gameManager respondsToSelector:getAllPlayersSel]) {
-            NSArray *players = [gameManager performSelector:getAllPlayersSel];
-            writeLog([NSString stringWithFormat:@"✅ getAllPlayers вернул %lu игроков", (unsigned long)players.count]);
-        }
-        
-        SEL getEnemiesSel = NSSelectorFromString(@"getEnemies");
-        if (gameManager && [gameManager respondsToSelector:getEnemiesSel]) {
-            NSArray *enemies = [gameManager performSelector:getEnemiesSel];
-            writeLog([NSString stringWithFormat:@"✅ getEnemies вернул %lu врагов", (unsigned long)enemies.count]);
+        // Пробуем sharedInstance
+        SEL sharedSel = NSSelectorFromString(@"sharedInstance");
+        if ([gameManagerClass respondsToSelector:sharedSel]) {
+            id (*safe_msgSend)(id, SEL) = (void *)objc_msgSend;
+            id gameManager = safe_msgSend(gameManagerClass, sharedSel);
+            
+            if (gameManager) {
+                writeLog(@"✅ sharedInstance получен");
+                
+                // Пробуем getAllPlayers
+                SEL getAllSel = NSSelectorFromString(@"getAllPlayers");
+                if ([gameManager respondsToSelector:getAllSel]) {
+                    NSArray *(*getAllMsg)(id, SEL) = (void *)objc_msgSend;
+                    NSArray *players = getAllMsg(gameManager, getAllSel);
+                    writeLog([NSString stringWithFormat:@"✅ getAllPlayers: %lu игроков", (unsigned long)players.count]);
+                }
+                
+                // Пробуем getEnemies
+                SEL getEnemiesSel = NSSelectorFromString(@"getEnemies");
+                if ([gameManager respondsToSelector:getEnemiesSel]) {
+                    NSArray *(*getEnemiesMsg)(id, SEL) = (void *)objc_msgSend;
+                    NSArray *enemies = getEnemiesMsg(gameManager, getEnemiesSel);
+                    writeLog([NSString stringWithFormat:@"✅ getEnemies: %lu врагов", (unsigned long)enemies.count]);
+                }
+            }
         }
     }
     
@@ -167,61 +120,10 @@ void findPlayers() {
         writeLog(@"✅ PlayerManager найден");
     }
     
-    // Пробуем найти PlayerController и получить его координаты
+    // Пробуем найти PlayerController
     Class playerClass = objc_getClass("PlayerController");
     if (playerClass) {
         writeLog(@"✅ PlayerController найден");
-        
-        // Пробуем найти все экземпляры PlayerController
-        // Это сложнее - нужно искать в памяти
-        writeLog(@"   🔍 Поиск экземпляров в памяти...");
-    }
-}
-
-// ============================================
-// ПОИСК В ПАМЯТИ (ПРОСТЕЙШАЯ ВЕРСИЯ)
-// ============================================
-void scanMemoryForPlayers() {
-    writeLog(@"\n=== ПОИСК В ПАМЯТИ ===");
-    
-    // Получаем информацию о памяти процесса
-    kern_return_t kr;
-    vm_address_t address = 0;
-    vm_size_t size = 0;
-    vm_region_submap_short_info_data_64_t info;
-    mach_msg_type_number_t count = VM_REGION_SUBMAP_SHORT_INFO_COUNT_64;
-    natural_t depth = 0;
-    
-    while (1) {
-        kr = vm_region_recurse_64(mach_task_self(), &address, &size, &depth, (vm_region_info_64_t)&info, &count);
-        if (kr != KERN_SUCCESS) break;
-        
-        // Проверяем только читаемые регионы
-        if (info.protection & VM_PROT_READ) {
-            // Ищем значения, похожие на координаты (100-2000)
-            for (vm_address_t addr = address; addr < address + size; addr += 4) {
-                float val = 0;
-                vm_size_t bytesRead = 0;
-                kr = vm_read_overwrite(mach_task_self(), addr, sizeof(float), (vm_address_t)&val, &bytesRead);
-                
-                if (kr == KERN_SUCCESS && bytesRead == sizeof(float)) {
-                    // Координаты обычно в диапазоне [-1000, 1000]
-                    if (fabs(val) > 100 && fabs(val) < 2000) {
-                        // Проверяем, есть ли рядом другие координаты
-                        float yVal = 0, zVal = 0;
-                        vm_read_overwrite(mach_task_self(), addr + 4, sizeof(float), (vm_address_t)&yVal, &bytesRead);
-                        vm_read_overwrite(mach_task_self(), addr + 8, sizeof(float), (vm_address_t)&zVal, &bytesRead);
-                        
-                        if (fabs(yVal) > 100 && fabs(yVal) < 2000 && fabs(zVal) > 100 && fabs(zVal) < 2000) {
-                            writeLog([NSString stringWithFormat:@"🔍 Потенциальная позиция игрока: 0x%llx = (%f, %f, %f)", 
-                                      (unsigned long long)addr, val, yVal, zVal]);
-                        }
-                    }
-                }
-            }
-        }
-        
-        address += size;
     }
 }
 
@@ -254,10 +156,9 @@ void scanMemoryForPlayers() {
 }
 
 - (void)handleTap {
-    writeLog(@"\n🔵 Кнопка нажата - запуск полного анализа");
+    writeLog(@"\n🔵 Кнопка нажата - запуск анализа");
     scanAllClasses();
     findPlayers();
-    scanMemoryForPlayers();
     writeLog(@"✅ Анализ завершен");
 }
 
@@ -274,30 +175,63 @@ void scanMemoryForPlayers() {
 @end
 
 // ============================================
-// ПРОЗРАЧНОЕ ОКНО
+// КНОПКА МЕНЮ
+// ============================================
+@interface MenuButton : UIButton
+@end
+
+@implementation MenuButton
+
+- (instancetype)initWithFrame:(CGRect)frame title:(NSString *)title {
+    self = [super initWithFrame:frame];
+    if (self) {
+        [self setTitle:title forState:UIControlStateNormal];
+        [self setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+        self.backgroundColor = [UIColor lightGrayColor];
+        self.layer.cornerRadius = 5;
+        self.layer.borderWidth = 1;
+        self.layer.borderColor = [UIColor whiteColor].CGColor;
+    }
+    return self;
+}
+
+@end
+
+// ============================================
+// ПРОЗРАЧНОЕ ОКНО (ПРОПУСКАЕТ НАЖАТИЯ)
 // ============================================
 @interface PassthroughWindow : UIWindow
 @property (nonatomic, weak) FloatButton *floatButton;
+@property (nonatomic, weak) UIView *menuView;
 @end
 
 @implementation PassthroughWindow
 
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
     UIView *hitView = [super hitTest:point withEvent:event];
+    
+    // Если нажали на плавающую кнопку или меню - обрабатываем
     if (self.floatButton && (hitView == self.floatButton || [self.floatButton isDescendantOfView:hitView])) {
         return hitView;
     }
-    return nil; // пропускаем все остальное в игру
+    if (self.menuView && (hitView == self.menuView || [self.menuView isDescendantOfView:hitView])) {
+        return hitView;
+    }
+    
+    // Иначе пропускаем в игру
+    return nil;
 }
 
 @end
 
 // ============================================
-// ОСНОВНОЙ КЛАСС
+// ОСНОВНОЙ КЛАСС УПРАВЛЕНИЯ
 // ============================================
 @interface AimbotUI : NSObject
 @property (nonatomic, strong) PassthroughWindow *window;
 @property (nonatomic, strong) FloatButton *floatButton;
+@property (nonatomic, strong) UIView *menuView;
+@property (nonatomic, assign) BOOL menuVisible;
 @property (nonatomic, strong) NSTimer *scanTimer;
 @end
 
@@ -308,7 +242,7 @@ void scanMemoryForPlayers() {
     if (self) {
         [self setupUI];
         
-        // Запускаем автоматическое сканирование по таймеру
+        // Запускаем автоматическое сканирование
         self.scanTimer = [NSTimer scheduledTimerWithTimeInterval:SCAN_INTERVAL 
                                                            target:self 
                                                          selector:@selector(autoScan) 
@@ -319,46 +253,87 @@ void scanMemoryForPlayers() {
 }
 
 - (void)setupUI {
-    // Получаем активное окно игры
-    UIWindow *gameWindow = nil;
-    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if (scene.activationState == UISceneActivationStateForegroundActive && [scene isKindOfClass:[UIWindowScene class]]) {
-            UIWindowScene *ws = (UIWindowScene *)scene;
-            for (UIWindow *w in ws.windows) {
-                if (w.isKeyWindow) gameWindow = w;
-            }
-            if (!gameWindow && ws.windows.count) gameWindow = ws.windows[0];
-            break;
-        }
-    }
+    writeLog(@"Создание интерфейса...");
     
-    // Создаем свое прозрачное окно
+    // Создаем прозрачное окно
     self.window = [[PassthroughWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
     self.window.windowLevel = UIWindowLevelAlert + 1;
     self.window.backgroundColor = [UIColor clearColor];
     self.window.hidden = NO;
     
-    // Создаем кнопку
+    // Создаем плавающую кнопку
     self.floatButton = [[FloatButton alloc] init];
     self.window.floatButton = self.floatButton;
     [self.window addSubview:self.floatButton];
     
+    // Действие для плавающей кнопки
     __weak typeof(self) weakSelf = self;
     [self.floatButton setAction:^{
-        [weakSelf manualScan];
+        [weakSelf toggleMenu];
     }];
+    
+    // Создаем меню (изначально скрыто)
+    self.menuView = [[UIView alloc] initWithFrame:CGRectMake(80, 160, 240, 200)];
+    self.menuView.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.9];
+    self.menuView.layer.cornerRadius = 10;
+    self.menuView.layer.borderWidth = 2;
+    self.menuView.layer.borderColor = [UIColor whiteColor].CGColor;
+    self.menuView.hidden = YES;
+    self.window.menuView = self.menuView;
+    
+    // Заголовок
+    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, 240, 30)];
+    titleLabel.text = @"Aimbot Control";
+    titleLabel.textColor = [UIColor whiteColor];
+    titleLabel.textAlignment = NSTextAlignmentCenter;
+    [self.menuView addSubview:titleLabel];
+    
+    // Кнопка "Полное сканирование"
+    UIButton *fullScanBtn = [MenuButton buttonWithType:UIButtonTypeSystem];
+    fullScanBtn.frame = CGRectMake(20, 50, 200, 40);
+    [fullScanBtn setTitle:@"🔍 Полное сканирование" forState:UIControlStateNormal];
+    [fullScanBtn addTarget:self action:@selector(fullScan) forControlEvents:UIControlEventTouchUpInside];
+    [self.menuView addSubview:fullScanBtn];
+    
+    // Кнопка "Поиск игроков"
+    UIButton *findPlayersBtn = [MenuButton buttonWithType:UIButtonTypeSystem];
+    findPlayersBtn.frame = CGRectMake(20, 100, 200, 40);
+    [findPlayersBtn setTitle:@"👤 Поиск игроков" forState:UIControlStateNormal];
+    [findPlayersBtn addTarget:self action:@selector(findPlayersAction) forControlEvents:UIControlEventTouchUpInside];
+    [self.menuView addSubview:findPlayersBtn];
+    
+    // Кнопка "Закрыть"
+    UIButton *closeBtn = [MenuButton buttonWithType:UIButtonTypeSystem];
+    closeBtn.frame = CGRectMake(20, 150, 200, 40);
+    [closeBtn setTitle:@"❌ Закрыть меню" forState:UIControlStateNormal];
+    [closeBtn addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
+    [self.menuView addSubview:closeBtn];
+    
+    [self.window addSubview:self.menuView];
     
     writeLog(@"✅ Интерфейс создан");
 }
 
-- (void)manualScan {
+- (void)toggleMenu {
+    self.menuVisible = !self.menuVisible;
+    self.menuView.hidden = !self.menuVisible;
+    writeLog(self.menuVisible ? @"Меню открыто" : @"Меню закрыто");
+}
+
+- (void)fullScan {
+    writeLog(@"\n🔍 ЗАПУСК ПОЛНОГО СКАНИРОВАНИЯ");
     scanAllClasses();
     findPlayers();
-    scanMemoryForPlayers();
+    writeLog(@"✅ Полное сканирование завершено");
+}
+
+- (void)findPlayersAction {
+    writeLog(@"\n👤 ПОИСК ИГРОКОВ");
+    findPlayers();
 }
 
 - (void)autoScan {
-    // Автоматическое сканирование (только в лог, без дублирования)
+    // Автоматическое сканирование в фоне
     findPlayers();
 }
 
@@ -372,12 +347,11 @@ static AimbotUI *g_ui = nil;
 __attribute__((constructor))
 static void init() {
     writeLog(@"\n=== AIMBOT TWEAK ЗАГРУЖЕН ===");
-    writeLog(@"📱 Устройство: %@", [UIDevice currentDevice].model);
     writeLog(@"📱 iOS: %@", [UIDevice currentDevice].systemVersion);
     writeLog(@"📱 Экран: %.0fx%.0f", [UIScreen mainScreen].bounds.size.width, [UIScreen mainScreen].bounds.size.height);
     
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         g_ui = [[AimbotUI alloc] init];
-        writeLog(@"✅ Интерфейс загружен, ждем нажатия кнопки...");
+        writeLog(@"✅ Интерфейс загружен. Жми синюю кнопку для меню.");
     });
 }
