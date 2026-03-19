@@ -4,15 +4,34 @@
 // ========== ТВОИ RVA ==========
 #define RVA_Camera_get_main         0x10871faf8
 #define RVA_Camera_WorldToScreen    0x10871ed5c
+#define RVA_Transform_get_position   0x108792ed0
+#define RVA_Player_IsMine            0x10716cbe4
+#define RVA_Player_IsDead            0x107166230
+#define RVA_Player_IsAlly            0x10715fe28
+#define RVA_Player_GetHealth         0x10717f44
+#define RVA_Player_GetTransform      0x10716cc10
 #define BASE_ADDR 0x1042c4000
 
 // ========== ТИПЫ ФУНКЦИЙ ==========
 typedef void *(*t_get_main_camera)();
 typedef void *(*t_world_to_screen)(void *camera, void *worldPos);
+typedef void *(*t_get_position)(void *transform);
+typedef bool (*t_is_mine)(void *player);
+typedef bool (*t_is_dead)(void *player);
+typedef bool (*t_is_ally)(void *player);
+typedef float (*t_get_health)(void *player);
+typedef void *(*t_get_transform)(void *player);
 
 // ========== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ==========
 static t_get_main_camera Camera_main = NULL;
 static t_world_to_screen Camera_WorldToScreen = NULL;
+static t_get_position Transform_get_position = NULL;
+static t_is_mine Player_IsMine = NULL;
+static t_is_dead Player_IsDead = NULL;
+static t_is_ally Player_IsAlly = NULL;
+static t_get_health Player_GetHealth = NULL;
+static t_get_transform Player_GetTransform = NULL;
+
 static BOOL espEnabled = NO;
 static NSMutableString *logText = nil;
 static UIWindow *overlayWindow = nil;
@@ -116,13 +135,14 @@ static UIWindow *logWindow = nil;
 }
 
 + (void)verifyAddresses {
-    if (!logText) logText = [[NSMutableString alloc] init];
     [logText setString:@""];
     
     [self addLog:@"🔍 ПРОВЕРКА АДРЕСОВ"];
     [self addLog:@"==================="];
     
     [self addLog:[NSString stringWithFormat:@"Camera.main: %p", Camera_main]];
+    [self addLog:[NSString stringWithFormat:@"WorldToScreen: %p", Camera_WorldToScreen]];
+    [self addLog:[NSString stringWithFormat:@"get_position: %p", Transform_get_position]];
     
     if (Camera_main) {
         void *cam = Camera_main();
@@ -139,13 +159,13 @@ static UIWindow *logWindow = nil;
 }
 
 + (void)addLog:(NSString *)text {
+    if (!logText) logText = [[NSMutableString alloc] init];
     [logText appendFormat:@"%@\n", text];
     NSLog(@"%@", text);
 }
 
 + (UIViewController*)topViewController {
     UIWindow *window = [self mainWindow];
-    if (!window) return nil;
     UIViewController *vc = window.rootViewController;
     while (vc.presentedViewController) {
         vc = vc.presentedViewController;
@@ -187,8 +207,9 @@ static void init() {
     @autoreleasepool {
         logText = [[NSMutableString alloc] init];
         
-        Camera_main = (t_get_main_camera)(BASE_ADDR + (RVA_Camera_get_main - 0x1042c4000));
-        Camera_WorldToScreen = (t_world_to_screen)(BASE_ADDR + (RVA_Camera_WorldToScreen - 0x1042c4000));
+        Camera_main = (t_get_main_camera)BASE_ADDR + (RVA_Camera_get_main - 0x1042c4000);
+        Camera_WorldToScreen = (t_world_to_screen)BASE_ADDR + (RVA_Camera_WorldToScreen - 0x1042c4000);
+        Transform_get_position = (t_get_position)BASE_ADDR + (RVA_Transform_get_position - 0x1042c4000);
         
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
             UIWindow *mainWindow = [ButtonHandler mainWindow];
