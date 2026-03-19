@@ -29,9 +29,11 @@ static NSMutableArray *currentValues = nil;
 + (void)closeMenu;
 + (void)copyLog;
 + (void)showLogWindow;
++ (void)updateLogWindow;
 + (void)addLog:(NSString*)text;
-+ (void)addAddress;
-+ (void)resetScan;
++ (void)pasteAddress;
++ (void)showAddresses;
++ (void)clearAddresses;
 + (void)startScan;
 + (void)refreshChanged;
 + (void)refreshUnchanged;
@@ -95,48 +97,63 @@ static NSMutableArray *currentValues = nil;
 }
 
 + (void)showMenu {
-    CGFloat menuWidth = 280;
-    CGFloat menuHeight = 500;
+    CGFloat menuWidth = 300;
+    CGFloat menuHeight = 550;
     CGFloat menuX = ([UIScreen mainScreen].bounds.size.width - menuWidth) / 2;
     CGFloat menuY = ([UIScreen mainScreen].bounds.size.height - menuHeight) / 2;
     
     UIWindow *menuWindow = [[UIWindow alloc] initWithFrame:CGRectMake(menuX, menuY, menuWidth, menuHeight)];
     menuWindow.windowLevel = UIWindowLevelAlert + 3;
     menuWindow.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.95];
-    menuWindow.layer.cornerRadius = 10;
-    menuWindow.layer.borderWidth = 1;
-    menuWindow.layer.borderColor = [UIColor whiteColor].CGColor;
+    menuWindow.layer.cornerRadius = 15;
+    menuWindow.layer.borderWidth = 2;
+    menuWindow.layer.borderColor = [UIColor systemBlueColor].CGColor;
     
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, menuWidth, 30)];
-    title.text = @"⚡ ADDRESS TRACKER";
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 15, menuWidth, 30)];
+    title.text = @"⚡ ADDRESS PASTER";
     title.textColor = [UIColor whiteColor];
     title.textAlignment = NSTextAlignmentCenter;
-    title.font = [UIFont boldSystemFontOfSize:18];
+    title.font = [UIFont boldSystemFontOfSize:20];
     [menuWindow addSubview:title];
     
-    int yPos = 50;
-    int btnHeight = 40;
+    int yPos = 60;
+    int btnHeight = 45;
     int btnSpacing = 5;
     
-    // Кнопка: ДОБАВИТЬ АДРЕС
-    UIButton *addBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    addBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
-    addBtn.backgroundColor = [UIColor systemBlueColor];
-    addBtn.layer.cornerRadius = 8;
-    [addBtn setTitle:@"➕ ДОБАВИТЬ АДРЕС" forState:UIControlStateNormal];
-    [addBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    [addBtn addTarget:self action:@selector(addAddress) forControlEvents:UIControlEventTouchUpInside];
-    [menuWindow addSubview:addBtn];
+    // Кнопка: ВСТАВИТЬ АДРЕС
+    UIButton *pasteBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    pasteBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
+    pasteBtn.backgroundColor = [UIColor systemBlueColor];
+    pasteBtn.layer.cornerRadius = 10;
+    [pasteBtn setTitle:@"📋 ВСТАВИТЬ АДРЕС" forState:UIControlStateNormal];
+    [pasteBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    pasteBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
+    [pasteBtn addTarget:self action:@selector(pasteAddress) forControlEvents:UIControlEventTouchUpInside];
+    [menuWindow addSubview:pasteBtn];
+    
+    yPos += btnHeight + btnSpacing;
+    
+    // Кнопка: ПОКАЗАТЬ АДРЕСА
+    UIButton *showBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    showBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
+    showBtn.backgroundColor = [UIColor systemPurpleColor];
+    showBtn.layer.cornerRadius = 10;
+    [showBtn setTitle:@"📋 ПОКАЗАТЬ АДРЕСА" forState:UIControlStateNormal];
+    [showBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    showBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
+    [showBtn addTarget:self action:@selector(showAddresses) forControlEvents:UIControlEventTouchUpInside];
+    [menuWindow addSubview:showBtn];
     
     yPos += btnHeight + btnSpacing;
     
     // Кнопка: НАЧАТЬ СКАНИРОВАНИЕ
     UIButton *startBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     startBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
-    startBtn.backgroundColor = [UIColor systemPurpleColor];
-    startBtn.layer.cornerRadius = 8;
+    startBtn.backgroundColor = [UIColor systemGreenColor];
+    startBtn.layer.cornerRadius = 10;
     [startBtn setTitle:@"🔍 НАЧАТЬ СКАНИРОВАНИЕ" forState:UIControlStateNormal];
     [startBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    startBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
     [startBtn addTarget:self action:@selector(startScan) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:startBtn];
     
@@ -145,10 +162,11 @@ static NSMutableArray *currentValues = nil;
     // Кнопка: ИЗМЕНИЛОСЬ
     UIButton *changedBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     changedBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
-    changedBtn.backgroundColor = [UIColor systemGreenColor];
-    changedBtn.layer.cornerRadius = 8;
+    changedBtn.backgroundColor = [UIColor systemOrangeColor];
+    changedBtn.layer.cornerRadius = 10;
     [changedBtn setTitle:@"📈 ИЗМЕНИЛОСЬ" forState:UIControlStateNormal];
     [changedBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    changedBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
     [changedBtn addTarget:self action:@selector(refreshChanged) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:changedBtn];
     
@@ -157,46 +175,50 @@ static NSMutableArray *currentValues = nil;
     // Кнопка: НЕ ИЗМЕНИЛОСЬ
     UIButton *unchangedBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     unchangedBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
-    unchangedBtn.backgroundColor = [UIColor systemOrangeColor];
-    unchangedBtn.layer.cornerRadius = 8;
+    unchangedBtn.backgroundColor = [UIColor systemRedColor];
+    unchangedBtn.layer.cornerRadius = 10;
     [unchangedBtn setTitle:@"📉 НЕ ИЗМЕНИЛОСЬ" forState:UIControlStateNormal];
     [unchangedBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    unchangedBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
     [unchangedBtn addTarget:self action:@selector(refreshUnchanged) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:unchangedBtn];
     
     yPos += btnHeight + btnSpacing;
     
-    // Кнопка: ПОКАЗАТЬ КАНДИДАТОВ
-    UIButton *showBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    showBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
-    showBtn.backgroundColor = [UIColor systemIndigoColor];
-    showBtn.layer.cornerRadius = 8;
-    [showBtn setTitle:@"📋 ПОКАЗАТЬ КАНДИДАТОВ" forState:UIControlStateNormal];
-    [showBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    [showBtn addTarget:self action:@selector(showCandidates) forControlEvents:UIControlEventTouchUpInside];
-    [menuWindow addSubview:showBtn];
+    // Кнопка: КАНДИДАТЫ
+    UIButton *candidatesBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    candidatesBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
+    candidatesBtn.backgroundColor = [UIColor systemIndigoColor];
+    candidatesBtn.layer.cornerRadius = 10;
+    [candidatesBtn setTitle:@"🎯 ПОКАЗАТЬ КАНДИДАТОВ" forState:UIControlStateNormal];
+    [candidatesBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    candidatesBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
+    [candidatesBtn addTarget:self action:@selector(showCandidates) forControlEvents:UIControlEventTouchUpInside];
+    [menuWindow addSubview:candidatesBtn];
     
     yPos += btnHeight + btnSpacing;
     
-    // Кнопка: СБРОС
-    UIButton *resetBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    resetBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
-    resetBtn.backgroundColor = [UIColor systemRedColor];
-    resetBtn.layer.cornerRadius = 8;
-    [resetBtn setTitle:@"🔄 СБРОС" forState:UIControlStateNormal];
-    [resetBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    [resetBtn addTarget:self action:@selector(resetScan) forControlEvents:UIControlEventTouchUpInside];
-    [menuWindow addSubview:resetBtn];
+    // Кнопка: ОЧИСТИТЬ
+    UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    clearBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
+    clearBtn.backgroundColor = [UIColor systemGrayColor];
+    clearBtn.layer.cornerRadius = 10;
+    [clearBtn setTitle:@"🗑️ ОЧИСТИТЬ ВСЕ" forState:UIControlStateNormal];
+    [clearBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    clearBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
+    [clearBtn addTarget:self action:@selector(clearAddresses) forControlEvents:UIControlEventTouchUpInside];
+    [menuWindow addSubview:clearBtn];
     
     yPos += btnHeight + btnSpacing;
     
     // Кнопка: ЗАКРЫТЬ
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     closeBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
-    closeBtn.backgroundColor = [UIColor systemGrayColor];
-    closeBtn.layer.cornerRadius = 8;
+    closeBtn.backgroundColor = [UIColor systemRedColor];
+    closeBtn.layer.cornerRadius = 10;
     [closeBtn setTitle:@"✖️ ЗАКРЫТЬ" forState:UIControlStateNormal];
     [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    closeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
     [closeBtn addTarget:self action:@selector(closeMenu) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:closeBtn];
     
@@ -210,69 +232,74 @@ static NSMutableArray *currentValues = nil;
     [menuWindow resignKeyWindow];
 }
 
-// ========== ДОБАВИТЬ АДРЕС ==========
-+ (void)addAddress {
+// ========== ВСТАВИТЬ АДРЕС ИЗ БУФЕРА ==========
++ (void)pasteAddress {
     if (!trackedAddresses) {
         trackedAddresses = [NSMutableArray array];
     }
     
-    // Используем простой UIAlertController
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Добавить адрес"
-                                                                   message:@"Введите адрес в HEX формате\nПример: 0x281764090"
-                                                            preferredStyle:UIAlertControllerStyleAlert];
+    UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
+    NSString *addrStr = pasteboard.string;
     
-    [alert addTextFieldWithConfigurationHandler:^(UITextField *textField) {
-        textField.placeholder = @"0x281764090";
-        textField.keyboardType = UIKeyboardTypeNumbersAndPunctuation;
-        textField.clearButtonMode = UITextFieldViewModeWhileEditing;
-        textField.autocapitalizationType = UITextAutocapitalizationTypeNone;
-        textField.text = @"0x";
-    }];
-    
-    UIAlertAction *addAction = [UIAlertAction actionWithTitle:@"Добавить" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        UITextField *textField = alert.textFields.firstObject;
-        NSString *addrStr = textField.text;
+    if (addrStr.length > 0) {
+        // Очищаем строку
+        addrStr = [addrStr stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        addrStr = [addrStr stringByReplacingOccurrencesOfString:@"\"" withString:@""];
+        addrStr = [addrStr stringByReplacingOccurrencesOfString:@"'" withString:@""];
+        addrStr = [addrStr stringByReplacingOccurrencesOfString:@" " withString:@""];
         
-        if (addrStr.length > 0) {
-            unsigned long long addr = 0;
-            NSScanner *scanner = [NSScanner scannerWithString:addrStr];
-            
-            if ([scanner scanHexLongLong:&addr] && addr > 0) {
-                [trackedAddresses addObject:@(addr)];
-                [self addLog:[NSString stringWithFormat:@"✅ Добавлен адрес: 0x%llx", addr]];
-                [self addLog:[NSString stringWithFormat:@"📊 Всего адресов: %lu", (unsigned long)trackedAddresses.count]];
-            } else {
-                [self addLog:@"❌ Неверный адрес"];
-            }
+        unsigned long long addr = 0;
+        NSScanner *scanner = [NSScanner scannerWithString:addrStr];
+        
+        // Пробуем как hex
+        if ([addrStr hasPrefix:@"0x"] || [addrStr hasPrefix:@"0X"]) {
+            [scanner scanHexLongLong:&addr];
+        } else {
+            // Пробуем как десятичное
+            addr = [addrStr longLongValue];
         }
-    }];
-    
-    UIAlertAction *doneAction = [UIAlertAction actionWithTitle:@"Готово" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        [self addLog:@"✅ Ввод адресов завершен"];
-        if (trackedAddresses.count > 0) {
-            [self showCandidates];
+        
+        if (addr > 0) {
+            [trackedAddresses addObject:@(addr)];
+            [self addLog:[NSString stringWithFormat:@"✅ Вставлен: 0x%llx", addr]];
+            [self addLog:[NSString stringWithFormat:@"📊 Всего: %lu", (unsigned long)trackedAddresses.count]];
+        } else {
+            [self addLog:[NSString stringWithFormat:@"❌ Ошибка: %@", addrStr]];
         }
-    }];
+    } else {
+        [self addLog:@"❌ Буфер пуст"];
+    }
+    [self updateLogWindow];
+}
+
+// ========== ПОКАЗАТЬ АДРЕСА ==========
++ (void)showAddresses {
+    [self addLog:@"\n📋 СОХРАНЕННЫЕ АДРЕСА:"];
     
-    UIAlertAction *cancelAction = [UIAlertAction actionWithTitle:@"Отмена" style:UIAlertActionStyleCancel handler:nil];
-    
-    [alert addAction:addAction];
-    [alert addAction:doneAction];
-    [alert addAction:cancelAction];
-    
-    // Показываем на главном потоке
-    dispatch_async(dispatch_get_main_queue(), ^{
-        UIViewController *vc = [self topViewController];
-        if (vc) {
-            [vc presentViewController:alert animated:YES completion:nil];
+    if (!trackedAddresses || trackedAddresses.count == 0) {
+        [self addLog:@"❌ Нет адресов"];
+    } else {
+        for (int i = 0; i < trackedAddresses.count; i++) {
+            NSNumber *addrNum = trackedAddresses[i];
+            [self addLog:[NSString stringWithFormat:@"%d. 0x%llx", i+1, (unsigned long long)[addrNum unsignedLongLongValue]]];
         }
-    });
+    }
+    [self showLogWindow];
+}
+
+// ========== ОЧИСТИТЬ ВСЕ ==========
++ (void)clearAddresses {
+    [trackedAddresses removeAllObjects];
+    [currentValues removeAllObjects];
+    [self addLog:@"🗑️ Все адреса очищены"];
+    [self updateLogWindow];
 }
 
 // ========== НАЧАТЬ СКАНИРОВАНИЕ ==========
 + (void)startScan {
     if (!trackedAddresses || trackedAddresses.count == 0) {
-        [self addLog:@"❌ Сначала добавь адреса"];
+        [self addLog:@"❌ Нет адресов для сканирования"];
+        [self updateLogWindow];
         return;
     }
     
@@ -297,12 +324,14 @@ static NSMutableArray *currentValues = nil;
     }
     
     [self addLog:@"✅ Начальные значения сохранены"];
+    [self updateLogWindow];
 }
 
 // ========== ИЗМЕНИЛОСЬ ==========
 + (void)refreshChanged {
     if (!trackedAddresses || trackedAddresses.count == 0 || !currentValues) {
         [self addLog:@"❌ Сначала начни сканирование"];
+        [self updateLogWindow];
         return;
     }
     
@@ -333,12 +362,14 @@ static NSMutableArray *currentValues = nil;
     trackedAddresses = newAddresses;
     currentValues = newValues;
     [self addLog:[NSString stringWithFormat:@"📊 Осталось: %lu", (unsigned long)trackedAddresses.count]];
+    [self updateLogWindow];
 }
 
 // ========== НЕ ИЗМЕНИЛОСЬ ==========
 + (void)refreshUnchanged {
     if (!trackedAddresses || trackedAddresses.count == 0 || !currentValues) {
         [self addLog:@"❌ Сначала начни сканирование"];
+        [self updateLogWindow];
         return;
     }
     
@@ -369,14 +400,15 @@ static NSMutableArray *currentValues = nil;
     trackedAddresses = newAddresses;
     currentValues = newValues;
     [self addLog:[NSString stringWithFormat:@"📊 Осталось: %lu", (unsigned long)trackedAddresses.count]];
+    [self updateLogWindow];
 }
 
 // ========== ПОКАЗАТЬ КАНДИДАТОВ ==========
 + (void)showCandidates {
-    [self addLog:@"\n📋 КАНДИДАТЫ:"];
+    [self addLog:@"\n🎯 ТЕКУЩИЕ КАНДИДАТЫ:"];
     
     if (!trackedAddresses || trackedAddresses.count == 0) {
-        [self addLog:@"❌ Нет адресов"];
+        [self addLog:@"❌ Нет кандидатов"];
     } else {
         for (int i = 0; i < trackedAddresses.count; i++) {
             NSNumber *addrNum = trackedAddresses[i];
@@ -388,18 +420,27 @@ static NSMutableArray *currentValues = nil;
     [self showLogWindow];
 }
 
-// ========== СБРОС ==========
-+ (void)resetScan {
-    [trackedAddresses removeAllObjects];
-    [currentValues removeAllObjects];
-    [self addLog:@"🔄 СБРОШЕНО"];
-}
-
 // ========== ЛОГ ==========
 + (void)addLog:(NSString *)text {
     if (!logText) logText = [[NSMutableString alloc] init];
     [logText appendFormat:@"%@\n", text];
     NSLog(@"%@", text);
+}
+
++ (void)updateLogWindow {
+    if (logWindow) {
+        for (UIView *view in logWindow.subviews) {
+            if ([view isKindOfClass:[UITextView class]]) {
+                UITextView *tv = (UITextView *)view;
+                tv.text = logText;
+                if (tv.text.length > 0) {
+                    NSRange bottom = NSMakeRange(tv.text.length - 1, 1);
+                    [tv scrollRangeToVisible:bottom];
+                }
+                break;
+            }
+        }
+    }
 }
 
 + (void)showLogWindow {
@@ -418,6 +459,8 @@ static NSMutableArray *currentValues = nil;
     logWindow.windowLevel = UIWindowLevelAlert + 2;
     logWindow.backgroundColor = [UIColor colorWithWhite:0 alpha:0.95];
     logWindow.layer.cornerRadius = 10;
+    logWindow.layer.borderWidth = 2;
+    logWindow.layer.borderColor = [UIColor greenColor].CGColor;
     
     UITextView *tv = [[UITextView alloc] initWithFrame:CGRectMake(5, 5, w-10, h-60)];
     tv.backgroundColor = [UIColor blackColor];
@@ -433,6 +476,7 @@ static NSMutableArray *currentValues = nil;
     copyBtn.layer.cornerRadius = 8;
     [copyBtn setTitle:@"📋 Копировать" forState:UIControlStateNormal];
     [copyBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    copyBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
     [copyBtn addTarget:self action:@selector(copyLog) forControlEvents:UIControlEventTouchUpInside];
     [logWindow addSubview:copyBtn];
     
@@ -442,25 +486,11 @@ static NSMutableArray *currentValues = nil;
     closeBtn.layer.cornerRadius = 8;
     [closeBtn setTitle:@"❌ Закрыть" forState:UIControlStateNormal];
     [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    closeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
     [closeBtn addTarget:self action:@selector(closeLogWindow) forControlEvents:UIControlEventTouchUpInside];
     [logWindow addSubview:closeBtn];
     
     [logWindow makeKeyAndVisible];
-}
-
-+ (void)updateLogWindow {
-    if (!logWindow) return;
-    for (UIView *view in logWindow.subviews) {
-        if ([view isKindOfClass:[UITextView class]]) {
-            UITextView *tv = (UITextView *)view;
-            tv.text = logText;
-            if (tv.text.length > 0) {
-                NSRange bottom = NSMakeRange(tv.text.length - 1, 1);
-                [tv scrollRangeToVisible:bottom];
-            }
-            break;
-        }
-    }
 }
 
 + (void)closeLogWindow {
@@ -501,10 +531,11 @@ static void init() {
             UIWindow *mainWindow = [ButtonHandler mainWindow];
             if (!mainWindow) return;
             
-            floatingButton = [[FloatingButton alloc] initWithFrame:CGRectMake(20, 150, 50, 50)];
+            floatingButton = [[FloatingButton alloc] initWithFrame:CGRectMake(20, 150, 60, 60)];
             [mainWindow addSubview:floatingButton];
             
             [ButtonHandler addLog:@"✅ Твик загружен"];
+            [ButtonHandler addLog:@"📋 Копируй адреса и жми ВСТАВИТЬ"];
         });
     }
 }
