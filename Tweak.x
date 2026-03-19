@@ -110,7 +110,7 @@
 @interface LogWindow : UIWindow
 @property (nonatomic, retain) UITextView *textView;
 @property (nonatomic, retain) UIButton *closeButton;
-@property (nonatomic, retain) UIButton *copyLogButton; // ИСПРАВЛЕНО: было copyButton
+@property (nonatomic, retain) UIButton *logCopyButton; // ИСПРАВЛЕНО: было copyLogButton
 - (void)showLog:(NSString *)log;
 @end
 
@@ -143,15 +143,15 @@
         _textView.layer.cornerRadius = 5;
         [self addSubview:_textView];
         
-        // Кнопка копирования - ИСПРАВЛЕНО: copyLogButton
-        _copyLogButton = [UIButton buttonWithType:UIButtonTypeSystem];
-        _copyLogButton.frame = CGRectMake(10, 260, 100, 30);
-        [_copyLogButton setTitle:@"📋 Копировать" forState:UIControlStateNormal];
-        [_copyLogButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        _copyLogButton.backgroundColor = [UIColor darkGrayColor];
-        _copyLogButton.layer.cornerRadius = 5;
-        [_copyLogButton addTarget:self action:@selector(copyLog) forControlEvents:UIControlEventTouchUpInside];
-        [self addSubview:_copyLogButton];
+        // Кнопка копирования - ИСПРАВЛЕНО: logCopyButton
+        _logCopyButton = [UIButton buttonWithType:UIButtonTypeSystem];
+        _logCopyButton.frame = CGRectMake(10, 260, 100, 30);
+        [_logCopyButton setTitle:@"📋 Копировать" forState:UIControlStateNormal];
+        [_logCopyButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        _logCopyButton.backgroundColor = [UIColor darkGrayColor];
+        _logCopyButton.layer.cornerRadius = 5;
+        [_logCopyButton addTarget:self action:@selector(copyLog) forControlEvents:UIControlEventTouchUpInside];
+        [self addSubview:_logCopyButton];
         
         // Кнопка закрытия
         _closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
