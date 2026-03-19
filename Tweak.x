@@ -9,7 +9,7 @@
 #define LOG_FILE_PATH @"/var/mobile/Documents/modern/aimbot_log.txt"
 
 // ============================================
-// ЛОГИРОВАНИЕ (проверено)
+// ЛОГИРОВАНИЕ
 // ============================================
 void writeLog(NSString *format, ...) {
     va_list args;
@@ -49,7 +49,7 @@ void scanClasses() {
     NSArray *classNames = @[
         @"GameManager", @"PlayerManager", @"EnemyManager",
         @"PlayerController", @"EnemyController", @"WeaponController",
-        @"CameraController", @"UnityEngine_GameObject", @"UnityEngine_Transform"
+        @"CameraController"
     ];
     
     int found = 0;
@@ -65,7 +65,7 @@ void scanClasses() {
 }
 
 // ============================================
-// ПЛАВАЮЩАЯ КНОПКА (как в H5GG)
+// ПЛАВАЮЩАЯ КНОПКА
 // ============================================
 @interface FloatButton : UIImageView
 @property (nonatomic, copy) void (^actionBlock)(void);
@@ -83,11 +83,10 @@ void scanClasses() {
         self.layer.borderColor = [UIColor whiteColor].CGColor;
         self.userInteractionEnabled = YES;
         
-        // Добавляем обработчик касания (НЕ через addTarget)
+        // Добавляем обработчики жестов
         UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleTap)];
         [self addGestureRecognizer:tap];
         
-        // Добавляем перетаскивание
         UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
         [self addGestureRecognizer:pan];
     }
@@ -95,9 +94,8 @@ void scanClasses() {
 }
 
 - (void)handleTap {
-    writeLog(@"🔵 Кнопка нажата");
     if (self.actionBlock) {
-        self.actionBlock(); // вызываем блок
+        self.actionBlock();
     }
 }
 
@@ -108,13 +106,13 @@ void scanClasses() {
 }
 
 - (void)setAction:(void (^)(void))block {
-    self.actionBlock = block; // просто сохраняем блок
+    self.actionBlock = block;
 }
 
 @end
 
 // ============================================
-// ПРОЗРАЧНОЕ ОКНО (критически важно)
+// ПРОЗРАЧНОЕ ОКНО (ПРОПУСКАЕТ ВСЁ, КРОМЕ КНОПКИ)
 // ============================================
 @interface PassthroughWindow : UIWindow
 @property (nonatomic, weak) FloatButton *floatButton;
@@ -122,17 +120,15 @@ void scanClasses() {
 
 @implementation PassthroughWindow
 
-// Этот метод решает, кто получит касание
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    UIView *hitView = [super hitTest:point withEvent:event];
-    
-    // Если нажали на кнопку или её сабвью — пусть кнопка обрабатывает
-    if (self.floatButton && (hitView == self.floatButton || [self.floatButton isDescendantOfView:hitView])) {
-        return hitView;
+    // Проверяем, попадает ли точка в область кнопки
+    if (self.floatButton && !self.floatButton.hidden && self.floatButton.alpha > 0) {
+        CGPoint buttonPoint = [self convertPoint:point toView:self.floatButton];
+        if ([self.floatButton pointInside:buttonPoint withEvent:event]) {
+            return self.floatButton;
+        }
     }
-    
-    // ВСЁ ОСТАЛЬНОЕ — возвращаем nil,
-    // это значит, что касание пойдёт в окна ниже (в игру)
+    // Если точка не в кнопке, возвращаем nil — касание пойдёт в окно игры
     return nil;
 }
 
@@ -159,35 +155,35 @@ void scanClasses() {
 - (void)setupUI {
     writeLog(@"Создание интерфейса...");
     
-    // 1. Создаём прозрачное окно на весь экран
+    // Создаём окно с низким уровнем, чтобы не блокировать игру
     self.window = [[PassthroughWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-    self.window.windowLevel = UIWindowLevelAlert + 1; // выше игры, но ниже алертов
+    self.window.windowLevel = UIWindowLevelNormal - 1; // чуть ниже, чем у игры
     self.window.backgroundColor = [UIColor clearColor];
     self.window.hidden = NO;
     
-    // 2. Создаём кнопку
+    // Создаём кнопку
     self.floatButton = [[FloatButton alloc] init];
-    
-    // 3. Связываем кнопку с окном (чтобы hitTest мог её найти)
     self.window.floatButton = self.floatButton;
-    
-    // 4. Добавляем кнопку в окно
     [self.window addSubview:self.floatButton];
     
-    // 5. Устанавливаем действие на кнопку (без weakSelf)
+    // Действие при нажатии на кнопку
+    __weak typeof(self) weakSelf = self;
     [self.floatButton setAction:^{
-        writeLog(@"\n🔍 Запуск сканирования по нажатию");
-        scanClasses();
-        writeLog(@"✅ Сканирование завершено");
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (strongSelf) {
+            writeLog(@"\n🔵 Кнопка нажата — запуск сканирования");
+            scanClasses();
+            writeLog(@"✅ Сканирование завершено");
+        }
     }];
     
-    writeLog(@"✅ Интерфейс создан. Нажми синюю кнопку для сканирования.");
+    writeLog(@"✅ Интерфейс создан. Нажми синюю кнопку.");
 }
 
 @end
 
 // ============================================
-// КОНСТРУКТОР (запускается при загрузке)
+// КОНСТРУКТОР
 // ============================================
 static AimbotUI *g_ui = nil;
 
@@ -195,7 +191,6 @@ __attribute__((constructor))
 static void init() {
     writeLog(@"\n=== AIMBOT ЗАГРУЖЕН ===");
     
-    // Ждём 3 секунды, чтобы игра полностью загрузилась
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         g_ui = [[AimbotUI alloc] init];
     });
