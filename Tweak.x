@@ -1,26 +1,61 @@
 #import <UIKit/UIKit.h>
-#import <objc/runtime.h>
+#import <substrate.h>
+#import <mach-o/dyld.h>
 
-// ==================== ОБЪЯВЛЕНИЯ КЛАССОВ ====================
+// ==================== ФУНКЦИИ ДЛЯ РАБОТЫ С ПАМЯТЬЮ ====================
 
-// BehaviourInject - только объявления, реализации нет
-@interface Context : NSObject
-+ (instancetype)create:(NSString *)name;
-- (id)resolve:(Class)type;
-@end
+uint64_t getBaseAddress() {
+    uint32_t count = _dyld_image_count();
+    for(uint32_t i = 0; i < count; i++) {
+        const char *name = _dyld_get_image_name(i);
+        if(name != NULL && strstr(name, "ModernStrike") != NULL) {
+            return (uint64_t)_dyld_get_image_header(i);
+        }
+        if(name != NULL && strstr(name, "GameAssembly") != NULL) {
+            return (uint64_t)_dyld_get_image_header(i);
+        }
+    }
+    return 0;
+}
 
-// Мы НЕ ОБЪЯВЛЯЕМ классы типа Camera, Transform и т.д.
-// Вместо этого везде используем objc_getClass и id
+uint64_t getRealOffset(uint64_t rva) {
+    uint64_t base = getBaseAddress();
+    if(base == 0) return 0;
+    return base + rva;
+}
+
+// ==================== RVA ИЗ ТВОИХ DLL ====================
+
+#define RVA_Players_ctor                 0x3838ED4
+#define RVA_Camera_get_main               0x445BAF8
+#define RVA_Camera_WorldToScreenPoint     0x445AD5C
+#define RVA_FirstPersonController_ctor    0x37F47A4
+#define RVA_Transform_get_position        0x44CEED0
+#define RVA_INetworkPlayer_IsMine          0x2EA8BE4
+#define RVA_INetworkPlayer_IsDead          0x2EA2230
+#define RVA_INetworkPlayer_IsAlly          0x2E9BE28
+#define RVA_INetworkPlayer_GetHealth       0x2EACF44
+#define RVA_INetworkPlayer_Transform       0x2EA8C10
+
+// ==================== ТИПЫ ФУНКЦИЙ ====================
+
+typedef void *(*t_Players_ctor)(void *playerProfileService);
+typedef void *(*t_Camera_get_main)();
+typedef void *(*t_Camera_WorldToScreenPoint)(void *camera, void *position);
+typedef void *(*t_FirstPersonController_ctor)();
+typedef void *(*t_Transform_get_position)(void *transform);
+typedef bool (*t_INetworkPlayer_IsMine)(void *player);
+typedef bool (*t_INetworkPlayer_IsDead)(void *player);
+typedef bool (*t_INetworkPlayer_IsAlly)(void *player);
+typedef float (*t_INetworkPlayer_GetHealth)(void *player);
+typedef void *(*t_INetworkPlayer_Transform)(void *player);
 
 // ==================== ПЛАВАЮЩАЯ КНОПКА ====================
 
 @interface MenuButton : UIButton
 @end
 
-static NSMutableString *logText = nil;
-static int currentMethod = 0;
 static BOOL espEnabled = YES;
-static UIViewController *logViewController = nil;
 
 @implementation MenuButton
 
@@ -29,13 +64,10 @@ static UIViewController *logViewController = nil;
     if (self) {
         self.backgroundColor = [UIColor systemBlueColor];
         self.layer.cornerRadius = 25;
-        [self addTarget:self action:@selector(showMenu) forControlEvents:UIControlEventTouchUpInside];
+        [self addTarget:self action:@selector(toggleESP) forControlEvents:UIControlEventTouchUpInside];
         
         UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(drag:)];
         [self addGestureRecognizer:pan];
-        
-        logText = [[NSMutableString alloc] init];
-        [self addLog:@"=== Твик загружен ==="];
     }
     return self;
 }
@@ -48,641 +80,164 @@ static UIViewController *logViewController = nil;
     }
 }
 
-- (void)addLog:(NSString *)format, ... {
-    va_list args;
-    va_start(args, format);
-    NSString *message = [[NSString alloc] initWithFormat:format arguments:args];
-    va_end(args);
+- (void)toggleESP {
+    espEnabled = !espEnabled;
     
-    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
-    formatter.dateFormat = @"HH:mm:ss";
-    NSString *time = [formatter stringFromDate:[NSDate date]];
-    
-    [logText appendFormat:@"[%@] %@\n", time, message];
-    NSLog(@"[Aimbot] %@", message);
-}
-
-- (void)showMenu {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"ESP Диагностика"
-                                                                   message:[NSString stringWithFormat:@"Текущий метод: %d\nESP: %@", currentMethod, espEnabled ? @"✅" : @"❌"]
-                                                            preferredStyle:UIAlertControllerStyleActionSheet];
-    
-    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ ESP", espEnabled ? @"✅" : @"❌"]
-                                               style:UIAlertActionStyleDefault
-                                             handler:^(UIAlertAction *action) {
-        espEnabled = !espEnabled;
-        [self addLog:@"ESP переключен в %@", espEnabled ? @"ВКЛ" : @"ВЫКЛ"];
-    }]];
-    
-    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ Метод 0: Context Gameplay", currentMethod == 0 ? @"▶️" : @""]
-                                               style:UIAlertActionStyleDefault
-                                             handler:^(UIAlertAction *action) {
-        currentMethod = 0;
-        [self addLog:@"Выбран метод 0 (Context Gameplay)"];
-        [self runDiagnostics];
-    }]];
-    
-    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ Метод 1: Context Battle", currentMethod == 1 ? @"▶️" : @""]
-                                               style:UIAlertActionStyleDefault
-                                             handler:^(UIAlertAction *action) {
-        currentMethod = 1;
-        [self addLog:@"Выбран метод 1 (Context Battle)"];
-        [self runDiagnostics];
-    }]];
-    
-    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ Метод 2: GameManager", currentMethod == 2 ? @"▶️" : @""]
-                                               style:UIAlertActionStyleDefault
-                                             handler:^(UIAlertAction *action) {
-        currentMethod = 2;
-        [self addLog:@"Выбран метод 2 (GameManager)"];
-        [self runDiagnostics];
-    }]];
-    
-    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ Метод 3: RoomController", currentMethod == 3 ? @"▶️" : @""]
-                                               style:UIAlertActionStyleDefault
-                                             handler:^(UIAlertAction *action) {
-        currentMethod = 3;
-        [self addLog:@"Выбран метод 3 (RoomController)"];
-        [self runDiagnostics];
-    }]];
-    
-    [alert addAction:[UIAlertAction actionWithTitle:@"🔍 Запустить диагностику"
-                                               style:UIAlertActionStyleDefault
-                                             handler:^(UIAlertAction *action) {
-        [self runDiagnostics];
-    }]];
-    
-    [alert addAction:[UIAlertAction actionWithTitle:@"📋 Показать логи"
-                                               style:UIAlertActionStyleDefault
-                                             handler:^(UIAlertAction *action) {
-        [self showLogs];
-    }]];
-    
-    [alert addAction:[UIAlertAction actionWithTitle:@"🗑 Очистить логи"
-                                               style:UIAlertActionStyleDestructive
-                                             handler:^(UIAlertAction *action) {
-        [logText setString:@""];
-        [self addLog:@"Логи очищены"];
-    }]];
-    
-    [alert addAction:[UIAlertAction actionWithTitle:@"Закрыть"
-                                               style:UIAlertActionStyleCancel
-                                             handler:nil]];
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"ESP"
+                                                                   message:[NSString stringWithFormat:@"ESP %@", espEnabled ? @"ВКЛ" : @"ВЫКЛ"]
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
     
     UIViewController *rootVC = [UIApplication sharedApplication].keyWindow.rootViewController;
     while (rootVC.presentedViewController) rootVC = rootVC.presentedViewController;
-    
-    if (UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad) {
-        alert.popoverPresentationController.sourceView = self;
-        alert.popoverPresentationController.sourceRect = self.bounds;
-    }
-    
     [rootVC presentViewController:alert animated:YES completion:nil];
-}
-
-- (void)runDiagnostics {
-    [self addLog:@"=== ЗАПУСК ДИАГНОСТИКИ (метод %d) ===", currentMethod];
-    
-    [self checkClass:@"Context"];
-    [self checkClass:@"Players"];
-    [self checkClass:@"FirstPersonController"];
-    [self checkClass:@"INetworkPlayer"];
-    [self checkClass:@"Camera"];
-    [self checkClass:@"GameManager"];
-    [self checkClass:@"RoomController"];
-    
-    id players = [self getPlayersWithMethod:currentMethod];
-    if (players) {
-        [self addLog:@"✅ Players получен!"];
-        [self testPlayers:players];
-    } else {
-        [self addLog:@"❌ Не удалось получить Players"];
-    }
-    
-    [self addLog:@"=== ДИАГНОСТИКА ЗАВЕРШЕНА ==="];
-}
-
-- (void)checkClass:(NSString *)className {
-    Class cls = objc_getClass([className UTF8String]);
-    [self addLog:cls ? @"✅ %@ найден" : @"❌ %@ НЕ найден", className];
-}
-
-- (id)getPlayersWithMethod:(int)method {
-    switch(method) {
-        case 0: {
-            [self addLog:@"▶️ Метод 0: Context Gameplay"];
-            Class contextClass = objc_getClass("Context");
-            if (!contextClass) { [self addLog:@"❌ Context class not found"]; return nil; }
-            
-            Context *context = [contextClass create:@"Gameplay"];
-            if (!context) { [self addLog:@"❌ Failed to create Gameplay context"]; return nil; }
-            [self addLog:@"✅ Context Gameplay создан"];
-            
-            Class playersClass = objc_getClass("Players");
-            if (!playersClass) { [self addLog:@"❌ Players class not found"]; return nil; }
-            
-            id players = [context resolve:playersClass];
-            if (players) [self addLog:@"✅ Players получен через resolve"];
-            return players;
-        }
-        case 1: {
-            [self addLog:@"▶️ Метод 1: Context Battle"];
-            Class contextClass = objc_getClass("Context");
-            if (!contextClass) { [self addLog:@"❌ Context class not found"]; return nil; }
-            
-            Context *context = [contextClass create:@"Battle"];
-            if (!context) { [self addLog:@"❌ Failed to create Battle context"]; return nil; }
-            [self addLog:@"✅ Context Battle создан"];
-            
-            Class playersClass = objc_getClass("Players");
-            if (!playersClass) { [self addLog:@"❌ Players class not found"]; return nil; }
-            
-            id players = [context resolve:playersClass];
-            if (players) [self addLog:@"✅ Players получен через resolve"];
-            return players;
-        }
-        case 2: {
-            [self addLog:@"▶️ Метод 2: GameManager"];
-            Class gmClass = objc_getClass("GameManager");
-            if (!gmClass) { [self addLog:@"❌ GameManager class not found"]; return nil; }
-            
-            id gm = [gmClass sharedInstance];
-            if (!gm) { [self addLog:@"❌ sharedInstance вернул nil"]; return nil; }
-            [self addLog:@"✅ GameManager instance получен"];
-            
-            id players = nil;
-            
-            if ([gm respondsToSelector:@selector(getPlayers)]) {
-                players = [gm getPlayers];
-                if (players) [self addLog:@"✅ Players получен через getPlayers"];
-            }
-            if (!players && [gm respondsToSelector:@selector(players)]) {
-                players = [gm players];
-                if (players) [self addLog:@"✅ Players получен через players"];
-            }
-            
-            return players;
-        }
-        case 3: {
-            [self addLog:@"▶️ Метод 3: RoomController"];
-            Class rcClass = objc_getClass("RoomController");
-            if (!rcClass) { [self addLog:@"❌ RoomController class not found"]; return nil; }
-            
-            id rc = nil;
-            if ([rcClass respondsToSelector:@selector(instance)]) {
-                rc = [rcClass instance];
-            } else if ([rcClass respondsToSelector:@selector(sharedInstance)]) {
-                rc = [rcClass sharedInstance];
-            }
-            
-            if (!rc) { [self addLog:@"❌ instance/sharedInstance вернул nil"]; return nil; }
-            [self addLog:@"✅ RoomController instance получен"];
-            
-            id players = nil;
-            
-            if ([rc respondsToSelector:@selector(getPlayers)]) {
-                players = [rc getPlayers];
-                if (players) [self addLog:@"✅ Players получен через getPlayers"];
-            }
-            if (!players && [rc respondsToSelector:@selector(players)]) {
-                players = [rc players];
-                if (players) [self addLog:@"✅ Players получен через players"];
-            }
-            
-            return players;
-        }
-        default:
-            return nil;
-    }
-}
-
-- (void)testPlayers:(id)players {
-    if ([players respondsToSelector:@selector(All)]) {
-        NSArray *all = [players All];
-        if (all) {
-            [self addLog:@"✅ players.All работает, размер: %lu", (unsigned long)all.count];
-            
-            FirstPersonController *local = nil;
-            if ([players respondsToSelector:@selector(TryGetCurrentController:)]) {
-                BOOL hasLocal = [players TryGetCurrentController:&local];
-                
-                if (hasLocal && local) {
-                    [self addLog:@"✅ TryGetCurrentController работает, local получен"];
-                    
-                    // Получаем камеру через objc_getClass
-                    Class cameraClass = objc_getClass("Camera");
-                    if (cameraClass) {
-                        id cam = [cameraClass main];
-                        if (cam) {
-                            [self addLog:@"✅ Camera.main работает"];
-                            
-                            // Проверяем позицию через valueForKey
-                            id localRoot = [local valueForKey:@"RootPoint"];
-                            if (localRoot) {
-                                id localPos = [localRoot valueForKey:@"position"];
-                                if (localPos) {
-                                    [self addLog:@"✅ local позиция получена через valueForKey"];
-                                }
-                            }
-                        } else {
-                            [self addLog:@"❌ Camera.main вернул nil"];
-                        }
-                    } else {
-                        [self addLog:@"❌ Camera class not found"];
-                    }
-                } else {
-                    [self addLog:@"❌ TryGetCurrentController вернул NO"];
-                }
-            } else {
-                [self addLog:@"❌ TryGetCurrentController метод отсутствует"];
-            }
-            
-            int aliveCount = 0;
-            int enemyCount = 0;
-            for (id player in all) {
-                BOOL isDead = NO;
-                if ([player respondsToSelector:@selector(IsDead)]) {
-                    isDead = [player IsDead];
-                }
-                if (!isDead) aliveCount++;
-                
-                BOOL isMine = NO;
-                if ([player respondsToSelector:@selector(IsMine)]) {
-                    isMine = [player IsMine];
-                }
-                
-                if (!isMine) {
-                    BOOL isAlly = NO;
-                    if ([player respondsToSelector:@selector(IsAllyOfLocalPlayer)]) {
-                        isAlly = [player IsAllyOfLocalPlayer];
-                    }
-                    if (!isAlly) enemyCount++;
-                }
-            }
-            [self addLog:@"📊 Живых игроков: %d, Врагов: %d", aliveCount, enemyCount];
-            
-        } else {
-            [self addLog:@"❌ players.All вернул nil"];
-        }
-    } else {
-        [self addLog:@"❌ players не отвечает на All"];
-    }
-}
-
-- (void)showLogs {
-    if (!logViewController) {
-        logViewController = [[UIViewController alloc] init];
-        logViewController.view.backgroundColor = [UIColor colorWithWhite:0 alpha:0.9];
-        logViewController.view.frame = [UIScreen mainScreen].bounds;
-        
-        UITextView *textView = [[UITextView alloc] initWithFrame:CGRectMake(20, 60, logViewController.view.frame.size.width - 40, logViewController.view.frame.size.height - 140)];
-        textView.backgroundColor = [UIColor blackColor];
-        textView.textColor = [UIColor greenColor];
-        textView.font = [UIFont fontWithName:@"Courier" size:12];
-        textView.editable = NO;
-        textView.layer.cornerRadius = 10;
-        textView.tag = 999;
-        [logViewController.view addSubview:textView];
-        
-        UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        copyBtn.frame = CGRectMake(20, logViewController.view.frame.size.height - 70, 120, 40);
-        [copyBtn setTitle:@"📋 Копировать" forState:UIControlStateNormal];
-        [copyBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        copyBtn.backgroundColor = [UIColor darkGrayColor];
-        copyBtn.layer.cornerRadius = 8;
-        [copyBtn addTarget:self action:@selector(copyLogs) forControlEvents:UIControlEventTouchUpInside];
-        [logViewController.view addSubview:copyBtn];
-        
-        UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        closeBtn.frame = CGRectMake(logViewController.view.frame.size.width - 140, logViewController.view.frame.size.height - 70, 120, 40);
-        [closeBtn setTitle:@"❌ Закрыть" forState:UIControlStateNormal];
-        [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        closeBtn.backgroundColor = [UIColor redColor];
-        closeBtn.layer.cornerRadius = 8;
-        [closeBtn addTarget:self action:@selector(closeLogs) forControlEvents:UIControlEventTouchUpInside];
-        [logViewController.view addSubview:closeBtn];
-    }
-    
-    UITextView *tv = [logViewController.view viewWithTag:999];
-    tv.text = logText;
-    
-    UIViewController *rootVC = [UIApplication sharedApplication].keyWindow.rootViewController;
-    while (rootVC.presentedViewController) rootVC = rootVC.presentedViewController;
-    [rootVC presentViewController:logViewController animated:YES completion:nil];
-}
-
-- (void)copyLogs {
-    UITextView *tv = [logViewController.view viewWithTag:999];
-    [UIPasteboard generalPasteboard].string = tv.text;
-    
-    UILabel *toast = [[UILabel alloc] initWithFrame:CGRectMake(50, 200, 200, 40)];
-    toast.text = @"✅ Скопировано!";
-    toast.backgroundColor = [UIColor blackColor];
-    toast.textColor = [UIColor whiteColor];
-    toast.textAlignment = NSTextAlignmentCenter;
-    toast.layer.cornerRadius = 10;
-    toast.clipsToBounds = YES;
-    [logViewController.view addSubview:toast];
-    
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1.5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        [toast removeFromSuperview];
-    });
-}
-
-- (void)closeLogs {
-    [logViewController dismissViewControllerAnimated:YES completion:nil];
 }
 
 @end
 
 // ==================== ESP ВЬЮ ====================
 
-@interface ESPView : UIView {
-    NSMutableArray *_enemies;
-    UIFont *_espFont;
-}
-@property (nonatomic, retain) NSMutableArray *enemies;
-- (void)updateEnemies:(NSArray *)enemies;
+@interface ESPView : UIView
 @end
 
 @implementation ESPView
-@synthesize enemies = _enemies;
 
 - (id)initWithFrame:(CGRect)frame {
     self = [super initWithFrame:frame];
     if (self) {
         self.backgroundColor = [UIColor clearColor];
         self.userInteractionEnabled = NO;
-        _enemies = [[NSMutableArray alloc] init];
-        _espFont = [UIFont boldSystemFontOfSize:12];
         
-        CADisplayLink *link = [CADisplayLink displayLinkWithTarget:self selector:@selector(redraw)];
+        CADisplayLink *link = [CADisplayLink displayLinkWithTarget:self selector:@selector(update)];
         [link addToRunLoop:[NSRunLoop currentRunLoop] forMode:NSRunLoopCommonModes];
     }
     return self;
 }
 
-- (void)redraw {
+- (void)update {
     if (espEnabled) [self setNeedsDisplay];
 }
 
-- (void)updateEnemies:(NSArray *)enemies {
-    @synchronized(self) {
-        [_enemies removeAllObjects];
-        [_enemies addObjectsFromArray:enemies];
+// Получаем указатели на функции
+- (void *)getPlayers {
+    static void *(*Players_ctor)(void *) = NULL;
+    if(Players_ctor == NULL) {
+        Players_ctor = (void *(*)(void *))getRealOffset(RVA_Players_ctor);
     }
+    
+    // В ESP_FreeFire они создают Players через конструктор
+    // Но нам нужен существующий экземпляр, а не новый
+    // TODO: Нужен способ получить существующий Players
+    
+    return NULL;
 }
 
-- (float)getFloat:(id)obj forKey:(NSString *)key {
-    id value = [obj valueForKey:key];
-    if (value && [value respondsToSelector:@selector(floatValue)]) {
-        return [value floatValue];
+- (void *)getLocalPlayer {
+    // В ESP_FreeFire есть функция GetLocalPlayer
+    // Нужно найти её RVA
+    return NULL;
+}
+
+- (void *)getCamera {
+    static t_Camera_get_main Camera_main = NULL;
+    if(Camera_main == NULL) {
+        Camera_main = (t_Camera_get_main)getRealOffset(RVA_Camera_get_main);
     }
-    return 0;
+    return Camera_main ? Camera_main() : NULL;
+}
+
+- (void *)getPlayerTransform:(void *)player {
+    static t_INetworkPlayer_Transform getTransform = NULL;
+    if(getTransform == NULL) {
+        getTransform = (t_INetworkPlayer_Transform)getRealOffset(RVA_INetworkPlayer_Transform);
+    }
+    return getTransform ? getTransform(player) : NULL;
+}
+
+- (void *)getTransformPosition:(void *)transform {
+    static t_Transform_get_position getPos = NULL;
+    if(getPos == NULL) {
+        getPos = (t_Transform_get_position)getRealOffset(RVA_Transform_get_position);
+    }
+    return getPos ? getPos(transform) : NULL;
+}
+
+- (bool)isPlayerMine:(void *)player {
+    static t_INetworkPlayer_IsMine isMine = NULL;
+    if(isMine == NULL) {
+        isMine = (t_INetworkPlayer_IsMine)getRealOffset(RVA_INetworkPlayer_IsMine);
+    }
+    return isMine ? isMine(player) : false;
+}
+
+- (bool)isPlayerDead:(void *)player {
+    static t_INetworkPlayer_IsDead isDead = NULL;
+    if(isDead == NULL) {
+        isDead = (t_INetworkPlayer_IsDead)getRealOffset(RVA_INetworkPlayer_IsDead);
+    }
+    return isDead ? isDead(player) : false;
+}
+
+- (bool)isPlayerAlly:(void *)player {
+    static t_INetworkPlayer_IsAlly isAlly = NULL;
+    if(isAlly == NULL) {
+        isAlly = (t_INetworkPlayer_IsAlly)getRealOffset(RVA_INetworkPlayer_IsAlly);
+    }
+    return isAlly ? isAlly(player) : false;
+}
+
+- (float)getPlayerHealth:(void *)player {
+    static t_INetworkPlayer_GetHealth getHealth = NULL;
+    if(getHealth == NULL) {
+        getHealth = (t_INetworkPlayer_GetHealth)getRealOffset(RVA_INetworkPlayer_GetHealth);
+    }
+    return getHealth ? getHealth(player) : 0;
 }
 
 - (void)drawRect:(CGRect)rect {
     [super drawRect:rect];
-    if (!espEnabled || _enemies.count == 0) return;
+    if(!espEnabled) return;
     
     @autoreleasepool {
         CGContextRef ctx = UIGraphicsGetCurrentContext();
         
-        for (NSDictionary *enemy in _enemies) {
-            NSValue *screenPosValue = [enemy objectForKey:@"screenPos"];
-            if (!screenPosValue) continue;
-            
-            CGPoint screenPos = [screenPosValue CGPointValue];
-            float distance = [[enemy objectForKey:@"distance"] floatValue];
-            float health = [[enemy objectForKey:@"health"] floatValue];
-            
-            if (screenPos.x < 0 || screenPos.x > self.frame.size.width || 
-                screenPos.y < 0 || screenPos.y > self.frame.size.height) {
-                continue;
-            }
-            
-            float boxSize = MIN(MAX(300.0/distance, 20), 80);
-            
-            CGRect box = CGRectMake(screenPos.x - boxSize/2, screenPos.y - boxSize/2, boxSize, boxSize);
-            CGContextSetStrokeColorWithColor(ctx, [UIColor redColor].CGColor);
-            CGContextSetLineWidth(ctx, 2);
-            CGContextStrokeRect(ctx, box);
-            
-            CGRect healthBar = CGRectMake(screenPos.x - boxSize/2, screenPos.y - boxSize/2 - 5, boxSize * (health/100), 2);
-            CGContextSetFillColorWithColor(ctx, [UIColor greenColor].CGColor);
-            CGContextFillRect(ctx, healthBar);
-            
-            NSString *distText = [NSString stringWithFormat:@"%.0fм", distance];
-            [distText drawAtPoint:CGPointMake(screenPos.x - 20, screenPos.y - boxSize/2 - 20)
-                    withAttributes:@{NSFontAttributeName: _espFont,
-                                    NSForegroundColorAttributeName: [UIColor whiteColor]}];
-        }
-    }
-}
-
-@end
-
-// ==================== ОСНОВНОЙ ТВИК ====================
-
-@interface AimbotTweak : NSObject
-@property (nonatomic, retain) UIWindow *espWindow;
-@property (nonatomic, retain) ESPView *espView;
-@property (nonatomic, retain) MenuButton *menuButton;
-@end
-
-@implementation AimbotTweak
-
-+ (instancetype)sharedInstance {
-    static AimbotTweak *instance = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        instance = [[AimbotTweak alloc] init];
-    });
-    return instance;
-}
-
-- (void)start {
-    _espWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-    _espWindow.windowLevel = UIWindowLevelAlert + 1;
-    _espWindow.backgroundColor = [UIColor clearColor];
-    _espWindow.userInteractionEnabled = NO;
-    
-    _espView = [[ESPView alloc] initWithFrame:_espWindow.bounds];
-    [_espWindow addSubview:_espView];
-    [_espWindow makeKeyAndVisible];
-    
-    UIWindow *mainWindow = [UIApplication sharedApplication].keyWindow;
-    _menuButton = [[MenuButton alloc] init];
-    [mainWindow addSubview:_menuButton];
-    
-    [_menuButton addLog:@"✅ Интерфейс создан"];
-    
-    [NSTimer scheduledTimerWithTimeInterval:0.1 target:self selector:@selector(updateESP) userInfo:nil repeats:YES];
-}
-
-- (void)updateESP {
-    if (!espEnabled || !_espView) return;
-    
-    @autoreleasepool {
-        id players = [self getPlayersWithMethod:currentMethod];
-        if (!players) return;
+        // TODO: Нужен способ получить список всех игроков
+        // В ESP_FreeFire они получают Players и потом All
         
-        FirstPersonController *localPlayer = nil;
-        if ([players respondsToSelector:@selector(TryGetCurrentController:)]) {
-            BOOL hasLocal = [players TryGetCurrentController:&localPlayer];
-            if (!hasLocal || !localPlayer) return;
-        } else {
-            return;
-        }
+        // Временный код - рисуем тестовый прямоугольник
+        CGRect box = CGRectMake(100, 100, 50, 50);
+        CGContextSetStrokeColorWithColor(ctx, [UIColor redColor].CGColor);
+        CGContextSetLineWidth(ctx, 2);
+        CGContextStrokeRect(ctx, box);
         
-        // Получаем камеру через objc_getClass
-        Class cameraClass = objc_getClass("Camera");
-        if (!cameraClass) return;
-        
-        id mainCamera = [cameraClass main];
-        if (!mainCamera) return;
-        
-        NSArray *allPlayers = nil;
-        if ([players respondsToSelector:@selector(All)]) {
-            allPlayers = [players All];
-        }
-        if (!allPlayers) return;
-        
-        id localRoot = [localPlayer valueForKey:@"RootPoint"];
-        if (!localRoot) return;
-        
-        id localPos = [localRoot valueForKey:@"position"];
-        if (!localPos) return;
-        
-        NSMutableArray *enemiesData = [NSMutableArray array];
-        
-        for (id player in allPlayers) {
-            @try {
-                BOOL isMine = NO;
-                if ([player respondsToSelector:@selector(IsMine)]) {
-                    isMine = [player IsMine];
-                }
-                if (isMine) continue;
-                
-                BOOL isDead = NO;
-                if ([player respondsToSelector:@selector(IsDead)]) {
-                    isDead = [player IsDead];
-                }
-                if (isDead) continue;
-                
-                BOOL isAlly = NO;
-                if ([player respondsToSelector:@selector(IsAllyOfLocalPlayer)]) {
-                    isAlly = [player IsAllyOfLocalPlayer];
-                }
-                if (isAlly) continue;
-                
-                id transform = [player valueForKey:@"Transform"];
-                if (!transform) continue;
-                
-                id worldPos = [transform valueForKey:@"position"];
-                if (!worldPos) continue;
-                
-                id screenPos = [mainCamera WorldToScreenPoint:worldPos];
-                if (!screenPos) continue;
-                
-                float z = [[screenPos valueForKey:@"z"] floatValue];
-                if (z <= 0) continue;
-                
-                float x = [[screenPos valueForKey:@"x"] floatValue];
-                float y = [[screenPos valueForKey:@"y"] floatValue];
-                y = [UIScreen mainScreen].bounds.size.height - y;
-                
-                float localX = [[localPos valueForKey:@"x"] floatValue];
-                float localY = [[localPos valueForKey:@"y"] floatValue];
-                float localZ = [[localPos valueForKey:@"z"] floatValue];
-                float worldX = [[worldPos valueForKey:@"x"] floatValue];
-                float worldY = [[worldPos valueForKey:@"y"] floatValue];
-                float worldZ = [[worldPos valueForKey:@"z"] floatValue];
-                
-                float distance = sqrt(pow(localX - worldX, 2) +
-                                      pow(localY - worldY, 2) +
-                                      pow(localZ - worldZ, 2));
-                
-                float health = 0;
-                if ([player respondsToSelector:@selector(GetCurrentHealth)]) {
-                    health = [player GetCurrentHealth];
-                }
-                
-                [enemiesData addObject:@{
-                    @"screenPos": [NSValue valueWithCGPoint:CGPointMake(x, y)],
-                    @"distance": @(distance),
-                    @"health": @(health)
-                }];
-            } @catch (NSException *e) {}
-        }
-        
-        [_espView updateEnemies:enemiesData];
-    }
-}
-
-- (id)getPlayersWithMethod:(int)method {
-    switch(method) {
-        case 0: {
-            Class contextClass = objc_getClass("Context");
-            if (!contextClass) return nil;
-            Context *context = [contextClass create:@"Gameplay"];
-            if (!context) return nil;
-            Class playersClass = objc_getClass("Players");
-            return [context resolve:playersClass];
-        }
-        case 1: {
-            Class contextClass = objc_getClass("Context");
-            if (!contextClass) return nil;
-            Context *context = [contextClass create:@"Battle"];
-            if (!context) return nil;
-            Class playersClass = objc_getClass("Players");
-            return [context resolve:playersClass];
-        }
-        case 2: {
-            Class gmClass = objc_getClass("GameManager");
-            if (!gmClass) return nil;
-            id gm = [gmClass sharedInstance];
-            if (!gm) return nil;
-            
-            if ([gm respondsToSelector:@selector(getPlayers)]) {
-                return [gm getPlayers];
-            }
-            if ([gm respondsToSelector:@selector(players)]) {
-                return [gm players];
-            }
-            return nil;
-        }
-        case 3: {
-            Class rcClass = objc_getClass("RoomController");
-            if (!rcClass) return nil;
-            id rc = nil;
-            if ([rcClass respondsToSelector:@selector(instance)]) {
-                rc = [rcClass instance];
-            } else if ([rcClass respondsToSelector:@selector(sharedInstance)]) {
-                rc = [rcClass sharedInstance];
-            }
-            if (!rc) return nil;
-            
-            if ([rc respondsToSelector:@selector(getPlayers)]) {
-                return [rc getPlayers];
-            }
-            if ([rc respondsToSelector:@selector(players)]) {
-                return [rc players];
-            }
-            return nil;
-        }
-        default:
-            return nil;
+        NSString *text = @"ESP АКТИВЕН";
+        [text drawAtPoint:CGPointMake(50, 50)
+            withAttributes:@{NSFontAttributeName: [UIFont systemFontOfSize:16],
+                            NSForegroundColorAttributeName: [UIColor whiteColor]}];
     }
 }
 
 @end
 
 // ==================== ТОЧКА ВХОДА ====================
+
 __attribute__((constructor))
 static void init() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        AimbotTweak *tweak = [AimbotTweak sharedInstance];
-        [tweak start];
+        UIWindow *mainWindow = [UIApplication sharedApplication].keyWindow;
+        
+        // Кнопка
+        MenuButton *btn = [[MenuButton alloc] init];
+        [mainWindow addSubview:btn];
+        
+        // ESP окно
+        UIWindow *espWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+        espWindow.windowLevel = UIWindowLevelAlert + 1;
+        espWindow.backgroundColor = [UIColor clearColor];
+        espWindow.userInteractionEnabled = NO;
+        [espWindow addSubview:[[ESPView alloc] initWithFrame:espWindow.bounds]];
+        [espWindow makeKeyAndVisible];
+        
+        NSLog(@"[Aimbot] Загружено");
     });
 }
