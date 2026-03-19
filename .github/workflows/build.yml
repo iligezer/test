@@ -8,18 +8,31 @@ on:
 jobs:
   build:
     runs-on: macos-latest
-
+    
     steps:
-      - uses: actions/checkout@v3
-
+      - name: Checkout
+        uses: actions/checkout@v3
+      
       - name: Setup Theos
         run: |
-          git clone --recursive https://github.com/theos/theos.git ~/theos
-          echo "THEOS=~/theos" >> $GITHUB_ENV
-
+          git clone --recursive https://github.com/theos/theos.git $HOME/theos
+          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+          echo "PATH=$HOME/theos/bin:$PATH" >> $GITHUB_ENV
+      
+      - name: Install ldid
+        run: |
+          brew install ldid || true
+      
+      - name: Show files
+        run: |
+          ls -la
+          echo "THEOS=$THEOS"
+      
       - name: Build
-        run: make package
-
+        run: |
+          make clean || true
+          make package
+      
       - name: Upload .deb
         uses: actions/upload-artifact@v3
         with:
