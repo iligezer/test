@@ -2,28 +2,48 @@ name: Build iOS Tweak
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-
+    runs-on: macos-latest
+    
     steps:
-      - name: Checkout repo
+      - name: Checkout code
         uses: actions/checkout@v3
-
-      - name: Install dependencies
+      
+      - name: Setup Theos
         run: |
-          sudo apt update
-          sudo apt install -y dpkg ldid clang make git
-
-      - name: Install Theos
-        run: |
+          # Клонируем Theos вручную
           git clone --recursive https://github.com/theos/theos.git $HOME/theos
           echo "THEOS=$HOME/theos" >> $GITHUB_ENV
-
-      - name: Build tweak
+          echo "PATH=$HOME/theos/bin:$PATH" >> $GITHUB_ENV
+          
+          # Скачиваем SDK
+          mkdir -p $HOME/theos/sdks
+          curl -L https://github.com/theos/sdks/releases/latest/download/iPhoneOS16.0.sdk.tar.xz -o $HOME/sdk.tar.xz
+          tar -xf $HOME/sdk.tar.xz -C $HOME/theos/sdks/
+          
+      - name: Show files
         run: |
-          export THEOS=$HOME/theos
-          make package
+          ls -la
+          echo "THEOS=$THEOS"
+          ls -la $THEOS/sdks/
+      
+      - name: Build
+        run: |
+          make clean || true
+          make package FINALPACKAGE=1
+      
+      - name: Upload .deb
+        uses: actions/upload-artifact@v3
+        with:
+          name: aimbot-deb
+          path: packages/*.deb
+      
+      - name: Upload .dylib (if exists)
+        uses: actions/upload-artifact@v3
+        with:
+          name: aimbot-dylib
+          path: .theos/obj/debug/*.dylib
