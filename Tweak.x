@@ -67,7 +67,7 @@
 @end
 
 static NSMutableString *logText = nil;
-static int currentMethod = 0; // 0-3 разные методы
+static int currentMethod = 0;
 static BOOL espEnabled = YES;
 static UIViewController *logViewController = nil;
 
@@ -116,7 +116,6 @@ static UIViewController *logViewController = nil;
                                                                    message:[NSString stringWithFormat:@"Текущий метод: %d\nESP: %@", currentMethod, espEnabled ? @"✅" : @"❌"]
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
     
-    // Вкл/Выкл ESP
     [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ ESP", espEnabled ? @"✅" : @"❌"]
                                                style:UIAlertActionStyleDefault
                                              handler:^(UIAlertAction *action) {
@@ -124,7 +123,6 @@ static UIViewController *logViewController = nil;
         [self addLog:@"ESP переключен в %@", espEnabled ? @"ВКЛ" : @"ВЫКЛ"];
     }]];
     
-    // Метод 0: Context Gameplay
     [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ Метод 0: Context Gameplay", currentMethod == 0 ? @"▶️" : @""]
                                                style:UIAlertActionStyleDefault
                                              handler:^(UIAlertAction *action) {
@@ -133,7 +131,6 @@ static UIViewController *logViewController = nil;
         [self runDiagnostics];
     }]];
     
-    // Метод 1: Context Battle
     [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ Метод 1: Context Battle", currentMethod == 1 ? @"▶️" : @""]
                                                style:UIAlertActionStyleDefault
                                              handler:^(UIAlertAction *action) {
@@ -142,7 +139,6 @@ static UIViewController *logViewController = nil;
         [self runDiagnostics];
     }]];
     
-    // Метод 2: GameManager
     [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ Метод 2: GameManager", currentMethod == 2 ? @"▶️" : @""]
                                                style:UIAlertActionStyleDefault
                                              handler:^(UIAlertAction *action) {
@@ -151,7 +147,6 @@ static UIViewController *logViewController = nil;
         [self runDiagnostics];
     }]];
     
-    // Метод 3: RoomController
     [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"%@ Метод 3: RoomController", currentMethod == 3 ? @"▶️" : @""]
                                                style:UIAlertActionStyleDefault
                                              handler:^(UIAlertAction *action) {
@@ -160,21 +155,18 @@ static UIViewController *logViewController = nil;
         [self runDiagnostics];
     }]];
     
-    // Запустить диагностику
     [alert addAction:[UIAlertAction actionWithTitle:@"🔍 Запустить диагностику"
                                                style:UIAlertActionStyleDefault
                                              handler:^(UIAlertAction *action) {
         [self runDiagnostics];
     }]];
     
-    // Показать логи
     [alert addAction:[UIAlertAction actionWithTitle:@"📋 Показать логи"
                                                style:UIAlertActionStyleDefault
                                              handler:^(UIAlertAction *action) {
         [self showLogs];
     }]];
     
-    // Очистить логи
     [alert addAction:[UIAlertAction actionWithTitle:@"🗑 Очистить логи"
                                                style:UIAlertActionStyleDestructive
                                              handler:^(UIAlertAction *action) {
@@ -200,7 +192,6 @@ static UIViewController *logViewController = nil;
 - (void)runDiagnostics {
     [self addLog:@"=== ЗАПУСК ДИАГНОСТИКИ (метод %d) ===", currentMethod];
     
-    // Проверяем базовые классы
     [self checkClass:@"Context"];
     [self checkClass:@"Players"];
     [self checkClass:@"FirstPersonController"];
@@ -209,7 +200,6 @@ static UIViewController *logViewController = nil;
     [self checkClass:@"GameManager"];
     [self checkClass:@"RoomController"];
     
-    // Тестируем выбранный метод
     id players = [self getPlayersWithMethod:currentMethod];
     if (players) {
         [self addLog:@"✅ Players получен!"];
@@ -223,11 +213,7 @@ static UIViewController *logViewController = nil;
 
 - (void)checkClass:(NSString *)className {
     Class cls = objc_getClass([className UTF8String]);
-    if (cls) {
-        [self addLog:@"✅ %@ найден", className];
-    } else {
-        [self addLog:@"❌ %@ НЕ найден", className];
-    }
+    [self addLog:cls ? @"✅ %@ найден" : @"❌ %@ НЕ найден", className];
 }
 
 - (id)getPlayersWithMethod:(int)method {
@@ -237,14 +223,14 @@ static UIViewController *logViewController = nil;
             Class contextClass = objc_getClass("Context");
             if (!contextClass) { [self addLog:@"❌ Context class not found"]; return nil; }
             
-            Context *context = [contextClass performSelector:@selector(create:) withObject:@"Gameplay"];
+            Context *context = [contextClass create:@"Gameplay"];
             if (!context) { [self addLog:@"❌ Failed to create Gameplay context"]; return nil; }
             [self addLog:@"✅ Context Gameplay создан"];
             
             Class playersClass = objc_getClass("Players");
             if (!playersClass) { [self addLog:@"❌ Players class not found"]; return nil; }
             
-            id players = [context performSelector:@selector(resolve:) withObject:playersClass];
+            id players = [context resolve:playersClass];
             if (players) [self addLog:@"✅ Players получен через resolve"];
             return players;
         }
@@ -253,14 +239,14 @@ static UIViewController *logViewController = nil;
             Class contextClass = objc_getClass("Context");
             if (!contextClass) { [self addLog:@"❌ Context class not found"]; return nil; }
             
-            Context *context = [contextClass performSelector:@selector(create:) withObject:@"Battle"];
+            Context *context = [contextClass create:@"Battle"];
             if (!context) { [self addLog:@"❌ Failed to create Battle context"]; return nil; }
             [self addLog:@"✅ Context Battle создан"];
             
             Class playersClass = objc_getClass("Players");
             if (!playersClass) { [self addLog:@"❌ Players class not found"]; return nil; }
             
-            id players = [context performSelector:@selector(resolve:) withObject:playersClass];
+            id players = [context resolve:playersClass];
             if (players) [self addLog:@"✅ Players получен через resolve"];
             return players;
         }
@@ -269,26 +255,27 @@ static UIViewController *logViewController = nil;
             Class gmClass = objc_getClass("GameManager");
             if (!gmClass) { [self addLog:@"❌ GameManager class not found"]; return nil; }
             
-            id gm = [gmClass performSelector:@selector(sharedInstance)];
+            id gm = [gmClass sharedInstance];
             if (!gm) { [self addLog:@"❌ sharedInstance вернул nil"]; return nil; }
             [self addLog:@"✅ GameManager instance получен"];
             
-            // Пробуем разные названия методов
+            // Пробуем разные названия методов без performSelector
             id players = nil;
-            SEL selectors[] = {@selector(getPlayers), @selector(players), @selector(GetPlayers), @selector(playerManager)};
-            const char *names[] = {"getPlayers", "players", "GetPlayers", "playerManager"};
             
-            for (int i = 0; i < 4; i++) {
-                if ([gm respondsToSelector:selectors[i]]) {
-                    players = [gm performSelector:selectors[i]];
-                    if (players) {
-                        [self addLog:@"✅ Players получен через %s", names[i]];
-                        return players;
-                    }
-                }
+            if ([gm respondsToSelector:@selector(getPlayers)]) {
+                players = [gm getPlayers];
+                if (players) [self addLog:@"✅ Players получен через getPlayers"];
             }
-            [self addLog:@"❌ Не удалось получить Players из GameManager"];
-            return nil;
+            if (!players && [gm respondsToSelector:@selector(players)]) {
+                players = [gm players];
+                if (players) [self addLog:@"✅ Players получен через players"];
+            }
+            if (!players && [gm respondsToSelector:@selector(GetPlayers)]) {
+                players = [gm performSelector:@selector(GetPlayers)];
+                if (players) [self addLog:@"✅ Players получен через GetPlayers"];
+            }
+            
+            return players;
         }
         case 3: {
             [self addLog:@"▶️ Метод 3: RoomController"];
@@ -297,30 +284,31 @@ static UIViewController *logViewController = nil;
             
             id rc = nil;
             if ([rcClass respondsToSelector:@selector(instance)]) {
-                rc = [rcClass performSelector:@selector(instance)];
+                rc = [rcClass instance];
             } else if ([rcClass respondsToSelector:@selector(sharedInstance)]) {
-                rc = [rcClass performSelector:@selector(sharedInstance)];
+                rc = [rcClass sharedInstance];
             }
             
             if (!rc) { [self addLog:@"❌ instance/sharedInstance вернул nil"]; return nil; }
             [self addLog:@"✅ RoomController instance получен"];
             
-            // Пробуем разные названия методов
+            // Пробуем разные названия методов без performSelector
             id players = nil;
-            SEL selectors[] = {@selector(getPlayers), @selector(players), @selector(GetPlayers), @selector(playerManager)};
-            const char *names[] = {"getPlayers", "players", "GetPlayers", "playerManager"};
             
-            for (int i = 0; i < 4; i++) {
-                if ([rc respondsToSelector:selectors[i]]) {
-                    players = [rc performSelector:selectors[i]];
-                    if (players) {
-                        [self addLog:@"✅ Players получен через %s", names[i]];
-                        return players;
-                    }
-                }
+            if ([rc respondsToSelector:@selector(getPlayers)]) {
+                players = [rc getPlayers];
+                if (players) [self addLog:@"✅ Players получен через getPlayers"];
             }
-            [self addLog:@"❌ Не удалось получить Players из RoomController"];
-            return nil;
+            if (!players && [rc respondsToSelector:@selector(players)]) {
+                players = [rc players];
+                if (players) [self addLog:@"✅ Players получен через players"];
+            }
+            if (!players && [rc respondsToSelector:@selector(GetPlayers)]) {
+                players = [rc performSelector:@selector(GetPlayers)];
+                if (players) [self addLog:@"✅ Players получен через GetPlayers"];
+            }
+            
+            return players;
         }
         default:
             return nil;
@@ -328,52 +316,21 @@ static UIViewController *logViewController = nil;
 }
 
 - (void)testPlayers:(id)players {
-    // Проверяем All
     if ([players respondsToSelector:@selector(All)]) {
-        NSArray *all = [players valueForKey:@"All"];
+        NSArray *all = [players All];
         if (all) {
             [self addLog:@"✅ players.All работает, размер: %lu", (unsigned long)all.count];
             
-            // Проверяем локального игрока
             FirstPersonController *local = nil;
-            NSMethodSignature *sig = [players methodSignatureForSelector:@selector(TryGetCurrentController:)];
-            if (sig) {
-                NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
-                [inv setTarget:players];
-                [inv setSelector:@selector(TryGetCurrentController:)];
-                [inv setArgument:&local atIndex:2];
-                [inv invoke];
-                
-                BOOL hasLocal = NO;
-                [inv getReturnValue:&hasLocal];
+            if ([players respondsToSelector:@selector(TryGetCurrentController:)]) {
+                BOOL hasLocal = [players TryGetCurrentController:&local];
                 
                 if (hasLocal && local) {
                     [self addLog:@"✅ TryGetCurrentController работает, local получен"];
                     
-                    // Проверяем камеру
-                    Camera *cam = [objc_getClass("Camera") performSelector:@selector(main)];
+                    Camera *cam = [Camera main];
                     if (cam) {
                         [self addLog:@"✅ Camera.main работает"];
-                        
-                        // Проверяем конвертацию координат для первого врага
-                        for (id player in all) {
-                            BOOL isMine = [[player valueForKey:@"IsMine"] boolValue];
-                            if (!isMine) {
-                                id transform = [player valueForKey:@"Transform"];
-                                if (transform) {
-                                    id worldPos = [transform valueForKey:@"position"];
-                                    if (worldPos) {
-                                        id screenPos = [cam performSelector:@selector(WorldToScreenPoint:) withObject:worldPos];
-                                        if (screenPos) {
-                                            [self addLog:@"✅ WorldToScreenPoint работает"];
-                                            float z = [[screenPos valueForKey:@"z"] floatValue];
-                                            [self addLog:@"   Z-координата: %.2f", z];
-                                        }
-                                    }
-                                }
-                                break;
-                            }
-                        }
                     } else {
                         [self addLog:@"❌ Camera.main НЕ работает"];
                     }
@@ -384,16 +341,25 @@ static UIViewController *logViewController = nil;
                 [self addLog:@"❌ TryGetCurrentController метод отсутствует"];
             }
             
-            // Считаем живых игроков
             int aliveCount = 0;
             int enemyCount = 0;
             for (id player in all) {
-                BOOL isDead = [[player valueForKey:@"IsDead"] boolValue];
+                BOOL isDead = NO;
+                if ([player respondsToSelector:@selector(IsDead)]) {
+                    isDead = [player IsDead];
+                }
                 if (!isDead) aliveCount++;
                 
-                BOOL isMine = [[player valueForKey:@"IsMine"] boolValue];
+                BOOL isMine = NO;
+                if ([player respondsToSelector:@selector(IsMine)]) {
+                    isMine = [player IsMine];
+                }
+                
                 if (!isMine) {
-                    BOOL isAlly = [[player valueForKey:@"IsAllyOfLocalPlayer"] boolValue];
+                    BOOL isAlly = NO;
+                    if ([player respondsToSelector:@selector(IsAllyOfLocalPlayer)]) {
+                        isAlly = [player IsAllyOfLocalPlayer];
+                    }
                     if (!isAlly) enemyCount++;
                 }
             }
@@ -471,6 +437,8 @@ static UIViewController *logViewController = nil;
     [logViewController dismissViewControllerAnimated:YES completion:nil];
 }
 
+@end
+
 // ==================== ESP ВЬЮ ====================
 
 @interface ESPView : UIView {
@@ -509,16 +477,6 @@ static UIViewController *logViewController = nil;
     }
 }
 
-- (float)distanceBetween:(id)pos1 and:(id)pos2 {
-    float x1 = [[pos1 valueForKey:@"x"] floatValue];
-    float y1 = [[pos1 valueForKey:@"y"] floatValue];
-    float z1 = [[pos1 valueForKey:@"z"] floatValue];
-    float x2 = [[pos2 valueForKey:@"x"] floatValue];
-    float y2 = [[pos2 valueForKey:@"y"] floatValue];
-    float z2 = [[pos2 valueForKey:@"z"] floatValue];
-    return sqrt(pow(x1-x2,2) + pow(y1-y2,2) + pow(z1-z2,2));
-}
-
 - (void)drawRect:(CGRect)rect {
     [super drawRect:rect];
     if (!espEnabled || _enemies.count == 0) return;
@@ -541,18 +499,15 @@ static UIViewController *logViewController = nil;
             
             float boxSize = MIN(MAX(300.0/distance, 20), 80);
             
-            // Прямоугольник
             CGRect box = CGRectMake(screenPos.x - boxSize/2, screenPos.y - boxSize/2, boxSize, boxSize);
             CGContextSetStrokeColorWithColor(ctx, [UIColor redColor].CGColor);
             CGContextSetLineWidth(ctx, 2);
             CGContextStrokeRect(ctx, box);
             
-            // Полоска здоровья
             CGRect healthBar = CGRectMake(screenPos.x - boxSize/2, screenPos.y - boxSize/2 - 5, boxSize * (health/100), 2);
             CGContextSetFillColorWithColor(ctx, [UIColor greenColor].CGColor);
             CGContextFillRect(ctx, healthBar);
             
-            // Дистанция
             NSString *distText = [NSString stringWithFormat:@"%.0fм", distance];
             [distText drawAtPoint:CGPointMake(screenPos.x - 20, screenPos.y - boxSize/2 - 20)
                     withAttributes:@{NSFontAttributeName: _espFont,
@@ -560,6 +515,7 @@ static UIViewController *logViewController = nil;
         }
     }
 }
+
 @end
 
 // ==================== ОСНОВНОЙ ТВИК ====================
@@ -582,7 +538,6 @@ static UIViewController *logViewController = nil;
 }
 
 - (void)start {
-    // Создаём окно для ESP
     _espWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
     _espWindow.windowLevel = UIWindowLevelAlert + 1;
     _espWindow.backgroundColor = [UIColor clearColor];
@@ -592,14 +547,12 @@ static UIViewController *logViewController = nil;
     [_espWindow addSubview:_espView];
     [_espWindow makeKeyAndVisible];
     
-    // Создаём кнопку
     UIWindow *mainWindow = [UIApplication sharedApplication].keyWindow;
     _menuButton = [[MenuButton alloc] init];
     [mainWindow addSubview:_menuButton];
     
     [_menuButton addLog:@"✅ Интерфейс создан"];
     
-    // Запускаем обновление ESP
     [NSTimer scheduledTimerWithTimeInterval:0.1 target:self selector:@selector(updateESP) userInfo:nil repeats:YES];
 }
 
@@ -611,59 +564,102 @@ static UIViewController *logViewController = nil;
         if (!players) return;
         
         FirstPersonController *localPlayer = nil;
-        NSMethodSignature *sig = [players methodSignatureForSelector:@selector(TryGetCurrentController:)];
-        if (!sig) return;
+        if ([players respondsToSelector:@selector(TryGetCurrentController:)]) {
+            BOOL hasLocal = [players TryGetCurrentController:&localPlayer];
+            if (!hasLocal || !localPlayer) return;
+        } else {
+            return;
+        }
         
-        NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
-        [inv setTarget:players];
-        [inv setSelector:@selector(TryGetCurrentController:)];
-        [inv setArgument:&localPlayer atIndex:2];
-        [inv invoke];
-        
-        BOOL hasLocal = NO;
-        [inv getReturnValue:&hasLocal];
-        if (!hasLocal || !localPlayer) return;
-        
-        Camera *mainCamera = [objc_getClass("Camera") performSelector:@selector(main)];
+        Camera *mainCamera = [Camera main];
         if (!mainCamera) return;
         
-        NSArray *allPlayers = [players valueForKey:@"All"];
+        NSArray *allPlayers = nil;
+        if ([players respondsToSelector:@selector(All)]) {
+            allPlayers = [players All];
+        }
         if (!allPlayers) return;
         
-        id localRoot = [localPlayer valueForKey:@"RootPoint"];
+        id localRoot = nil;
+        if ([localPlayer respondsToSelector:@selector(RootPoint)]) {
+            localRoot = [localPlayer RootPoint];
+        }
         if (!localRoot) return;
-        id localPos = [localRoot valueForKey:@"position"];
+        
+        id localPos = nil;
+        if ([localRoot respondsToSelector:@selector(position)]) {
+            localPos = [localRoot position];
+        }
         if (!localPos) return;
         
         NSMutableArray *enemiesData = [NSMutableArray array];
         
         for (id player in allPlayers) {
             @try {
-                if ([[player valueForKey:@"IsMine"] boolValue]) continue;
-                if ([[player valueForKey:@"IsDead"] boolValue]) continue;
-                if ([[player valueForKey:@"IsAllyOfLocalPlayer"] boolValue]) continue;
+                BOOL isMine = NO;
+                if ([player respondsToSelector:@selector(IsMine)]) {
+                    isMine = [player IsMine];
+                }
+                if (isMine) continue;
                 
-                id transform = [player valueForKey:@"Transform"];
+                BOOL isDead = NO;
+                if ([player respondsToSelector:@selector(IsDead)]) {
+                    isDead = [player IsDead];
+                }
+                if (isDead) continue;
+                
+                BOOL isAlly = NO;
+                if ([player respondsToSelector:@selector(IsAllyOfLocalPlayer)]) {
+                    isAlly = [player IsAllyOfLocalPlayer];
+                }
+                if (isAlly) continue;
+                
+                id transform = nil;
+                if ([player respondsToSelector:@selector(Transform)]) {
+                    transform = [player Transform];
+                }
                 if (!transform) continue;
                 
-                id worldPos = [transform valueForKey:@"position"];
+                id worldPos = nil;
+                if ([transform respondsToSelector:@selector(position)]) {
+                    worldPos = [transform position];
+                }
                 if (!worldPos) continue;
                 
-                id screenPos = [mainCamera performSelector:@selector(WorldToScreenPoint:) withObject:worldPos];
+                id screenPos = [mainCamera WorldToScreenPoint:worldPos];
                 if (!screenPos) continue;
                 
-                float z = [[screenPos valueForKey:@"z"] floatValue];
+                float z = 0;
+                if ([screenPos respondsToSelector:@selector(z)]) {
+                    z = [[screenPos valueForKey:@"z"] floatValue];
+                }
                 if (z <= 0) continue;
                 
-                float x = [[screenPos valueForKey:@"x"] floatValue];
-                float y = [[screenPos valueForKey:@"y"] floatValue];
+                float x = 0;
+                if ([screenPos respondsToSelector:@selector(x)]) {
+                    x = [[screenPos valueForKey:@"x"] floatValue];
+                }
+                float y = 0;
+                if ([screenPos respondsToSelector:@selector(y)]) {
+                    y = [[screenPos valueForKey:@"y"] floatValue];
+                }
                 y = [UIScreen mainScreen].bounds.size.height - y;
                 
-                float distance = sqrt(pow([[localPos valueForKey:@"x"] floatValue] - [[worldPos valueForKey:@"x"] floatValue], 2) +
-                                      pow([[localPos valueForKey:@"y"] floatValue] - [[worldPos valueForKey:@"y"] floatValue], 2) +
-                                      pow([[localPos valueForKey:@"z"] floatValue] - [[worldPos valueForKey:@"z"] floatValue], 2));
+                float localX = [[localPos valueForKey:@"x"] floatValue];
+                float localY = [[localPos valueForKey:@"y"] floatValue];
+                float localZ = [[localPos valueForKey:@"z"] floatValue];
+                float worldX = [[worldPos valueForKey:@"x"] floatValue];
+                float worldY = [[worldPos valueForKey:@"y"] floatValue];
+                float worldZ = [[worldPos valueForKey:@"z"] floatValue];
                 
-                float health = [[player valueForKey:@"GetCurrentHealth"] floatValue];
+                float distance = sqrt(pow(localX - worldX, 2) +
+                                      pow(localY - worldY, 2) +
+                                      pow(localZ - worldZ, 2));
+                
+                float health = 0;
+                if ([player respondsToSelector:@selector(GetCurrentHealth)]) {
+                    health = [player GetCurrentHealth];
+                }
                 
                 [enemiesData addObject:@{
                     @"screenPos": [NSValue valueWithCGPoint:CGPointMake(x, y)],
@@ -682,37 +678,51 @@ static UIViewController *logViewController = nil;
         case 0: {
             Class contextClass = objc_getClass("Context");
             if (!contextClass) return nil;
-            Context *context = [contextClass performSelector:@selector(create:) withObject:@"Gameplay"];
+            Context *context = [contextClass create:@"Gameplay"];
             if (!context) return nil;
             Class playersClass = objc_getClass("Players");
-            return [context performSelector:@selector(resolve:) withObject:playersClass];
+            return [context resolve:playersClass];
         }
         case 1: {
             Class contextClass = objc_getClass("Context");
             if (!contextClass) return nil;
-            Context *context = [contextClass performSelector:@selector(create:) withObject:@"Battle"];
+            Context *context = [contextClass create:@"Battle"];
             if (!context) return nil;
             Class playersClass = objc_getClass("Players");
-            return [context performSelector:@selector(resolve:) withObject:playersClass];
+            return [context resolve:playersClass];
         }
         case 2: {
             Class gmClass = objc_getClass("GameManager");
             if (!gmClass) return nil;
-            id gm = [gmClass performSelector:@selector(sharedInstance)];
+            id gm = [gmClass sharedInstance];
             if (!gm) return nil;
-            id players = [gm performSelector:@selector(getPlayers)];
-            if (!players) players = [gm performSelector:@selector(players)];
-            return players;
+            
+            if ([gm respondsToSelector:@selector(getPlayers)]) {
+                return [gm getPlayers];
+            }
+            if ([gm respondsToSelector:@selector(players)]) {
+                return [gm players];
+            }
+            return nil;
         }
         case 3: {
             Class rcClass = objc_getClass("RoomController");
             if (!rcClass) return nil;
-            id rc = [rcClass performSelector:@selector(instance)];
-            if (!rc) rc = [rcClass performSelector:@selector(sharedInstance)];
+            id rc = nil;
+            if ([rcClass respondsToSelector:@selector(instance)]) {
+                rc = [rcClass instance];
+            } else if ([rcClass respondsToSelector:@selector(sharedInstance)]) {
+                rc = [rcClass sharedInstance];
+            }
             if (!rc) return nil;
-            id players = [rc performSelector:@selector(getPlayers)];
-            if (!players) players = [rc performSelector:@selector(players)];
-            return players;
+            
+            if ([rc respondsToSelector:@selector(getPlayers)]) {
+                return [rc getPlayers];
+            }
+            if ([rc respondsToSelector:@selector(players)]) {
+                return [rc players];
+            }
+            return nil;
         }
         default:
             return nil;
