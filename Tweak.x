@@ -48,7 +48,7 @@ static NSMutableArray *safeRegions = nil;
 + (void)resetScan;
 + (void)findSafeRegions;
 + (void)safeScanForPlayers;
-+ (void)smartQuickScan;
++ (void)smartUniqueScan;
 + (UIWindow*)mainWindow;
 + (void)handlePan:(UIPanGestureRecognizer*)gesture;
 @end
@@ -107,7 +107,7 @@ static NSMutableArray *safeRegions = nil;
     menuWindow.layer.cornerRadius = 10;
     
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, menuWidth, 30)];
-    title.text = @"⚡ SMART SCANNER";
+    title.text = @"⚡ UNIQUE SCANNER";
     title.textColor = [UIColor whiteColor];
     title.textAlignment = NSTextAlignmentCenter;
     [menuWindow addSubview:title];
@@ -130,14 +130,14 @@ static NSMutableArray *safeRegions = nil;
     [findRegionsBtn addTarget:self action:@selector(findSafeRegions) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:findRegionsBtn];
     
-    // Кнопка 3: УМНОЕ СКАНИРОВАНИЕ
-    UIButton *smartScanBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    smartScanBtn.frame = CGRectMake(20, 150, menuWidth-40, 40);
-    smartScanBtn.backgroundColor = [UIColor systemPurpleColor];
-    [smartScanBtn setTitle:@"🧠 УМНОЕ СКАНИРОВАНИЕ" forState:UIControlStateNormal];
-    [smartScanBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    [smartScanBtn addTarget:self action:@selector(smartQuickScan) forControlEvents:UIControlEventTouchUpInside];
-    [menuWindow addSubview:smartScanBtn];
+    // Кнопка 3: УНИКАЛЬНОЕ СКАНИРОВАНИЕ
+    UIButton *uniqueScanBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    uniqueScanBtn.frame = CGRectMake(20, 150, menuWidth-40, 40);
+    uniqueScanBtn.backgroundColor = [UIColor systemPurpleColor];
+    [uniqueScanBtn setTitle:@"🎯 УНИКАЛЬНОЕ СКАНИРОВАНИЕ" forState:UIControlStateNormal];
+    [uniqueScanBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [uniqueScanBtn addTarget:self action:@selector(smartUniqueScan) forControlEvents:UIControlEventTouchUpInside];
+    [menuWindow addSubview:uniqueScanBtn];
     
     // Кнопка 4: БЕЗОПАСНОЕ СКАНИРОВАНИЕ
     UIButton *safeScanBtn = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -184,7 +184,7 @@ static NSMutableArray *safeRegions = nil;
     [self addLog:@"🔄 ПАМЯТЬ ОЧИЩЕНА"];
     [self addLog:@"1. Зайди в матч"];
     [self addLog:@"2. Нажми НАЙТИ РЕГИОНЫ"];
-    [self addLog:@"3. Нажми УМНОЕ СКАНИРОВАНИЕ"];
+    [self addLog:@"3. Нажми УНИКАЛЬНОЕ СКАНИРОВАНИЕ"];
     [self showLogWindow];
 }
 
@@ -288,8 +288,8 @@ static NSMutableArray *safeRegions = nil;
     [self showLogWindow];
 }
 
-// ========== УМНОЕ БЫСТРОЕ СКАНИРОВАНИЕ ==========
-+ (void)smartQuickScan {
+// ========== УНИКАЛЬНОЕ СКАНИРОВАНИЕ С ОТСЛЕЖИВАНИЕМ ПРОГРЕССА ==========
++ (void)smartUniqueScan {
     if (!safeRegions || safeRegions.count == 0) {
         [self addLog:@"❌ Сначала найди регионы"];
         [self showLogWindow];
@@ -297,18 +297,34 @@ static NSMutableArray *safeRegions = nil;
     }
     
     [foundPlayers removeAllObjects];
-    [self addLog:@"🧠 УМНОЕ СКАНИРОВАНИЕ..."];
+    [self addLog:@"🧠 УНИКАЛЬНОЕ СКАНИРОВАНИЕ..."];
+    [self addLog:@"⏳ Поиск уникальных игроков..."];
     
     task_t task = mach_task_self();
     int candidates = 0;
     int filtered = 0;
+    int duplicates = 0;
+    int scanned = 0;
+    int totalRegions = (int)safeRegions.count;
+    
+    // Для отслеживания уникальных координат
+    NSMutableSet *uniqueCoords = [NSMutableSet set];
     
     float targetHealth = 100.0f;
     float tolerance = 10.0f;
     
+    int regionIndex = 0;
     for (NSDictionary *region in safeRegions) {
+        regionIndex++;
+        
         vm_address_t addr = [region[@"address"] unsignedLongLongValue];
         vm_size_t size = [region[@"size"] unsignedLongValue];
+        
+        // Показываем прогресс каждые 500 регионов
+        if (regionIndex % 500 == 0) {
+            [self addLog:[NSString stringWithFormat:@"📊 Прогресс: %d/%d регионов, найдено уникальных: %d", 
+                          regionIndex, totalRegions, candidates]];
+        }
         
         uint8_t *buffer = malloc(size);
         vm_size_t data_read = 0;
@@ -318,6 +334,8 @@ static NSMutableArray *safeRegions = nil;
         if (kr == KERN_SUCCESS && data_read == size) {
             
             for (int i = 0; i < data_read - 128; i += 4) {
+                scanned++;
+                
                 float *health = (float*)(buffer + i);
                 
                 if (isfinite(*health) && fabs(*health - targetHealth) < tolerance) {
@@ -368,6 +386,20 @@ static NSMutableArray *safeRegions = nil;
                     
                     // Если есть имя или координаты реалистичные
                     if (hasName || (fabs(*x) > 1 && fabs(*y) > 1 && fabs(*z) < 100)) {
+                        
+                        // ФИЛЬТР 4: проверка на дубликат
+                        NSString *coordKey = [NSString stringWithFormat:@"%.1f,%.1f,%.1f", 
+                                              round(*x * 10)/10, 
+                                              round(*y * 10)/10, 
+                                              round(*z * 10)/10];
+                        
+                        if ([uniqueCoords containsObject:coordKey]) {
+                            duplicates++;
+                            i += 0x80;
+                            continue;
+                        }
+                        
+                        [uniqueCoords addObject:coordKey];
                         candidates++;
                         
                         PlayerData *p = [[PlayerData alloc] init];
@@ -385,7 +417,7 @@ static NSMutableArray *safeRegions = nil;
                                           candidates, p.x, p.y, p.z, p.health, p.name ?: @""]];
                         }
                         
-                        i += 0x80; // пропускаем структуру
+                        i += 0x80;
                     } else {
                         filtered++;
                     }
@@ -396,8 +428,27 @@ static NSMutableArray *safeRegions = nil;
         usleep(1000);
     }
     
-    [self addLog:[NSString stringWithFormat:@"\n📊 Отфильтровано мусора: %d", filtered]];
-    [self addLog:[NSString stringWithFormat:@"📊 Найдено игроков: %d", candidates]];
+    [self addLog:@"\n📊 СТАТИСТИКА СКАНИРОВАНИЯ:"];
+    [self addLog:[NSString stringWithFormat:@"📁 Просканировано регионов: %d", totalRegions]];
+    [self addLog:[NSString stringWithFormat:@"🔍 Проверено адресов: %d", scanned]];
+    [self addLog:[NSString stringWithFormat:@"🗑️ Отфильтровано мусора: %d", filtered]];
+    [self addLog:[NSString stringWithFormat:@"🔄 Отсеяно дубликатов: %d", duplicates]];
+    [self addLog:[NSString stringWithFormat:@"✅ УНИКАЛЬНЫХ ИГРОКОВ: %d", candidates]];
+    
+    if (candidates == 0) {
+        [self addLog:@"❌ Игроки не найдены. Попробуй:"];
+        [self addLog:@"   - Зайти в другой матч"];
+        [self addLog:@"   - Изменить допуск по здоровью"];
+        [self addLog:@"   - Проверить, активна ли игра"];
+    } else {
+        [self addLog:@"\n🎯 НАЙДЕННЫЕ ИГРОКИ (уникальные):"];
+        for (int i = 0; i < MIN(10, candidates); i++) {
+            PlayerData *p = foundPlayers[i];
+            [self addLog:[NSString stringWithFormat:@"   %d. (%.1f,%.1f,%.1f) HP:%.0f %@",
+                          i+1, p.x, p.y, p.z, p.health, p.name ?: @""]];
+        }
+    }
+    
     [self showLogWindow];
 }
 
