@@ -36,14 +36,14 @@
 - (id)position;
 @end
 
-@interface Vector3 : NSObject  // для хранения результатов
+@interface Vector3 : NSObject
 - (float)x;
 - (float)y;
 - (float)z;
 @end
 
 @interface Players : NSObject
-- (id)All; // список всех игроков
+- (id)All;
 - (BOOL)TryGetCurrentController:(id *)controller;
 @end
 
@@ -71,7 +71,6 @@
 }
 
 - (void)dealloc {
-    // В ARC не вызываем [release] и [super dealloc]
     _enemies = nil;
     _espFont = nil;
 }
@@ -99,16 +98,13 @@
             BOOL isBot = [[enemy objectForKey:@"isBot"] boolValue];
             float health = [[enemy objectForKey:@"health"] floatValue];
             
-            // Проверяем, что позиция в пределах экрана
             if (screenPos.x < 0 || screenPos.x > self.frame.size.width || 
                 screenPos.y < 0 || screenPos.y > self.frame.size.height) {
                 continue;
             }
             
-            // Цвет: красный для врагов, оранжевый для ботов
             UIColor *color = isBot ? [UIColor orangeColor] : [UIColor redColor];
             
-            // Размер бокса зависит от расстояния
             float boxSize = 60.0f;
             if (distance > 0) {
                 boxSize = MIN(MAX(300.0f / distance, 30.0f), 120.0f);
@@ -118,19 +114,16 @@
                                     screenPos.y - boxSize/2 - 15, 
                                     boxSize, boxSize);
             
-            // Рисуем прямоугольник
             CGContextSetStrokeColorWithColor(ctx, color.CGColor);
             CGContextSetLineWidth(ctx, 2.0f);
             CGContextStrokeRect(ctx, box);
             
-            // Рисуем линию от верха бокса до низа
             CGContextSetStrokeColorWithColor(ctx, color.CGColor);
             CGContextSetLineWidth(ctx, 1.5f);
             CGContextMoveToPoint(ctx, screenPos.x, screenPos.y - boxSize/2 - 15);
             CGContextAddLineToPoint(ctx, screenPos.x, screenPos.y + boxSize/2 - 15);
             CGContextStrokePath(ctx);
             
-            // Рисуем здоровье (полоска сверху)
             if (health > 0) {
                 CGRect healthBar = CGRectMake(screenPos.x - boxSize/2, 
                                               screenPos.y - boxSize/2 - 25, 
@@ -139,7 +132,6 @@
                 CGContextFillRect(ctx, healthBar);
             }
             
-            // Рисуем дистанцию и тип
             NSString *distanceText = [NSString stringWithFormat:@"%.1fм%@", distance, isBot ? @" (бот)" : @""];
             NSDictionary *attrs = @{
                 NSFontAttributeName: _espFont,
@@ -200,7 +192,6 @@
 - (void)startESP {
     [self setupESP];
     
-    // Запускаем таймер обновления 30 FPS
     _updateTimer = [NSTimer scheduledTimerWithTimeInterval:0.033
                                                      target:self
                                                    selector:@selector(updateESP)
@@ -209,13 +200,14 @@
 }
 
 - (float)distanceBetween:(id)pos1 and:(id)pos2 {
-    float x1 = [pos1 performSelector:@selector(x)];
-    float y1 = [pos1 performSelector:@selector(y)];
-    float z1 = [pos1 performSelector:@selector(z)];
+    // Получаем значения через KVC (без performSelector)
+    float x1 = [[pos1 valueForKey:@"x"] floatValue];
+    float y1 = [[pos1 valueForKey:@"y"] floatValue];
+    float z1 = [[pos1 valueForKey:@"z"] floatValue];
     
-    float x2 = [pos2 performSelector:@selector(x)];
-    float y2 = [pos2 performSelector:@selector(y)];
-    float z2 = [pos2 performSelector:@selector(z)];
+    float x2 = [[pos2 valueForKey:@"x"] floatValue];
+    float y2 = [[pos2 valueForKey:@"y"] floatValue];
+    float z2 = [[pos2 valueForKey:@"z"] floatValue];
     
     float dx = x1 - x2;
     float dy = y1 - y2;
@@ -230,19 +222,39 @@
     @autoreleasepool {
         // Получаем контекст Gameplay
         Class contextClass = objc_getClass("Context");
-        if (!contextClass) return;
+        if (!contextClass) {
+            NSLog(@"[Aimbot] Context class not found");
+            return;
+        }
         
         Context *context = [contextClass performSelector:@selector(create:) withObject:@"Gameplay"];
-        if (!context) return;
+        if (!context) {
+            NSLog(@"[Aimbot] Failed to get Gameplay context");
+            return;
+        }
         
         // Получаем Players
         Class playersClass = objc_getClass("Players");
+        if (!playersClass) {
+            NSLog(@"[Aimbot] Players class not found");
+            return;
+        }
+        
         Players *players = [context performSelector:@selector(resolve:) withObject:playersClass];
-        if (!players) return;
+        if (!players) {
+            NSLog(@"[Aimbot] Failed to resolve Players");
+            return;
+        }
         
         // Получаем локального игрока
         FirstPersonController *localPlayer = nil;
-        NSInvocation *inv = [NSInvocation invocationWithMethodSignature:[players methodSignatureForSelector:@selector(TryGetCurrentController:)]];
+        NSMethodSignature *sig = [players methodSignatureForSelector:@selector(TryGetCurrentController:)];
+        if (!sig) {
+            NSLog(@"[Aimbot] No signature for TryGetCurrentController");
+            return;
+        }
+        
+        NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
         [inv setTarget:players];
         [inv setSelector:@selector(TryGetCurrentController:)];
         [inv setArgument:&localPlayer atIndex:2];
@@ -251,76 +263,81 @@
         BOOL hasLocal = NO;
         [inv getReturnValue:&hasLocal];
         
-        if (!hasLocal || !localPlayer) return;
+        if (!hasLocal || !localPlayer) {
+            return;
+        }
         
         // Получаем камеру
         Class cameraClass = objc_getClass("Camera");
+        if (!cameraClass) return;
+        
         Camera *mainCamera = [cameraClass performSelector:@selector(main)];
         if (!mainCamera) return;
         
         // Получаем список всех игроков
-        NSArray *allPlayers = [players performSelector:@selector(All)];
+        NSArray *allPlayers = [players valueForKey:@"All"];
         if (!allPlayers) return;
         
         NSMutableArray *enemiesData = [NSMutableArray array];
         
         // Получаем позицию локального игрока
-        id localRootPoint = [localPlayer performSelector:@selector(RootPoint)];
-        id localPos = [localRootPoint performSelector:@selector(position)];
+        id localRootPoint = [localPlayer valueForKey:@"RootPoint"];
+        if (!localRootPoint) return;
+        
+        id localPos = [localRootPoint valueForKey:@"position"];
+        if (!localPos) return;
         
         for (id player in allPlayers) {
-            // Проверяем через IsMine
-            BOOL isMine = [[player performSelector:@selector(IsMine)] boolValue];
-            if (isMine) continue;
-            
-            // Проверяем жив ли
-            BOOL isDead = [[player performSelector:@selector(IsDead)] boolValue];
-            if (isDead) continue;
-            
-            // Проверяем, враг ли
-            BOOL isAlly = [[player performSelector:@selector(IsAllyOfLocalPlayer)] boolValue];
-            if (isAlly) continue; // пропускаем союзников
-            
-            // Получаем позицию
-            id transform = [player performSelector:@selector(Transform)];
-            if (!transform) continue;
-            
-            id worldPos = [transform performSelector:@selector(position)];
-            if (!worldPos) continue;
-            
-            // Конвертируем в экранные координаты
-            id screenPos = [mainCamera performSelector:@selector(WorldToScreenPoint:) withObject:worldPos];
-            if (!screenPos) continue;
-            
-            // Проверяем, что игрок перед камерой
-            float z = [[screenPos performSelector:@selector(z)] floatValue];
-            if (z <= 0) continue;
-            
-            float x = [[screenPos performSelector:@selector(x)] floatValue];
-            float y = [[screenPos performSelector:@selector(y)] floatValue];
-            
-            // Конвертируем в CGPoint (UIKit Y перевёрнута)
-            CGPoint point = CGPointMake(x, [UIScreen mainScreen].bounds.size.height - y);
-            
-            // Вычисляем дистанцию
-            float distance = [self distanceBetween:localPos and:worldPos];
-            
-            // Получаем здоровье
-            float health = [[player performSelector:@selector(GetCurrentHealth)] floatValue];
-            
-            // Проверяем, бот ли (через QuarkPlayer)
-            BOOL isBot = NO;
-            id quarkPlayer = [player performSelector:@selector(QuarkPlayer)];
-            if (quarkPlayer) {
-                isBot = [[quarkPlayer performSelector:@selector(IsBot)] boolValue];
+            @try {
+                // Проверяем через IsMine
+                BOOL isMine = [[player valueForKey:@"IsMine"] boolValue];
+                if (isMine) continue;
+                
+                // Проверяем жив ли
+                BOOL isDead = [[player valueForKey:@"IsDead"] boolValue];
+                if (isDead) continue;
+                
+                // Проверяем, враг ли
+                BOOL isAlly = [[player valueForKey:@"IsAllyOfLocalPlayer"] boolValue];
+                if (isAlly) continue;
+                
+                // Получаем позицию
+                id transform = [player valueForKey:@"Transform"];
+                if (!transform) continue;
+                
+                id worldPos = [transform valueForKey:@"position"];
+                if (!worldPos) continue;
+                
+                // Конвертируем в экранные координаты
+                id screenPos = [mainCamera performSelector:@selector(WorldToScreenPoint:) withObject:worldPos];
+                if (!screenPos) continue;
+                
+                float z = [[screenPos valueForKey:@"z"] floatValue];
+                if (z <= 0) continue;
+                
+                float x = [[screenPos valueForKey:@"x"] floatValue];
+                float y = [[screenPos valueForKey:@"y"] floatValue];
+                
+                CGPoint point = CGPointMake(x, [UIScreen mainScreen].bounds.size.height - y);
+                
+                float distance = [self distanceBetween:localPos and:worldPos];
+                float health = [[player valueForKey:@"GetCurrentHealth"] floatValue];
+                
+                BOOL isBot = NO;
+                id quarkPlayer = [player valueForKey:@"QuarkPlayer"];
+                if (quarkPlayer) {
+                    isBot = [[quarkPlayer valueForKey:@"IsBot"] boolValue];
+                }
+                
+                [enemiesData addObject:@{
+                    @"screenPos": [NSValue valueWithCGPoint:point],
+                    @"distance": @(distance),
+                    @"isBot": @(isBot),
+                    @"health": @(health)
+                }];
+            } @catch (NSException *e) {
+                NSLog(@"[Aimbot] Exception: %@", e);
             }
-            
-            [enemiesData addObject:@{
-                @"screenPos": [NSValue valueWithCGPoint:point],
-                @"distance": @(distance),
-                @"isBot": @(isBot),
-                @"health": @(health)
-            }];
         }
         
         [_espView updateEnemies:enemiesData];
