@@ -30,19 +30,33 @@ void writeLog(NSString *format, ...) {
     NSString *timestamp = [formatter stringFromDate:[NSDate date]];
     NSString *logEntry = [NSString stringWithFormat:@"[%@] %@\n", timestamp, message];
     
+    NSError *error = nil;
     NSFileManager *fm = [NSFileManager defaultManager];
     NSString *dirPath = [LOG_FILE_PATH stringByDeletingLastPathComponent];
+    
+    // Создаём папку, если её нет
     if (![fm fileExistsAtPath:dirPath]) {
-        [fm createDirectoryAtPath:dirPath withIntermediateDirectories:YES attributes:nil error:nil];
+        [fm createDirectoryAtPath:dirPath withIntermediateDirectories:YES attributes:nil error:&error];
+        if (error) {
+            NSLog(@"[Aimbot] Ошибка создания папки: %@", error);
+        }
     }
     
+    // Пытаемся записать в файл
     NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:LOG_FILE_PATH];
     if (fh) {
         [fh seekToEndOfFile];
         [fh writeData:[logEntry dataUsingEncoding:NSUTF8StringEncoding]];
         [fh closeFile];
+        NSLog(@"[Aimbot] Запись добавлена в существующий файл");
     } else {
-        [logEntry writeToFile:LOG_FILE_PATH atomically:YES encoding:NSUTF8StringEncoding error:nil];
+        // Если файла нет — создаём новый
+        [logEntry writeToFile:LOG_FILE_PATH atomically:YES encoding:NSUTF8StringEncoding error:&error];
+        if (error) {
+            NSLog(@"[Aimbot] Ошибка записи в файл: %@", error);
+        } else {
+            NSLog(@"[Aimbot] Создан новый файл и записано");
+        }
     }
 }
 
@@ -50,7 +64,7 @@ void writeLog(NSString *format, ...) {
 // СКАНИРОВАНИЕ КЛАССОВ
 // ============================================
 void scanClasses() {
-    writeLog(@"\n=== СКАНИРОВАНИЕ КЛАССОВ ===");
+    writeLog(@"=== СКАНИРОВАНИЕ КЛАССОВ ===");
     
     NSArray *classNames = @[
         @"GameManager", @"PlayerManager", @"EnemyManager",
@@ -158,7 +172,7 @@ void scanClasses() {
 }
 
 - (void)setupUI {
-    writeLog(@"Создание интерфейса...");
+    NSLog(@"[Aimbot] Создание интерфейса...");
     
     self.window = [[PassthroughWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
     self.window.windowLevel = UIWindowLevelAlert + 1;
@@ -176,7 +190,8 @@ void scanClasses() {
     
     [self buildMenu];
     
-    writeLog(@"✅ Интерфейс создан");
+    // ТЕСТ: пишем в лог сразу при загрузке
+    writeLog(@"✅ Интерфейс создан. Папка и файл должны появиться.");
 }
 
 - (void)buildMenu {
@@ -203,8 +218,18 @@ void scanClasses() {
     [scanBtn addTarget:self action:@selector(scanAction) forControlEvents:UIControlEventTouchUpInside];
     [self.menuView addSubview:scanBtn];
     
+    // ТЕСТОВАЯ КНОПКА: просто пишет "тест" в файл
+    UIButton *testBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    testBtn.frame = CGRectMake(20, 150, 200, 40);
+    [testBtn setTitle:@"🧪 Тест сохранения" forState:UIControlStateNormal];
+    testBtn.backgroundColor = [UIColor lightGrayColor];
+    [testBtn setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+    testBtn.layer.cornerRadius = 5;
+    [testBtn addTarget:self action:@selector(testSaveAction) forControlEvents:UIControlEventTouchUpInside];
+    [self.menuView addSubview:testBtn];
+    
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(20, 100, 200, 40);
+    closeBtn.frame = CGRectMake(20, 200, 200, 40);
     [closeBtn setTitle:@"❌ Close" forState:UIControlStateNormal];
     closeBtn.backgroundColor = [UIColor lightGrayColor];
     [closeBtn setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
@@ -227,6 +252,13 @@ void scanClasses() {
     writeLog(@"✅ Сканирование завершено");
 }
 
+// ТЕСТОВАЯ ФУНКЦИЯ: просто пишет в файл, чтобы проверить сохранение
+- (void)testSaveAction {
+    NSLog(@"[Aimbot] Нажата тестовая кнопка");
+    writeLog(@"🧪 ТЕСТОВАЯ ЗАПИСЬ — проверка сохранения");
+    // Ничего больше не делаем, просто смотрим файл
+}
+
 @end
 
 // ============================================
@@ -236,7 +268,7 @@ static AimbotUI *g_ui = nil;
 
 __attribute__((constructor))
 static void init() {
-    writeLog(@"\n=== AIMBOT TWEAK ЗАГРУЖЕН ===");
+    NSLog(@"[Aimbot] Конструктор вызван");
     
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         g_ui = [[AimbotUI alloc] init];
