@@ -167,14 +167,19 @@ static UIViewController *logViewController = nil;
     Class contextClass = objc_getClass("Context");
     if (!contextClass) { [self addLog:@"❌ Context class not found"]; return; }
     
-    Context *context = [contextClass performSelector:@selector(create:) withObject:@"Gameplay"];
+    // Используем objc_msgSend для безопасного вызова
+    Context *(*createMethod)(id, SEL, NSString *) = (Context *(*)(id, SEL, NSString *))objc_msgSend;
+    Context *context = createMethod(contextClass, @selector(create:), @"Gameplay");
+    
     if (!context) { [self addLog:@"❌ Failed to create Gameplay context"]; return; }
     [self addLog:@"✅ Context Gameplay создан"];
     
     Class playersClass = objc_getClass("Players");
     if (!playersClass) { [self addLog:@"❌ Players class not found"]; return; }
     
-    id players = [context performSelector:@selector(resolve:) withObject:playersClass];
+    id (*resolveMethod)(id, SEL, Class) = (id (*)(id, SEL, Class))objc_msgSend;
+    id players = resolveMethod(context, @selector(resolve:), playersClass);
+    
     if (!players) { [self addLog:@"❌ Failed to resolve Players"]; return; }
     [self addLog:@"✅ Players получен"];
     
@@ -186,14 +191,18 @@ static UIViewController *logViewController = nil;
     Class contextClass = objc_getClass("Context");
     if (!contextClass) { [self addLog:@"❌ Context class not found"]; return; }
     
-    Context *context = [contextClass performSelector:@selector(create:) withObject:@"Battle"];
+    Context *(*createMethod)(id, SEL, NSString *) = (Context *(*)(id, SEL, NSString *))objc_msgSend;
+    Context *context = createMethod(contextClass, @selector(create:), @"Battle");
+    
     if (!context) { [self addLog:@"❌ Failed to create Battle context"]; return; }
     [self addLog:@"✅ Context Battle создан"];
     
     Class playersClass = objc_getClass("Players");
     if (!playersClass) { [self addLog:@"❌ Players class not found"]; return; }
     
-    id players = [context performSelector:@selector(resolve:) withObject:playersClass];
+    id (*resolveMethod)(id, SEL, Class) = (id (*)(id, SEL, Class))objc_msgSend;
+    id players = resolveMethod(context, @selector(resolve:), playersClass);
+    
     if (!players) { [self addLog:@"❌ Failed to resolve Players"]; return; }
     [self addLog:@"✅ Players получен"];
     
@@ -205,20 +214,22 @@ static UIViewController *logViewController = nil;
     Class gmClass = objc_getClass("GameManager");
     if (!gmClass) { [self addLog:@"❌ GameManager class not found"]; return; }
     
-    id gm = [gmClass performSelector:@selector(sharedInstance)];
+    id (*sharedMethod)(id, SEL) = (id (*)(id, SEL))objc_msgSend;
+    id gm = sharedMethod(gmClass, @selector(sharedInstance));
+    
     if (!gm) { [self addLog:@"❌ sharedInstance вернул nil"]; return; }
     [self addLog:@"✅ GameManager instance получен"];
     
     // Пробуем разные названия методов
-    id players = nil;
-    SEL selectors[] = {@selector(getPlayers), @selector(players), @selector(GetPlayers), @selector(PlayerManager)};
-    const char *names[] = {"getPlayers", "players", "GetPlayers", "PlayerManager"};
+    SEL selectors[] = {@selector(getPlayers), @selector(players), @selector(GetPlayers)};
+    const char *names[] = {"getPlayers", "players", "GetPlayers"};
     
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 3; i++) {
         if ([gm respondsToSelector:selectors[i]]) {
-            players = [gm performSelector:selectors[i]];
+            id (*getMethod)(id, SEL) = (id (*)(id, SEL))objc_msgSend;
+            id players = getMethod(gm, selectors[i]);
             if (players) {
-                [self addLog:@"✅ Players получен через %@", [NSString stringWithUTF8String:names[i]]];
+                [self addLog:@"✅ Players получен через %s", names[i]];
                 [self testPlayers:players];
                 return;
             }
@@ -234,25 +245,27 @@ static UIViewController *logViewController = nil;
     if (!rcClass) { [self addLog:@"❌ RoomController class not found"]; return; }
     
     id rc = nil;
+    id (*instanceMethod)(id, SEL) = (id (*)(id, SEL))objc_msgSend;
+    
     if ([rcClass respondsToSelector:@selector(instance)]) {
-        rc = [rcClass performSelector:@selector(instance)];
+        rc = instanceMethod(rcClass, @selector(instance));
     } else if ([rcClass respondsToSelector:@selector(sharedInstance)]) {
-        rc = [rcClass performSelector:@selector(sharedInstance)];
+        rc = instanceMethod(rcClass, @selector(sharedInstance));
     }
     
     if (!rc) { [self addLog:@"❌ instance/sharedInstance вернул nil"]; return; }
     [self addLog:@"✅ RoomController instance получен"];
     
     // Пробуем разные названия методов
-    id players = nil;
-    SEL selectors[] = {@selector(getPlayers), @selector(players), @selector(GetPlayers), @selector(PlayerManager)};
-    const char *names[] = {"getPlayers", "players", "GetPlayers", "PlayerManager"};
+    SEL selectors[] = {@selector(getPlayers), @selector(players), @selector(GetPlayers)};
+    const char *names[] = {"getPlayers", "players", "GetPlayers"};
     
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 3; i++) {
         if ([rc respondsToSelector:selectors[i]]) {
-            players = [rc performSelector:selectors[i]];
+            id (*getMethod)(id, SEL) = (id (*)(id, SEL))objc_msgSend;
+            id players = getMethod(rc, selectors[i]);
             if (players) {
-                [self addLog:@"✅ Players получен через %@", [NSString stringWithUTF8String:names[i]]];
+                [self addLog:@"✅ Players получен через %s", names[i]];
                 [self testPlayers:players];
                 return;
             }
@@ -265,17 +278,19 @@ static UIViewController *logViewController = nil;
 - (void)testPlayers:(id)players {
     // Проверяем All
     if ([players respondsToSelector:@selector(All)]) {
-        NSArray *all = [players valueForKey:@"All"];
+        NSArray *(*allMethod)(id, SEL) = (NSArray *(*)(id, SEL))objc_msgSend;
+        NSArray *all = allMethod(players, @selector(All));
+        
         if (all) {
             [self addLog:@"✅ players.All работает, размер: %lu", (unsigned long)all.count];
             
             // Проверяем локального игрока
-            FirstPersonController *local = nil;
             NSMethodSignature *sig = [players methodSignatureForSelector:@selector(TryGetCurrentController:)];
             if (sig) {
                 NSInvocation *inv = [NSInvocation invocationWithMethodSignature:sig];
                 [inv setTarget:players];
                 [inv setSelector:@selector(TryGetCurrentController:)];
+                FirstPersonController *local = nil;
                 [inv setArgument:&local atIndex:2];
                 [inv invoke];
                 
@@ -286,7 +301,10 @@ static UIViewController *logViewController = nil;
                     [self addLog:@"✅ TryGetCurrentController работает"];
                     
                     // Проверяем камеру
-                    Camera *cam = [objc_getClass("Camera") performSelector:@selector(main)];
+                    Class cameraClass = objc_getClass("Camera");
+                    Camera *(*mainMethod)(id, SEL) = (Camera *(*)(id, SEL))objc_msgSend;
+                    Camera *cam = mainMethod(cameraClass, @selector(main));
+                    
                     if (cam) {
                         [self addLog:@"✅ Camera.main работает"];
                     } else {
@@ -294,9 +312,13 @@ static UIViewController *logViewController = nil;
                     }
                     
                     // Проверяем конвертацию координат
-                    id root = [local valueForKey:@"RootPoint"];
+                    id (*rootMethod)(id, SEL) = (id (*)(id, SEL))objc_msgSend;
+                    id root = rootMethod(local, @selector(RootPoint));
+                    
                     if (root) {
-                        id pos = [root valueForKey:@"position"];
+                        id (*posMethod)(id, SEL) = (id (*)(id, SEL))objc_msgSend;
+                        id pos = posMethod(root, @selector(position));
+                        
                         if (pos) {
                             [self addLog:@"✅ local position получен"];
                         } else {
@@ -331,6 +353,7 @@ static UIViewController *logViewController = nil;
         textView.font = [UIFont fontWithName:@"Courier" size:12];
         textView.editable = NO;
         textView.layer.cornerRadius = 10;
+        textView.tag = 999;
         [logViewController.view addSubview:textView];
         
         UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -350,8 +373,6 @@ static UIViewController *logViewController = nil;
         closeBtn.layer.cornerRadius = 8;
         [closeBtn addTarget:self action:@selector(closeLogs) forControlEvents:UIControlEventTouchUpInside];
         [logViewController.view addSubview:closeBtn];
-        
-        textView.tag = 999;
     }
     
     UITextView *tv = [logViewController.view viewWithTag:999];
