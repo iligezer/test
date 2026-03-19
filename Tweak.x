@@ -20,10 +20,8 @@ static t_get_position Transform_get_position = NULL;
 static NSMutableString *logText = nil;
 static UIWindow *logWindow = nil;
 static UIButton *floatingButton = nil;
-static NSMutableArray *trackedAddresses = nil; // массив отслеживаемых адресов
-static NSMutableArray *currentValues = nil;    // текущие значения
-static NSMutableArray *previousValues = nil;   // предыдущие значения для сравнения
-static int scanStep = 0;
+static NSMutableArray *trackedAddresses = nil;
+static NSMutableArray *currentValues = nil;
 
 // ========== ОБЪЯВЛЕНИЕ ==========
 @interface ButtonHandler : NSObject
@@ -39,6 +37,7 @@ static int scanStep = 0;
 + (void)refreshChanged;
 + (void)refreshUnchanged;
 + (void)showCandidates;
++ (UIViewController*)topViewController;
 + (UIWindow*)mainWindow;
 + (void)handlePan:(UIPanGestureRecognizer*)gesture;
 @end
@@ -73,6 +72,16 @@ static int scanStep = 0;
         }
     }
     return nil;
+}
+
++ (UIViewController*)topViewController {
+    UIWindow *window = [self mainWindow];
+    if (!window) return nil;
+    UIViewController *vc = window.rootViewController;
+    while (vc.presentedViewController) {
+        vc = vc.presentedViewController;
+    }
+    return vc;
 }
 
 + (void)handlePan:(UIPanGestureRecognizer*)gesture {
@@ -175,11 +184,12 @@ static int scanStep = 0;
     [menuWindow resignKeyWindow];
 }
 
-// ========== ДОБАВИТЬ АДРЕС ==========
+// ========== ДОБАВИТЬ АДРЕС (ИСПРАВЛЕНО) ==========
 + (void)addAddress {
-    if (!trackedAddresses) trackedAddresses = [NSMutableArray array];
+    if (!trackedAddresses) {
+        trackedAddresses = [NSMutableArray array];
+    }
     
-    // Используем UIAlertController с полем ввода
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Добавить адрес"
                                                                    message:@"Введите адрес в формате 0x281764090"
                                                             preferredStyle:UIAlertControllerStyleAlert];
@@ -198,8 +208,15 @@ static int scanStep = 0;
             unsigned long long addr = 0;
             NSScanner *scanner = [NSScanner scannerWithString:addrStr];
             
-            // Пробуем разные форматы
-            if ([scanner scanHexLongLong:&addr]) {
+            // Если строка начинается с 0x, сканируем как hex
+            if ([addrStr hasPrefix:@"0x"] || [addrStr hasPrefix:@"0X"]) {
+                [scanner scanHexLongLong:&addr];
+            } else {
+                // Пробуем как десятичное
+                addr = [addrStr longLongValue];
+            }
+            
+            if (addr > 0) {
                 [trackedAddresses addObject:@(addr)];
                 [self addLog:[NSString stringWithFormat:@"✅ Добавлен адрес: 0x%llx", addr]];
                 [self addLog:[NSString stringWithFormat:@"📊 Всего адресов: %lu", (unsigned long)trackedAddresses.count]];
@@ -211,6 +228,7 @@ static int scanStep = 0;
     
     UIAlertAction *doneAction = [UIAlertAction actionWithTitle:@"Готово" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         [self addLog:@"✅ Ввод адресов завершен"];
+        [self showCandidates];
     }];
     
     UIAlertAction *cancelAction = [UIAlertAction actionWithTitle:@"Отмена" style:UIAlertActionStyleCancel handler:nil];
@@ -219,12 +237,9 @@ static int scanStep = 0;
     [alert addAction:doneAction];
     [alert addAction:cancelAction];
     
-    // Показываем алерт
-    UIViewController *rootVC = [UIApplication sharedApplication].keyWindow.rootViewController;
-    while (rootVC.presentedViewController) {
-        rootVC = rootVC.presentedViewController;
-    }
-    [rootVC presentViewController:alert animated:YES completion:nil];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [[self topViewController] presentViewController:alert animated:YES completion:nil];
+    });
 }
 
 // ========== НАЧАТЬ СКАНИРОВАНИЕ ==========
@@ -236,38 +251,34 @@ static int scanStep = 0;
     }
     
     currentValues = [NSMutableArray array];
-    previousValues = [NSMutableArray array];
-    
     task_t task = mach_task_self();
+    
+    [self addLog:@"\n🔍 НАЧАЛЬНОЕ СКАНИРОВАНИЕ:"];
     
     for (NSNumber *addrNum in trackedAddresses) {
         vm_address_t addr = [addrNum unsignedLongLongValue];
         
-        // Читаем текущее значение
         float value = 0;
         vm_size_t data_read = 0;
         kern_return_t kr = vm_read_overwrite(task, addr, 4, (vm_address_t)&value, &data_read);
         
         if (kr == KERN_SUCCESS) {
             [currentValues addObject:@(value)];
-            [self addLog:[NSString stringWithFormat:@"📌 Адрес 0x%llx = %.3f", (unsigned long long)addr, value]];
+            [self addLog:[NSString stringWithFormat:@"📌 0x%llx = %.3f", (unsigned long long)addr, value]];
         } else {
             [currentValues addObject:@(0.0f)];
-            [self addLog:[NSString stringWithFormat:@"❌ Не удалось прочитать 0x%llx", (unsigned long long)addr]];
+            [self addLog:[NSString stringWithFormat:@"❌ 0x%llx = ошибка чтения", (unsigned long long)addr]];
         }
     }
     
-    previousValues = [currentValues mutableCopy];
-    scanStep = 1;
-    
-    [self addLog:@"\n✅ Начальное сканирование завершено"];
+    [self addLog:@"\n✅ Начальные значения сохранены"];
     [self addLog:@"📊 Двигайся и нажимай ИЗМЕНИЛОСЬ/НЕ ИЗМЕНИЛОСЬ"];
     [self updateLogWindow];
 }
 
 // ========== ИЗМЕНИЛОСЬ ==========
 + (void)refreshChanged {
-    if (!trackedAddresses || trackedAddresses.count == 0) {
+    if (!trackedAddresses || trackedAddresses.count == 0 || !currentValues) {
         [self addLog:@"❌ Сначала начни сканирование"];
         [self updateLogWindow];
         return;
@@ -277,11 +288,12 @@ static int scanStep = 0;
     NSMutableArray *newValues = [NSMutableArray array];
     task_t task = mach_task_self();
     
+    [self addLog:@"\n📈 ПОИСК ИЗМЕНИВШИХСЯ:"];
+    
     for (int i = 0; i < trackedAddresses.count; i++) {
         NSNumber *addrNum = trackedAddresses[i];
         vm_address_t addr = [addrNum unsignedLongLongValue];
         
-        // Читаем текущее значение
         float value = 0;
         vm_size_t data_read = 0;
         kern_return_t kr = vm_read_overwrite(task, addr, 4, (vm_address_t)&value, &data_read);
@@ -289,11 +301,10 @@ static int scanStep = 0;
         if (kr == KERN_SUCCESS) {
             float oldValue = [currentValues[i] floatValue];
             
-            // Если значение изменилось (с допуском 0.001)
             if (fabs(value - oldValue) > 0.001f) {
                 [newAddresses addObject:addrNum];
                 [newValues addObject:@(value)];
-                [self addLog:[NSString stringWithFormat:@"✅ ИЗМЕНИЛОСЬ 0x%llx: %.3f -> %.3f", 
+                [self addLog:[NSString stringWithFormat:@"✅ 0x%llx: %.3f -> %.3f", 
                               (unsigned long long)addr, oldValue, value]];
             }
         }
@@ -308,7 +319,7 @@ static int scanStep = 0;
 
 // ========== НЕ ИЗМЕНИЛОСЬ ==========
 + (void)refreshUnchanged {
-    if (!trackedAddresses || trackedAddresses.count == 0) {
+    if (!trackedAddresses || trackedAddresses.count == 0 || !currentValues) {
         [self addLog:@"❌ Сначала начни сканирование"];
         [self updateLogWindow];
         return;
@@ -318,11 +329,12 @@ static int scanStep = 0;
     NSMutableArray *newValues = [NSMutableArray array];
     task_t task = mach_task_self();
     
+    [self addLog:@"\n📉 ПОИСК НЕИЗМЕНИВШИХСЯ:"];
+    
     for (int i = 0; i < trackedAddresses.count; i++) {
         NSNumber *addrNum = trackedAddresses[i];
         vm_address_t addr = [addrNum unsignedLongLongValue];
         
-        // Читаем текущее значение
         float value = 0;
         vm_size_t data_read = 0;
         kern_return_t kr = vm_read_overwrite(task, addr, 4, (vm_address_t)&value, &data_read);
@@ -330,11 +342,10 @@ static int scanStep = 0;
         if (kr == KERN_SUCCESS) {
             float oldValue = [currentValues[i] floatValue];
             
-            // Если значение НЕ изменилось
             if (fabs(value - oldValue) <= 0.001f) {
                 [newAddresses addObject:addrNum];
                 [newValues addObject:@(value)];
-                [self addLog:[NSString stringWithFormat:@"✅ НЕ ИЗМЕНИЛОСЬ 0x%llx: %.3f", 
+                [self addLog:[NSString stringWithFormat:@"✅ 0x%llx = %.3f", 
                               (unsigned long long)addr, value]];
             }
         }
@@ -356,7 +367,7 @@ static int scanStep = 0;
     } else {
         for (int i = 0; i < trackedAddresses.count; i++) {
             NSNumber *addrNum = trackedAddresses[i];
-            float value = [currentValues[i] floatValue];
+            float value = currentValues ? [currentValues[i] floatValue] : 0;
             [self addLog:[NSString stringWithFormat:@"%d. 0x%llx = %.3f", 
                           i+1, (unsigned long long)[addrNum unsignedLongLongValue], value]];
         }
@@ -369,8 +380,6 @@ static int scanStep = 0;
 + (void)resetScan {
     [trackedAddresses removeAllObjects];
     [currentValues removeAllObjects];
-    [previousValues removeAllObjects];
-    scanStep = 0;
     [self addLog:@"🔄 СКАНИРОВАНИЕ СБРОШЕНО"];
     [self updateLogWindow];
 }
@@ -465,16 +474,6 @@ static int scanStep = 0;
     });
 }
 
-+ (UIViewController*)topViewController {
-    UIWindow *window = [self mainWindow];
-    if (!window) return nil;
-    UIViewController *vc = window.rootViewController;
-    while (vc.presentedViewController) {
-        vc = vc.presentedViewController;
-    }
-    return vc;
-}
-
 @end
 
 // ========== ИНИЦИАЛИЗАЦИЯ ==========
@@ -496,7 +495,6 @@ static void init() {
             [mainWindow addSubview:floatingButton];
             
             [ButtonHandler addLog:@"✅ Твик загружен"];
-            [ButtonHandler addLog:@"⚡ Нажми кнопку для меню"];
         });
     }
 }
