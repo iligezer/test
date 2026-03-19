@@ -26,11 +26,12 @@ typedef void *(*t_get_transform)(void *player);
 static t_get_main_camera Camera_main = NULL;
 static t_world_to_screen Camera_WorldToScreen = NULL;
 static t_get_position Transform_get_position = NULL;
-static t_is_mine Player_IsMine = NULL;
-static t_is_dead Player_IsDead = NULL;
-static t_is_ally Player_IsAlly = NULL;
-static t_get_health Player_GetHealth = NULL;
-static t_get_transform Player_GetTransform = NULL;
+// Остальные пока не используем, но оставляем закомментированными
+// static t_is_mine Player_IsMine = NULL;
+// static t_is_dead Player_IsDead = NULL;
+// static t_is_ally Player_IsAlly = NULL;
+// static t_get_health Player_GetHealth = NULL;
+// static t_get_transform Player_GetTransform = NULL;
 
 static BOOL espEnabled = NO;
 static NSMutableString *logText = nil;
@@ -43,9 +44,13 @@ static UIWindow *logWindow = nil;
 + (void)copyLog;
 + (void)closeLogWindow;
 + (void)verifyAddresses;
++ (void)showLogWindow;
++ (UIViewController*)topViewController;
++ (UIWindow*)mainWindow;
 @end
 
 @implementation ButtonHandler
+
 + (void)showMenu {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Aimbot Control"
                                                                    message:@""
@@ -166,6 +171,7 @@ static UIWindow *logWindow = nil;
 
 + (UIViewController*)topViewController {
     UIWindow *window = [self mainWindow];
+    if (!window) return nil;
     UIViewController *vc = window.rootViewController;
     while (vc.presentedViewController) {
         vc = vc.presentedViewController;
@@ -183,6 +189,7 @@ static UIWindow *logWindow = nil;
     }
     return nil;
 }
+
 @end
 
 // ========== ESP VIEW ==========
@@ -207,9 +214,16 @@ static void init() {
     @autoreleasepool {
         logText = [[NSMutableString alloc] init];
         
-        Camera_main = (t_get_main_camera)BASE_ADDR + (RVA_Camera_get_main - 0x1042c4000);
-        Camera_WorldToScreen = (t_world_to_screen)BASE_ADDR + (RVA_Camera_WorldToScreen - 0x1042c4000);
-        Transform_get_position = (t_get_position)BASE_ADDR + (RVA_Transform_get_position - 0x1042c4000);
+        Camera_main = (t_get_main_camera)(BASE_ADDR + (RVA_Camera_get_main - 0x1042c4000));
+        Camera_WorldToScreen = (t_world_to_screen)(BASE_ADDR + (RVA_Camera_WorldToScreen - 0x1042c4000));
+        Transform_get_position = (t_get_position)(BASE_ADDR + (RVA_Transform_get_position - 0x1042c4000));
+        
+        // Эти пока не используем
+        // Player_IsMine = (t_is_mine)(BASE_ADDR + (RVA_Player_IsMine - 0x1042c4000));
+        // Player_IsDead = (t_is_dead)(BASE_ADDR + (RVA_Player_IsDead - 0x1042c4000));
+        // Player_IsAlly = (t_is_ally)(BASE_ADDR + (RVA_Player_IsAlly - 0x1042c4000));
+        // Player_GetHealth = (t_get_health)(BASE_ADDR + (RVA_Player_GetHealth - 0x1042c4000));
+        // Player_GetTransform = (t_get_transform)(BASE_ADDR + (RVA_Player_GetTransform - 0x1042c4000));
         
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
             UIWindow *mainWindow = [ButtonHandler mainWindow];
