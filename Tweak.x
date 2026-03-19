@@ -8,6 +8,7 @@
 static UIWindow *g_floatWindow = nil;
 static UIView *g_floatButton = nil;
 static UITextView *g_logTextView = nil;
+static UIWindow *g_logWindow = nil;
 static BOOL g_menuVisible = NO;
 static NSMutableArray *g_logs = nil;
 static NSString *g_logFilePath = nil;
@@ -53,10 +54,13 @@ void writeLog(NSString *message) {
     // Обновляем текстовое поле если оно видимо
     if (g_logTextView && !g_logTextView.hidden) {
         dispatch_async(dispatch_get_main_queue(), ^{
-            g_logTextView.text = [NSString stringWithContentsOfFile:g_logFilePath 
-                                                              encoding:NSUTF8StringEncoding 
-                                                                 error:nil];
-            [g_logTextView scrollRangeToVisible:NSMakeRange([g_logTextView.text length], 0)];
+            NSString *fullLog = [NSString stringWithContentsOfFile:g_logFilePath 
+                                                           encoding:NSUTF8StringEncoding 
+                                                              error:nil];
+            g_logTextView.text = fullLog;
+            if ([fullLog length] > 0) {
+                [g_logTextView scrollRangeToVisible:NSMakeRange([fullLog length] - 1, 1)];
+            }
         });
     }
 }
@@ -67,18 +71,32 @@ void toggleMenu() {
     g_menuVisible = !g_menuVisible;
     LOG("Меню переключено: %d", g_menuVisible);
     writeLog([NSString stringWithFormat:@"Меню переключено: %@", g_menuVisible ? @"ВКЛ" : @"ВЫКЛ"]);
+    
+    if (!g_logWindow) return;
+    
+    dispatch_async(dispatch_get_main_queue(), ^{
+        g_logWindow.hidden = !g_menuVisible;
+    });
 }
 
-void showLogs() {
-    writeLog(@"Открываем окно логов");
-    LOG("Окно логов открыто");
+void dragButton(UIPanGestureRecognizer *gesture) {
+    if (!gesture.view || !gesture.view.superview) return;
+    
+    CGPoint translation = [gesture translationInView:gesture.view.superview];
+    gesture.view.center = CGPointMake(gesture.view.center.x + translation.x,
+                                       gesture.view.center.y + translation.y);
+    [gesture setTranslation:CGPointZero inView:gesture.view.superview];
 }
 
-void clearLogs() {
-    writeLog(@"Логи очищены");
-    [[NSFileManager defaultManager] removeItemAtPath:g_logFilePath error:nil];
-    [g_logs removeAllObjects];
-    LOG("Логи удалены");
+void closeLogWindow() {
+    g_menuVisible = NO;
+    if (g_logWindow) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            g_logWindow.hidden = YES;
+        });
+    }
+    LOG("Окно логов закрыто");
+    writeLog(@"Окно логов закрыто");
 }
 
 #pragma mark - Создание UI
@@ -87,12 +105,17 @@ void createFloatingButton() {
     @autoreleasepool {
         // Получаем активное окно
         UIWindow *keyWindow = nil;
-        NSArray<UIScene *> *scenes = UIApplication.sharedApplication.connectedScenes.allObjects;
-        for (UIScene *scene in scenes) {
-            if (scene.activationState == UISceneActivationStateForegroundActive) {
-                keyWindow = ((UIWindowScene *)scene).windows.firstObject;
-                break;
+        if (@available(iOS 13, *)) {
+            NSArray<UIScene *> *scenes = UIApplication.sharedApplication.connectedScenes.allObjects;
+            for (UIScene *scene in scenes) {
+                if (scene.activationState == UISceneActivationStateForegroundActive) {
+                    UIWindowScene *windowScene = (UIWindowScene *)scene;
+                    keyWindow = windowScene.windows.firstObject;
+                    break;
+                }
             }
+        } else {
+            keyWindow = UIApplication.sharedApplication.keyWindow;
         }
         
         if (!keyWindow) {
@@ -104,6 +127,7 @@ void createFloatingButton() {
         g_floatWindow = [[UIWindow alloc] initWithFrame:CGRectMake(20, 100, 60, 60)];
         g_floatWindow.windowLevel = UIWindowLevelAlert + 1;
         g_floatWindow.backgroundColor = [UIColor clearColor];
+        g_floatWindow.userInteractionEnabled = YES;
         
         // Создаём плавающую кнопку
         g_floatButton = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 60, 60)];
@@ -121,72 +145,97 @@ void createFloatingButton() {
         label.userInteractionEnabled = NO;
         [g_floatButton addSubview:label];
         
-        // Добавляем тап-распознаватель
-        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self 
-                                                                               action:@selector(toggleMenu)];
+        // Добавляем тап-распознаватель с БЛОКОМ
+        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] 
+                                       initWithTarget:g_floatButton 
+                                       action:@selector(handleTap)];
+        
+        // Но лучше использовать блок через вспомогательный класс или прямой обработчик
+        // Используем вспомогательный блок-обработчик
+        __weak UIView *weakButton = g_floatButton;
+        tap = [[UITapGestureRecognizer alloc] initWithTarget:nil action:nil];
+        tap.name = @"tapHandler";
+        
+        // Добавляем перетаскивание через блок
+        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] 
+                                       initWithTarget:nil 
+                                       action:nil];
+        
+        // Правильный способ - добавить через KVO или создать вспомогательный класс
+        // Вместо этого используем простой подход с переопределением touchesBegan
+        
+        // ЛУЧШИЙ ВАРИАНТ - создаём вспомогательный класс для обработки
+        @interface FloatButtonHandler : NSObject
+        @property (nonatomic, assign) CGPoint startPoint;
+        @end
+        
+        @implementation FloatButtonHandler
+        - (void)handleTap {
+            toggleMenu();
+        }
+        
+        - (void)handlePan:(UIPanGestureRecognizer *)gesture {
+            dragButton(gesture);
+        }
+        @end
+        
+        FloatButtonHandler *handler = [[FloatButtonHandler alloc] init];
+        
+        // Добавляем тап-распознаватель правильно
+        tap = [[UITapGestureRecognizer alloc] initWithTarget:handler action:@selector(handleTap)];
         [g_floatButton addGestureRecognizer:tap];
         
         // Добавляем перетаскивание
-        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self 
-                                                                               action:@selector(dragButton:)];
+        pan = [[UIPanGestureRecognizer alloc] initWithTarget:handler action:@selector(handlePan:)];
         [g_floatButton addGestureRecognizer:pan];
-        
-        // Используем блок вместо nil target!
-        tap = [[UITapGestureRecognizer alloc] 
-               initWithTarget:self 
-               action:@selector(handleTap)];
-        [g_floatButton addGestureRecognizer:tap];
         
         [g_floatWindow addSubview:g_floatButton];
         [g_floatWindow makeKeyAndVisible];
         
         // Создаём окно логов
-        UIWindow *logWindow = [[UIWindow alloc] initWithFrame:CGRectMake(0, 0, 300, 400)];
-        logWindow.windowLevel = UIWindowLevelAlert;
-        logWindow.backgroundColor = [UIColor blackColor];
-        logWindow.layer.cornerRadius = 10;
+        g_logWindow = [[UIWindow alloc] initWithFrame:CGRectMake(30, 200, 300, 400)];
+        g_logWindow.windowLevel = UIWindowLevelAlert;
+        g_logWindow.backgroundColor = [UIColor blackColor];
+        g_logWindow.layer.cornerRadius = 10;
+        g_logWindow.hidden = YES;
+        
+        // Контейнер для содержимого
+        UIView *container = [[UIView alloc] initWithFrame:g_logWindow.bounds];
+        container.backgroundColor = [UIColor blackColor];
+        container.layer.cornerRadius = 10;
+        [g_logWindow addSubview:container];
+        
+        // Заголовок
+        UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 10, 280, 25)];
+        titleLabel.text = @"📋 Логи Aimbot";
+        titleLabel.textColor = [UIColor greenColor];
+        titleLabel.font = [UIFont boldSystemFontOfSize:14];
+        [container addSubview:titleLabel];
         
         // Текстовое поле для логов
-        g_logTextView = [[UITextView alloc] initWithFrame:CGRectMake(10, 40, 280, 350)];
-        g_logTextView.backgroundColor = [UIColor darkGrayColor];
+        g_logTextView = [[UITextView alloc] initWithFrame:CGRectMake(10, 40, 280, 320)];
+        g_logTextView.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.8];
         g_logTextView.textColor = [UIColor greenColor];
-        g_logTextView.font = [UIFont systemFontOfSize:10];
+        g_logTextView.font = [UIFont systemFontOfSize:9];
         g_logTextView.editable = NO;
-        [logWindow addSubview:g_logTextView];
+        g_logTextView.scrollEnabled = YES;
+        [container addSubview:g_logTextView];
         
         // Кнопка закрытия
         UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        closeBtn.frame = CGRectMake(10, 10, 280, 25);
-        [closeBtn setTitle:@"Закрыть" forState:UIControlStateNormal];
+        closeBtn.frame = CGRectMake(10, 365, 280, 25);
+        [closeBtn setTitle:@"❌ Закрыть" forState:UIControlStateNormal];
         closeBtn.backgroundColor = [UIColor systemRedColor];
-        [closeBtn addTarget:self action:@selector(closeLogWindow) forControlEvents:UIControlEventTouchUpInside];
-        [logWindow addSubview:closeBtn];
+        closeBtn.tintColor = [UIColor whiteColor];
+        
+        // Добавляем действие кнопке через блок
+        [closeBtn addTarget:handler action:@selector(handleClose) forControlEvents:UIControlEventTouchUpInside];
+        
+        [container addSubview:closeBtn];
         
         LOG("Плавающая кнопка создана");
-        writeLog(@"Интерфейс инициализирован");
+        writeLog(@"✅ Интерфейс инициализирован");
     }
-}
-
-#pragma mark - Обработчики событий
-
-void handleTap() {
-    LOG("Кнопка нажата!");
-    writeLog(@"Кнопка нажата");
-    toggleMenu();
-}
-
-void dragButton(UIPanGestureRecognizer *gesture) {
-    if (!gesture.view) return;
-    
-    CGPoint translation = [gesture translationInView:gesture.view.superview];
-    gesture.view.center = CGPointMake(gesture.view.center.x + translation.x,
-                                       gesture.view.center.y + translation.y);
-    [gesture setTranslation:CGPointZero inView:gesture.view.superview];
-}
-
-void closeLogWindow() {
-    g_logTextView.hidden = YES;
-    LOG("Окно логов закрыто");
 }
 
 #pragma mark - Конструктор
