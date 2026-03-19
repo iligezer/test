@@ -179,28 +179,32 @@ static int scanStep = 0;
 + (void)addAddress {
     if (!trackedAddresses) trackedAddresses = [NSMutableArray array];
     
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Введите адрес"
-                                                                   message:@"Формат: 0x281764090"
+    // Используем UIAlertController с полем ввода
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Добавить адрес"
+                                                                   message:@"Введите адрес в формате 0x281764090"
                                                             preferredStyle:UIAlertControllerStyleAlert];
     
     [alert addTextFieldWithConfigurationHandler:^(UITextField *textField) {
         textField.placeholder = @"0x...";
-        textField.keyboardType = UIKeyboardTypeDefault;
+        textField.keyboardType = UIKeyboardTypeNumbersAndPunctuation;
+        textField.clearButtonMode = UITextFieldViewModeWhileEditing;
     }];
     
     UIAlertAction *addAction = [UIAlertAction actionWithTitle:@"Добавить" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
-        NSString *addrStr = alert.textFields[0].text;
+        UITextField *textField = alert.textFields.firstObject;
+        NSString *addrStr = textField.text;
+        
         if (addrStr.length > 0) {
             unsigned long long addr = 0;
             NSScanner *scanner = [NSScanner scannerWithString:addrStr];
-            [scanner scanHexLongLong:&addr];
             
-            if (addr > 0) {
+            // Пробуем разные форматы
+            if ([scanner scanHexLongLong:&addr]) {
                 [trackedAddresses addObject:@(addr)];
                 [self addLog:[NSString stringWithFormat:@"✅ Добавлен адрес: 0x%llx", addr]];
                 [self addLog:[NSString stringWithFormat:@"📊 Всего адресов: %lu", (unsigned long)trackedAddresses.count]];
             } else {
-                [self addLog:@"❌ Неверный формат адреса"];
+                [self addLog:@"❌ Неверный формат. Используй 0x281764090"];
             }
         }
     }];
@@ -215,7 +219,12 @@ static int scanStep = 0;
     [alert addAction:doneAction];
     [alert addAction:cancelAction];
     
-    [[self topViewController] presentViewController:alert animated:YES completion:nil];
+    // Показываем алерт
+    UIViewController *rootVC = [UIApplication sharedApplication].keyWindow.rootViewController;
+    while (rootVC.presentedViewController) {
+        rootVC = rootVC.presentedViewController;
+    }
+    [rootVC presentViewController:alert animated:YES completion:nil];
 }
 
 // ========== НАЧАТЬ СКАНИРОВАНИЕ ==========
