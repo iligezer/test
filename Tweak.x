@@ -39,6 +39,7 @@ static NSMutableString *logText = nil;
 static UIWindow *overlayWindow = nil;
 static UIWindow *logWindow = nil;
 static UIButton *floatingButton = nil;
+static NSMutableArray *foundPlayers = nil; // Для хранения найденных игроков
 
 // ========== ОБЪЯВЛЕНИЕ КЛАССА ==========
 @interface ButtonHandler : NSObject
@@ -56,6 +57,16 @@ static UIButton *floatingButton = nil;
 + (void)closeMenu:(UIButton*)sender;
 @end
 
+// ========== СТРУКТУРА ИГРОКА ==========
+@interface PlayerData : NSObject
+@property (assign) float health;
+@property (assign) float x, y, z;
+@property (assign) unsigned long address;
+@end
+
+@implementation PlayerData
+@end
+
 // ========== ESP VIEW ==========
 @interface ESPView : UIView
 @end
@@ -64,11 +75,38 @@ static UIButton *floatingButton = nil;
 - (void)drawRect:(CGRect)rect {
     [super drawRect:rect];
     
-    if (!espEnabled) return;
+    if (!espEnabled || !foundPlayers.count) return;
+    if (!Camera_main || !Camera_WorldToScreen || !Transform_get_position) return;
+    
+    void *cam = Camera_main();
+    if (!cam) return;
     
     CGContextRef ctx = UIGraphicsGetCurrentContext();
-    CGContextSetFillColorWithColor(ctx, [UIColor redColor].CGColor);
-    CGContextFillEllipseInRect(ctx, CGRectMake(100, 100, 10, 10));
+    
+    for (PlayerData *player in foundPlayers) {
+        // Создаем вектор позиции (упрощенно)
+        float position[3] = {player.x, player.y, player.z};
+        
+        // Конвертируем в экранные координаты
+        void *screenPos = Camera_WorldToScreen(cam, position);
+        
+        if (screenPos) {
+            float *screen = (float*)screenPos;
+            float screenX = screen[0] * rect.size.width;
+            float screenY = screen[1] * rect.size.height;
+            
+            // Рисуем врага
+            CGContextSetFillColorWithColor(ctx, [UIColor redColor].CGColor);
+            CGContextFillEllipseInRect(ctx, CGRectMake(screenX - 5, screenY - 5, 10, 10));
+            
+            // Рисуем здоровье
+            NSString *healthText = [NSString stringWithFormat:@"%.0f", player.health];
+            [healthText drawAtPoint:CGPointMake(screenX + 10, screenY - 10) withAttributes:@{
+                NSFontAttributeName: [UIFont systemFontOfSize:12],
+                NSForegroundColorAttributeName: [UIColor whiteColor]
+            }];
+        }
+    }
 }
 @end
 
@@ -100,8 +138,13 @@ static UIButton *floatingButton = nil;
 @implementation ButtonHandler
 
 + (void)showMenu {
-    // Создаем кастомное меню
-    UIWindow *menuWindow = [[UIWindow alloc] initWithFrame:CGRectMake(50, 100, 280, 400)];
+    // Центрируем меню
+    CGFloat menuWidth = 280;
+    CGFloat menuHeight = 400;
+    CGFloat menuX = ([UIScreen mainScreen].bounds.size.width - menuWidth) / 2;
+    CGFloat menuY = ([UIScreen mainScreen].bounds.size.height - menuHeight) / 2;
+    
+    UIWindow *menuWindow = [[UIWindow alloc] initWithFrame:CGRectMake(menuX, menuY, menuWidth, menuHeight)];
     menuWindow.windowLevel = UIWindowLevelAlert + 3;
     menuWindow.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.95];
     menuWindow.layer.cornerRadius = 15;
@@ -109,7 +152,7 @@ static UIButton *floatingButton = nil;
     menuWindow.layer.borderColor = [UIColor systemBlueColor].CGColor;
     
     // Заголовок
-    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, 280, 40)];
+    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, menuWidth, 40)];
     titleLabel.text = @"⚡ AIMBOT CONTROL";
     titleLabel.textColor = [UIColor whiteColor];
     titleLabel.textAlignment = NSTextAlignmentCenter;
@@ -118,7 +161,7 @@ static UIButton *floatingButton = nil;
     
     // Кнопка ESP
     UIButton *espBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    espBtn.frame = CGRectMake(20, 60, 240, 45);
+    espBtn.frame = CGRectMake(20, 60, menuWidth-40, 45);
     espBtn.backgroundColor = espEnabled ? [UIColor systemGreenColor] : [UIColor systemGrayColor];
     espBtn.layer.cornerRadius = 10;
     [espBtn setTitle:[NSString stringWithFormat:@"🎯 ESP %@", espEnabled ? @"ON" : @"OFF"] forState:UIControlStateNormal];
@@ -128,7 +171,7 @@ static UIButton *floatingButton = nil;
     
     // Кнопка сканирования
     UIButton *scanBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    scanBtn.frame = CGRectMake(20, 115, 240, 45);
+    scanBtn.frame = CGRectMake(20, 115, menuWidth-40, 45);
     scanBtn.backgroundColor = [UIColor systemBlueColor];
     scanBtn.layer.cornerRadius = 10;
     [scanBtn setTitle:@"🔍 СКАНИРОВАТЬ ПАМЯТЬ" forState:UIControlStateNormal];
@@ -138,7 +181,7 @@ static UIButton *floatingButton = nil;
     
     // Кнопка проверки адресов
     UIButton *checkBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    checkBtn.frame = CGRectMake(20, 170, 240, 45);
+    checkBtn.frame = CGRectMake(20, 170, menuWidth-40, 45);
     checkBtn.backgroundColor = [UIColor systemOrangeColor];
     checkBtn.layer.cornerRadius = 10;
     [checkBtn setTitle:@"🔎 ПРОВЕРИТЬ АДРЕСА" forState:UIControlStateNormal];
@@ -148,7 +191,7 @@ static UIButton *floatingButton = nil;
     
     // Кнопка лога
     UIButton *logBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    logBtn.frame = CGRectMake(20, 225, 240, 45);
+    logBtn.frame = CGRectMake(20, 225, menuWidth-40, 45);
     logBtn.backgroundColor = [UIColor systemPurpleColor];
     logBtn.layer.cornerRadius = 10;
     [logBtn setTitle:@"📋 ПОКАЗАТЬ ЛОГ" forState:UIControlStateNormal];
@@ -158,7 +201,7 @@ static UIButton *floatingButton = nil;
     
     // Кнопка закрыть
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(20, 280, 240, 45);
+    closeBtn.frame = CGRectMake(20, 280, menuWidth-40, 45);
     closeBtn.backgroundColor = [UIColor systemRedColor];
     closeBtn.layer.cornerRadius = 10;
     [closeBtn setTitle:@"✖️ ЗАКРЫТЬ" forState:UIControlStateNormal];
@@ -176,8 +219,11 @@ static UIButton *floatingButton = nil;
 }
 
 + (void)closeMenu:(UIButton*)sender {
-    [sender.window resignKeyWindow];
-    sender.window.hidden = YES;
+    UIWindow *menuWindow = (UIWindow*)sender.superview;
+    if ([menuWindow isKindOfClass:[UIWindow class]]) {
+        menuWindow.hidden = YES;
+        [menuWindow resignKeyWindow];
+    }
 }
 
 + (void)handlePan:(UIPanGestureRecognizer*)gesture {
@@ -215,17 +261,23 @@ static UIButton *floatingButton = nil;
 + (void)showLogWindow {
     if (logWindow) {
         logWindow.hidden = NO;
+        [logWindow makeKeyAndVisible];
         return;
     }
     
-    logWindow = [[UIWindow alloc] initWithFrame:CGRectMake(20, 50, [UIScreen mainScreen].bounds.size.width - 40, [UIScreen mainScreen].bounds.size.height - 100)];
+    CGFloat logWidth = [UIScreen mainScreen].bounds.size.width - 40;
+    CGFloat logHeight = [UIScreen mainScreen].bounds.size.height - 100;
+    CGFloat logX = 20;
+    CGFloat logY = 50;
+    
+    logWindow = [[UIWindow alloc] initWithFrame:CGRectMake(logX, logY, logWidth, logHeight)];
     logWindow.windowLevel = UIWindowLevelAlert + 2;
     logWindow.backgroundColor = [UIColor colorWithWhite:0 alpha:0.95];
     logWindow.layer.cornerRadius = 15;
     logWindow.layer.borderWidth = 2;
     logWindow.layer.borderColor = [UIColor greenColor].CGColor;
     
-    UITextView *textView = [[UITextView alloc] initWithFrame:CGRectMake(10, 50, logWindow.bounds.size.width-20, logWindow.bounds.size.height-120)];
+    UITextView *textView = [[UITextView alloc] initWithFrame:CGRectMake(10, 10, logWidth-20, logHeight-80)];
     textView.backgroundColor = [UIColor blackColor];
     textView.textColor = [UIColor greenColor];
     textView.font = [UIFont fontWithName:@"Courier" size:12];
@@ -235,7 +287,7 @@ static UIButton *floatingButton = nil;
     [logWindow addSubview:textView];
     
     UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    copyBtn.frame = CGRectMake(20, logWindow.bounds.size.height-60, 100, 40);
+    copyBtn.frame = CGRectMake(20, logHeight-60, 100, 40);
     copyBtn.backgroundColor = [UIColor systemBlueColor];
     copyBtn.layer.cornerRadius = 10;
     [copyBtn setTitle:@"📋 Копировать" forState:UIControlStateNormal];
@@ -244,7 +296,7 @@ static UIButton *floatingButton = nil;
     [logWindow addSubview:copyBtn];
     
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(logWindow.bounds.size.width-120, logWindow.bounds.size.height-60, 100, 40);
+    closeBtn.frame = CGRectMake(logWidth-120, logHeight-60, 100, 40);
     closeBtn.backgroundColor = [UIColor systemRedColor];
     closeBtn.layer.cornerRadius = 10;
     [closeBtn setTitle:@"❌ Закрыть" forState:UIControlStateNormal];
@@ -256,11 +308,16 @@ static UIButton *floatingButton = nil;
 }
 
 + (void)checkAddresses {
+    [logText setString:@""];
     [self addLog:@"🔍 ПРОВЕРКА АДРЕСОВ"];
     [self addLog:@"==================="];
     [self addLog:[NSString stringWithFormat:@"Camera.main: %p", Camera_main]];
     [self addLog:[NSString stringWithFormat:@"WorldToScreen: %p", Camera_WorldToScreen]];
     [self addLog:[NSString stringWithFormat:@"get_position: %p", Transform_get_position]];
+    [self addLog:[NSString stringWithFormat:@"IsMine: %p", Player_IsMine]];
+    [self addLog:[NSString stringWithFormat:@"IsDead: %p", Player_IsDead]];
+    [self addLog:[NSString stringWithFormat:@"IsAlly: %p", Player_IsAlly]];
+    [self addLog:[NSString stringWithFormat:@"GetHealth: %p", Player_GetHealth]];
     [self addLog:@"✅ Все адреса загружены"];
     [self showLogWindow];
 }
@@ -268,6 +325,9 @@ static UIButton *floatingButton = nil;
 + (void)scanMemory {
     [logText setString:@""];
     [self addLog:@"🔍 СКАНИРОВАНИЕ ПАМЯТИ..."];
+    [self addLog:@"⚠️ Поиск структур игроков..."];
+    
+    foundPlayers = [NSMutableArray array];
     
     uint64_t base = BASE_ADDR;
     [self addLog:[NSString stringWithFormat:@"Базовый адрес: 0x%llx", base]];
@@ -278,10 +338,10 @@ static UIButton *floatingButton = nil;
     vm_region_basic_info_data_64_t info;
     mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
     mach_port_t object_name;
-    
-    int playerCount = 0;
+    int regionCount = 0;
     
     while (vm_region_64(task, &address, &size, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info, &count, &object_name) == KERN_SUCCESS) {
+        regionCount++;
         
         if (size > 1000 && size < 1024*1024) {
             uint8_t *buffer = malloc(size);
@@ -299,11 +359,18 @@ static UIButton *floatingButton = nil;
                         
                         if (*x > -10000 && *x < 10000 && *y > -10000 && *y < 10000 && *z > -10000 && *z < 10000) {
                             
-                            playerCount++;
-                            [self addLog:[NSString stringWithFormat:@"\n🎯 ИГРОК #%d:", playerCount]];
-                            [self addLog:[NSString stringWithFormat:@"   Адрес: 0x%lx", (unsigned long)(address + i)]];
-                            [self addLog:[NSString stringWithFormat:@"   Здоровье: %.1f", *health]];
-                            [self addLog:[NSString stringWithFormat:@"   Позиция: (%.1f, %.1f, %.1f)", *x, *y, *z]];
+                            PlayerData *player = [[PlayerData alloc] init];
+                            player.health = *health;
+                            player.x = *x;
+                            player.y = *y;
+                            player.z = *z;
+                            player.address = (unsigned long)(address + i);
+                            [foundPlayers addObject:player];
+                            
+                            [self addLog:[NSString stringWithFormat:@"\n🎯 ИГРОК #%lu:", (unsigned long)foundPlayers.count]];
+                            [self addLog:[NSString stringWithFormat:@"   Адрес: 0x%lx", player.address]];
+                            [self addLog:[NSString stringWithFormat:@"   Здоровье: %.1f", player.health]];
+                            [self addLog:[NSString stringWithFormat:@"   Позиция: (%.1f, %.1f, %.1f)", player.x, player.y, player.z]];
                             
                             i += 0x80;
                         }
@@ -317,7 +384,13 @@ static UIButton *floatingButton = nil;
         address = (address + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
     }
     
-    [self addLog:[NSString stringWithFormat:@"\n📊 Найдено игроков: %d", playerCount]];
+    [self addLog:[NSString stringWithFormat:@"\n📊 Просканировано регионов: %d", regionCount]];
+    [self addLog:[NSString stringWithFormat:@"📊 Найдено игроков: %lu", (unsigned long)foundPlayers.count]];
+    
+    if (foundPlayers.count == 0) {
+        [self addLog:@"❌ Игроки не найдены. Возможно неверный паттерн поиска."];
+    }
+    
     [self showLogWindow];
 }
 
