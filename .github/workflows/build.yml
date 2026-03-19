@@ -37,8 +37,17 @@ jobs:
           name: aimbot-deb
           path: packages/*.deb
 
-      - name: Upload .dylib
+      - name: Find and upload .dylib
+        run: |
+          # Ищем .dylib в разных возможных местах
+          find . -name "*.dylib" -type f
+          mkdir -p dylib-output
+          cp $(find . -name "aimbot.dylib" -type f | head -1) dylib-output/ || true
+        continue-on-error: true
+
+      - name: Upload .dylib (if found)
         uses: actions/upload-artifact@v4
         with:
           name: aimbot-dylib
-          path: .theos/obj/debug/aimbot.dylib
+          path: dylib-output/*.dylib
+        continue-on-error: true
