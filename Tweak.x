@@ -1,7 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <mach-o/dyld.h>
 
-// ========== ТВОИ RVA (ИЗ ТВОЕГО СКРИНШОТА) ==========
+// ========== ТВОИ RVA ==========
 #define RVA_Camera_get_main         0x10871faf8
 #define RVA_Camera_WorldToScreen    0x10871ed5c
 #define RVA_Transform_get_position   0x108792ed0
@@ -10,8 +10,6 @@
 #define RVA_Player_IsAlly            0x10715fe28
 #define RVA_Player_GetHealth         0x10717f44
 #define RVA_Player_GetTransform      0x10716cc10
-
-// ========== БАЗОВЫЙ АДРЕС ==========
 #define BASE_ADDR 0x1042c4000
 
 // ========== ТИПЫ ФУНКЦИЙ ==========
@@ -39,42 +37,64 @@ static NSMutableString *logText = nil;
 static UIWindow *overlayWindow = nil;
 static UIWindow *logWindow = nil;
 
-// ========== ПОЛУЧЕНИЕ АДРЕСОВ ==========
-void* getRealPtr(uint64_t addr) {
-    return (void*)addr; // Используем абсолютные адреса
+// ========== КЛАСС-ОБРАБОТЧИК ==========
+@interface ButtonHandler : NSObject
++ (void)showMenu;
++ (void)copyLog;
++ (void)closeLogWindow;
++ (void)verifyAddresses;
+@end
+
+@implementation ButtonHandler
++ (void)showMenu {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Aimbot Control"
+                                                                   message:@""
+                                                            preferredStyle:UIAlertControllerStyleActionSheet];
+    
+    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"ESP %@", espEnabled ? @"✅" : @"❌"]
+                                               style:UIAlertActionStyleDefault
+                                             handler:^(UIAlertAction *a){
+        espEnabled = !espEnabled;
+    }]];
+    
+    [alert addAction:[UIAlertAction actionWithTitle:@"🔍 Проверить адреса"
+                                               style:UIAlertActionStyleDefault
+                                             handler:^(UIAlertAction *a){
+        [ButtonHandler verifyAddresses];
+    }]];
+    
+    [alert addAction:[UIAlertAction actionWithTitle:@"📋 Показать лог"
+                                               style:UIAlertActionStyleDefault
+                                             handler:^(UIAlertAction *a){
+        [ButtonHandler showLogWindow];
+    }]];
+    
+    [alert addAction:[UIAlertAction actionWithTitle:@"Отмена"
+                                               style:UIAlertActionStyleCancel
+                                             handler:nil]];
+    
+    [[self topViewController] presentViewController:alert animated:YES completion:nil];
 }
 
-// ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
-UIWindow* getMainWindow() {
-    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if ([scene isKindOfClass:[UIWindowScene class]]) {
-            UIWindowScene *windowScene = (UIWindowScene*)scene;
-            for (UIWindow *window in windowScene.windows) {
-                if (window.isKeyWindow) return window;
-            }
-        }
-    }
-    return nil;
++ (void)copyLog {
+    UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
+    pasteboard.string = logText;
+    
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"✅"
+                                                                   message:@"Скопировано"
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [[self topViewController] presentViewController:alert animated:YES completion:^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            [alert dismissViewControllerAnimated:YES completion:nil];
+        });
+    }];
 }
 
-UIViewController* getTopViewController() {
-    UIWindow *window = getMainWindow();
-    if (!window) return nil;
-    UIViewController *vc = window.rootViewController;
-    while (vc.presentedViewController) {
-        vc = vc.presentedViewController;
-    }
-    return vc;
++ (void)closeLogWindow {
+    logWindow.hidden = YES;
 }
 
-// ========== ЛОГИРОВАНИЕ ==========
-void addLog(NSString *text) {
-    if (!logText) logText = [[NSMutableString alloc] init];
-    [logText appendFormat:@"%@\n", text];
-    NSLog(@"%@", text);
-}
-
-void showLogWindow() {
++ (void)showLogWindow {
     if (logWindow) {
         logWindow.hidden = NO;
         return;
@@ -99,7 +119,7 @@ void showLogWindow() {
     copyBtn.layer.cornerRadius = 10;
     [copyBtn setTitle:@"📋 Копировать" forState:UIControlStateNormal];
     [copyBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    [copyBtn addTarget:nil action:@selector(copyLog) forControlEvents:UIControlEventTouchUpInside];
+    [copyBtn addTarget:[ButtonHandler class] action:@selector(copyLog) forControlEvents:UIControlEventTouchUpInside];
     [logWindow addSubview:copyBtn];
     
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -108,92 +128,62 @@ void showLogWindow() {
     closeBtn.layer.cornerRadius = 10;
     [closeBtn setTitle:@"❌ Закрыть" forState:UIControlStateNormal];
     [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    [closeBtn addTarget:nil action:@selector(closeLogWindow) forControlEvents:UIControlEventTouchUpInside];
+    [closeBtn addTarget:[ButtonHandler class] action:@selector(closeLogWindow) forControlEvents:UIControlEventTouchUpInside];
     [logWindow addSubview:closeBtn];
     
     [logWindow makeKeyAndVisible];
 }
 
-void copyLog() {
-    UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
-    pasteboard.string = logText;
-    
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"✅"
-                                                                   message:@"Скопировано"
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-    [getTopViewController() presentViewController:alert animated:YES completion:^{
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-            [alert dismissViewControllerAnimated:YES completion:nil];
-        });
-    }];
-}
-
-void closeLogWindow() {
-    logWindow.hidden = YES;
-}
-
-// ========== ПРОВЕРКА АДРЕСОВ ==========
-void verifyAddresses() {
++ (void)verifyAddresses {
     [logText setString:@""];
     
-    addLog(@"🔍 ПРОВЕРКА АДРЕСОВ");
-    addLog(@"===================");
+    [self addLog:@"🔍 ПРОВЕРКА АДРЕСОВ"];
+    [self addLog:@"==================="];
     
-    // Проверяем, что адреса не NULL
-    addLog([NSString stringWithFormat:@"Camera.main: %p", Camera_main]);
-    addLog([NSString stringWithFormat:@"WorldToScreen: %p", Camera_WorldToScreen]);
-    addLog([NSString stringWithFormat:@"get_position: %p", Transform_get_position]);
-    addLog([NSString stringWithFormat:@"IsMine: %p", Player_IsMine]);
-    addLog([NSString stringWithFormat:@"IsDead: %p", Player_IsDead]);
-    addLog([NSString stringWithFormat:@"IsAlly: %p", Player_IsAlly]);
-    addLog([NSString stringWithFormat:@"GetHealth: %p", Player_GetHealth]);
-    addLog([NSString stringWithFormat:@"GetTransform: %p", Player_GetTransform]);
+    [self addLog:[NSString stringWithFormat:@"Camera.main: %p", Camera_main]];
+    [self addLog:[NSString stringWithFormat:@"WorldToScreen: %p", Camera_WorldToScreen]];
+    [self addLog:[NSString stringWithFormat:@"get_position: %p", Transform_get_position]];
     
-    // Пытаемся вызвать Camera.main
     if (Camera_main) {
         void *cam = Camera_main();
-        addLog([NSString stringWithFormat:@"✅ Camera.main вызвана -> результат: %p", cam]);
+        [self addLog:[NSString stringWithFormat:@"✅ Camera.main вызвана -> результат: %p", cam]];
         
-        // Если камера не nil — отличный знак
         if (cam) {
-            addLog(@"✅ Камера существует! Адрес скорее всего верный");
-            
-            // Пробуем получить позицию камеры (если это Transform)
-            if (Transform_get_position) {
-                void *pos = Transform_get_position(cam);
-                addLog([NSString stringWithFormat:@"Позиция камеры: %p", pos]);
-                if (pos) {
-                    addLog(@"✅ Позиция получена! Адрес Transform_get_position верный");
-                } else {
-                    addLog(@"⚠️ Позиция не получена — возможно cam не Transform");
-                }
-            }
+            [self addLog:@"✅ Камера существует! Адрес верный"];
         } else {
-            addLog(@"❌ Camera.main вернула nil — возможно адрес неверный");
+            [self addLog:@"❌ Camera.main вернула nil"];
         }
-    } else {
-        addLog(@"❌ Camera.main == NULL — функция не загружена");
     }
     
-    // Проверка WorldToScreen (просто адрес)
-    if (Camera_WorldToScreen) {
-        addLog(@"✅ WorldToScreen загружена");
-    }
-    
-    addLog(@"\n🔍 ИТОГ:");
-    if (Camera_main && Camera_main()) {
-        addLog(@"✅ Camera.main работает — базовый адрес верный");
-    } else {
-        addLog(@"❌ Camera.main НЕ работает — проверь базовый адрес");
-    }
-    
-    showLogWindow();
+    [self showLogWindow];
 }
 
-// ========== СКАНИРОВАНИЕ ==========
-void scanAndShowLog() {
-    verifyAddresses(); // Используем ту же функцию проверки
++ (void)addLog:(NSString *)text {
+    if (!logText) logText = [[NSMutableString alloc] init];
+    [logText appendFormat:@"%@\n", text];
+    NSLog(@"%@", text);
 }
+
++ (UIViewController*)topViewController {
+    UIWindow *window = [self mainWindow];
+    UIViewController *vc = window.rootViewController;
+    while (vc.presentedViewController) {
+        vc = vc.presentedViewController;
+    }
+    return vc;
+}
+
++ (UIWindow*)mainWindow {
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if ([scene isKindOfClass:[UIWindowScene class]]) {
+            for (UIWindow *window in ((UIWindowScene*)scene).windows) {
+                if (window.isKeyWindow) return window;
+            }
+        }
+    }
+    return nil;
+}
+@end
 
 // ========== ESP VIEW ==========
 @interface ESPView : UIView
@@ -204,19 +194,10 @@ void scanAndShowLog() {
     [super drawRect:rect];
     
     if (!espEnabled) return;
-    if (!Camera_main || !Camera_WorldToScreen || !Transform_get_position) return;
     
-    void *cam = Camera_main();
-    if (!cam) return;
-    
-    // Тестовая отрисовка (пока просто точка)
     CGContextRef ctx = UIGraphicsGetCurrentContext();
     CGContextSetFillColorWithColor(ctx, [UIColor redColor].CGColor);
     CGContextFillEllipseInRect(ctx, CGRectMake(100, 100, 10, 10));
-    
-    // Если камера работает — рисуем ещё и зелёную точку в центре
-    CGContextSetFillColorWithColor(ctx, [UIColor greenColor].CGColor);
-    CGContextFillEllipseInRect(ctx, CGRectMake(rect.size.width/2, rect.size.height/2, 20, 20));
 }
 @end
 
@@ -226,17 +207,12 @@ static void init() {
     @autoreleasepool {
         logText = [[NSMutableString alloc] init];
         
-        Camera_main = (t_get_main_camera)getRealPtr(RVA_Camera_get_main);
-        Camera_WorldToScreen = (t_world_to_screen)getRealPtr(RVA_Camera_WorldToScreen);
-        Transform_get_position = (t_get_position)getRealPtr(RVA_Transform_get_position);
-        Player_IsMine = (t_is_mine)getRealPtr(RVA_Player_IsMine);
-        Player_IsDead = (t_is_dead)getRealPtr(RVA_Player_IsDead);
-        Player_IsAlly = (t_is_ally)getRealPtr(RVA_Player_IsAlly);
-        Player_GetHealth = (t_get_health)getRealPtr(RVA_Player_GetHealth);
-        Player_GetTransform = (t_get_transform)getRealPtr(RVA_Player_GetTransform);
+        Camera_main = (t_get_main_camera)BASE_ADDR + (RVA_Camera_get_main - 0x1042c4000);
+        Camera_WorldToScreen = (t_world_to_screen)BASE_ADDR + (RVA_Camera_WorldToScreen - 0x1042c4000);
+        Transform_get_position = (t_get_position)BASE_ADDR + (RVA_Transform_get_position - 0x1042c4000);
         
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-            UIWindow *mainWindow = getMainWindow();
+            UIWindow *mainWindow = [ButtonHandler mainWindow];
             if (!mainWindow) return;
             
             UIButton *menuBtn = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -245,7 +221,7 @@ static void init() {
             menuBtn.layer.cornerRadius = 30;
             [menuBtn setTitle:@"M" forState:UIControlStateNormal];
             [menuBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-            [menuBtn addTarget:nil action:@selector(showMenu) forControlEvents:UIControlEventTouchUpInside];
+            [menuBtn addTarget:[ButtonHandler class] action:@selector(showMenu) forControlEvents:UIControlEventTouchUpInside];
             [mainWindow addSubview:menuBtn];
             
             overlayWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
@@ -266,35 +242,4 @@ static void init() {
             }];
         });
     }
-}
-
-// ========== МЕНЮ ==========
-void showMenu() {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Aimbot Control"
-                                                                   message:@""
-                                                            preferredStyle:UIAlertControllerStyleActionSheet];
-    
-    [alert addAction:[UIAlertAction actionWithTitle:[NSString stringWithFormat:@"ESP %@", espEnabled ? @"✅" : @"❌"]
-                                               style:UIAlertActionStyleDefault
-                                             handler:^(UIAlertAction *a){
-        espEnabled = !espEnabled;
-    }]];
-    
-    [alert addAction:[UIAlertAction actionWithTitle:@"🔍 Проверить адреса"
-                                               style:UIAlertActionStyleDefault
-                                             handler:^(UIAlertAction *a){
-        verifyAddresses();
-    }]];
-    
-    [alert addAction:[UIAlertAction actionWithTitle:@"📋 Показать лог"
-                                               style:UIAlertActionStyleDefault
-                                             handler:^(UIAlertAction *a){
-        showLogWindow();
-    }]];
-    
-    [alert addAction:[UIAlertAction actionWithTitle:@"Отмена"
-                                               style:UIAlertActionStyleCancel
-                                             handler:nil]];
-    
-    [getTopViewController() presentViewController:alert animated:YES completion:nil];
 }
