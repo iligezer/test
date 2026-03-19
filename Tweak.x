@@ -1,146 +1,203 @@
+// Tweak.x
+
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
+#import <Foundation/Foundation.h>
 
-#define LOG(fmt, ...) NSLog(@"[Aimbot] " fmt, ##__VA_ARGS__)
+#define LOG_PATH @"/var/mobile/Documents/modernstrike/aimbot.log"
 
-static UIButton *g_floatButton = nil;
-static BOOL g_menuVisible = NO;
-static UIView *g_menuView = nil;
+#define LOG(fmt, ...) do { \
+    NSString *msg = [NSString stringWithFormat:fmt, ##__VA_ARGS__]; \
+    NSString *timestamp = [NSDate date].description; \
+    NSString *line = [NSString stringWithFormat:@"[%@] %@\n", timestamp, msg]; \
+    NSLog(@"[Aimbot] %@", msg); \
+    [self appendLog:line]; \
+} while(0)
 
-#pragma mark - Действия (объявляем заранее)
+// ────────────────────────────────────────────────
+// Категория для удобной записи в файл
+@interface NSString (AppendToFile)
+- (void)appendToFile:(NSString *)path encoding:(NSStringEncoding)enc;
+@end
 
-void toggleMenu();
-void testAction();
-void dragButton(UIPanGestureRecognizer *gesture);
+@implementation NSString (AppendToFile)
+- (void)appendToFile:(NSString *)path encoding:(NSStringEncoding)enc {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *dir = [path stringByDeletingLastPathComponent];
+    [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+    
+    NSData *data = [self dataUsingEncoding:enc];
+    if (!data) return;
+    
+    NSFileHandle *handle = [NSFileHandle fileHandleForWritingAtPath:path];
+    if (handle) {
+        [handle seekToEndOfFile];
+        [handle writeData:data];
+        [handle closeFile];
+    } else {
+        [data writeToFile:path atomically:YES];
+    }
+}
+@end
 
-#pragma mark - Создание плавающей кнопки
+// ────────────────────────────────────────────────
+// Обработчик всех действий
+@interface AimbotHandler : NSObject
++ (instancetype)shared;
+- (void)toggleMenu;
+- (void)testAction;
+- (void)dragButton:(UIPanGestureRecognizer *)gesture;
+@end
 
-void createFloatingButton() {
-    @autoreleasepool {
-        // Получаем активное окно
-        UIWindow *keyWindow = nil;
-        NSArray<UIScene *> *scenes = UIApplication.sharedApplication.connectedScenes.allObjects;
-        for (UIScene *scene in scenes) {
-            if (scene.activationState == UISceneActivationStateForegroundActive) {
-                keyWindow = ((UIWindowScene *)scene).windows.firstObject;
-                break;
-            }
-        }
+@implementation AimbotHandler
+
++ (instancetype)shared {
+    static AimbotHandler *instance = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        instance = [[self alloc] init];
+    });
+    return instance;
+}
+
+- (void)toggleMenu {
+    static BOOL g_menuVisible = NO;
+    static UIView *g_menuView = nil;
+    
+    // получаем текущие глобальные (чтобы не дублировать в файле)
+    extern UIButton *g_floatButton;
+    extern UIView *g_menuView_local;
+    
+    if (!g_menuView_local) {
+        UIWindow *win = [self currentKeyWindow];
+        if (!win) return;
         
-        if (!keyWindow) {
-            LOG("No window found");
-            return;
-        }
-        
-        // Создаем плавающую кнопку
-        g_floatButton = [UIButton buttonWithType:UIButtonTypeCustom];
-        g_floatButton.frame = CGRectMake(20, 100, 50, 50);
-        g_floatButton.backgroundColor = [UIColor systemBlueColor];
-        g_floatButton.layer.cornerRadius = 25;
-        g_floatButton.layer.borderWidth = 2;
-        g_floatButton.layer.borderColor = [UIColor whiteColor].CGColor;
-        [g_floatButton setTitle:@"🎯" forState:UIControlStateNormal];
-        g_floatButton.titleLabel.font = [UIFont systemFontOfSize:24];
-        
-        // Добавляем действие (nil вместо self)
-        [g_floatButton addTarget:nil 
-                          action:@selector(toggleMenu) 
-                forControlEvents:UIControlEventTouchUpInside];
-        
-        // Добавляем возможность перетаскивания
-        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] 
-                                       initWithTarget:nil 
-                                       action:@selector(dragButton:)];
-        [g_floatButton addGestureRecognizer:pan];
-        
-        [keyWindow addSubview:g_floatButton];
-        
-        // Создаем меню (изначально скрыто)
-        g_menuView = [[UIView alloc] initWithFrame:CGRectMake(80, 100, 220, 200)];
-        g_menuView.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.9];
-        g_menuView.layer.cornerRadius = 10;
-        g_menuView.layer.borderWidth = 1;
-        g_menuView.layer.borderColor = [UIColor whiteColor].CGColor;
-        g_menuView.hidden = YES;
+        g_menuView_local = [[UIView alloc] initWithFrame:CGRectMake(100, 140, 260, 240)];
+        g_menuView_local.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.95];
+        g_menuView_local.layer.cornerRadius = 18;
+        g_menuView_local.layer.borderWidth = 1;
+        g_menuView_local.layer.borderColor = [UIColor colorWithWhite:0.7 alpha:1].CGColor;
+        g_menuView_local.hidden = YES;
+        [win addSubview:g_menuView_local];
         
         // Заголовок
-        UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, 220, 30)];
-        titleLabel.text = @"Aimbot Menu";
-        titleLabel.textColor = [UIColor whiteColor];
-        titleLabel.textAlignment = NSTextAlignmentCenter;
-        [g_menuView addSubview:titleLabel];
+        UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 14, 260, 40)];
+        title.text = @"Aimbot Menu";
+        title.textColor = [UIColor whiteColor];
+        title.font = [UIFont boldSystemFontOfSize:22];
+        title.textAlignment = NSTextAlignmentCenter;
+        [g_menuView_local addSubview:title];
         
-        // Кнопка теста
-        UIButton *testBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        testBtn.frame = CGRectMake(20, 50, 180, 40);
-        [testBtn setTitle:@"Test" forState:UIControlStateNormal];
-        testBtn.backgroundColor = [UIColor systemGray5Color];
-        testBtn.layer.cornerRadius = 5;
-        [testBtn addTarget:nil 
-                    action:@selector(testAction) 
-          forControlEvents:UIControlEventTouchUpInside];
-        [g_menuView addSubview:testBtn];
+        // Test
+        UIButton *test = [UIButton buttonWithType:UIButtonTypeSystem];
+        test.frame = CGRectMake(40, 70, 180, 50);
+        [test setTitle:@"Тест классов" forState:UIControlStateNormal];
+        test.backgroundColor = [UIColor systemGray5Color];
+        test.layer.cornerRadius = 12;
+        [test addTarget:self action:@selector(testAction) forControlEvents:UIControlEventTouchUpInside];
+        [g_menuView_local addSubview:test];
         
-        // Кнопка закрытия
-        UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        closeBtn.frame = CGRectMake(20, 100, 180, 40);
-        [closeBtn setTitle:@"Close" forState:UIControlStateNormal];
-        closeBtn.backgroundColor = [UIColor systemGray5Color];
-        closeBtn.layer.cornerRadius = 5;
-        [closeBtn addTarget:nil 
-                     action:@selector(toggleMenu) 
-           forControlEvents:UIControlEventTouchUpInside];
-        [g_menuView addSubview:closeBtn];
-        
-        [keyWindow addSubview:g_menuView];
-        
-        LOG("Floating button created");
+        // Close
+        UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
+        close.frame = CGRectMake(40, 140, 180, 50);
+        [close setTitle:@"Закрыть" forState:UIControlStateNormal];
+        close.backgroundColor = [UIColor systemRedColor];
+        [close setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        close.layer.cornerRadius = 12;
+        [close addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
+        [g_menuView_local addSubview:close];
+    }
+    
+    g_menuVisible = !g_menuVisible;
+    g_menuView_local.hidden = !g_menuVisible;
+    
+    LOG(@"Меню %@", g_menuVisible ? @"открыто" : @"закрыто");
+}
+
+- (void)testAction {
+    LOG(@"Запущен тест поиска классов");
+    
+    NSArray *classes = @[
+        @"GameManager",
+        @"PlayerController",
+        @"Weapon",
+        @"Player",
+        @"MatchManager",
+        @"LocalPlayer",
+        @"AimbotManager"   // можно добавлять свои догадки
+    ];
+    
+    for (NSString *name in classes) {
+        Class cls = objc_getClass(name.UTF8String);
+        LOG(cls ? @"✅ Найден: %@" : @"❌ Не найден: %@", name);
     }
 }
 
-#pragma mark - Действия
-
-void toggleMenu() {
-    g_menuVisible = !g_menuVisible;
-    g_menuView.hidden = !g_menuVisible;
-    LOG("Menu toggled");
+- (void)dragButton:(UIPanGestureRecognizer *)gesture {
+    UIView *v = gesture.view;
+    CGPoint trans = [gesture translationInView:v.superview];
+    v.center = CGPointMake(v.center.x + trans.x, v.center.y + trans.y);
+    [gesture setTranslation:CGPointZero inView:v.superview];
 }
 
-void testAction() {
-    LOG("Test button pressed");
-    
-    // Здесь будет поиск классов
-    NSArray *classes = @[@"GameManager", @"PlayerController", @"Weapon"];
-    for (NSString *name in classes) {
-        Class cls = objc_getClass([name UTF8String]);
-        if (cls) {
-            LOG("✅ Found class: %@", name);
-        } else {
-            LOG("❌ Class not found: %@", name);
+- (UIWindow *)currentKeyWindow {
+    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+        if (scene.activationState != UISceneActivationStateForegroundActive) continue;
+        UIWindowScene *ws = (UIWindowScene *)scene;
+        for (UIWindow *win in ws.windows) {
+            if (win.isKeyWindow) return win;
         }
     }
+    return UIApplication.sharedApplication.keyWindow;
 }
 
-void dragButton(UIPanGestureRecognizer *gesture) {
-    UIView *button = gesture.view;
-    CGPoint translation = [gesture translationInView:button.superview];
-    button.center = CGPointMake(
-        button.center.x + translation.x,
-        button.center.y + translation.y
-    );
-    [gesture setTranslation:CGPointZero inView:button.superview];
+@end
+
+// ────────────────────────────────────────────────
+// Глобальные (теперь только кнопка, остальное внутри handler)
+static UIButton *g_floatButton = nil;
+
+// ────────────────────────────────────────────────
+static void createFloatingButton() {
+    UIWindow *keyWindow = [AimbotHandler.shared currentKeyWindow];
+    if (!keyWindow) {
+        LOG(@"Не удалось найти активное окно");
+        return;
+    }
+    
+    g_floatButton = [UIButton buttonWithType:UIButtonTypeCustom];
+    g_floatButton.frame = CGRectMake(30, 120, 64, 64);
+    g_floatButton.backgroundColor = [UIColor systemBlueColor];
+    g_floatButton.layer.cornerRadius = 32;
+    g_floatButton.layer.borderWidth = 3;
+    g_floatButton.layer.borderColor = [UIColor whiteColor].CGColor;
+    g_floatButton.layer.shadowColor = [UIColor blackColor].CGColor;
+    g_floatButton.layer.shadowOpacity = 0.4;
+    g_floatButton.layer.shadowOffset = CGSizeMake(0, 2);
+    g_floatButton.layer.shadowRadius = 6;
+    
+    [g_floatButton setTitle:@"🎯" forState:UIControlStateNormal];
+    g_floatButton.titleLabel.font = [UIFont systemFontOfSize:36];
+    
+    AimbotHandler *h = AimbotHandler.shared;
+    
+    [g_floatButton addTarget:h action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
+    
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:h action:@selector(dragButton:)];
+    [g_floatButton addGestureRecognizer:pan];
+    
+    [keyWindow addSubview:g_floatButton];
+    
+    LOG(@"Плавающая кнопка создана в позиции (%.0f, %.0f)", g_floatButton.frame.origin.x, g_floatButton.frame.origin.y);
 }
 
-#pragma mark - Конструктор
-
+// ────────────────────────────────────────────────
 __attribute__((constructor))
 static void init() {
-    LOG("Tweak loaded!");
+    LOG(@"Твик Aimbot загружен (версия 1.0)");
     
-    // Ждем 5 секунд, чтобы игра полностью загрузилась
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), 
-                   dispatch_get_main_queue(), ^{
-        LOG("Creating UI...");
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        LOG(@"Запускаем создание интерфейса...");
         createFloatingButton();
     });
 }
