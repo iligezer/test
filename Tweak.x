@@ -34,13 +34,11 @@
 @end
 
 @interface Transform : NSObject
-- (id)position;
+// Убираем прямой метод position, будем использовать valueForKey:
 @end
 
 @interface Vector3 : NSObject
-- (float)x;
-- (float)y;
-- (float)z;
+// Убираем прямые методы x,y,z, будем использовать valueForKey:
 @end
 
 @interface Players : NSObject
@@ -259,7 +257,6 @@ static UIViewController *logViewController = nil;
             if (!gm) { [self addLog:@"❌ sharedInstance вернул nil"]; return nil; }
             [self addLog:@"✅ GameManager instance получен"];
             
-            // Пробуем разные названия методов без performSelector
             id players = nil;
             
             if ([gm respondsToSelector:@selector(getPlayers)]) {
@@ -269,10 +266,6 @@ static UIViewController *logViewController = nil;
             if (!players && [gm respondsToSelector:@selector(players)]) {
                 players = [gm players];
                 if (players) [self addLog:@"✅ Players получен через players"];
-            }
-            if (!players && [gm respondsToSelector:@selector(GetPlayers)]) {
-                players = [gm performSelector:@selector(GetPlayers)];
-                if (players) [self addLog:@"✅ Players получен через GetPlayers"];
             }
             
             return players;
@@ -292,7 +285,6 @@ static UIViewController *logViewController = nil;
             if (!rc) { [self addLog:@"❌ instance/sharedInstance вернул nil"]; return nil; }
             [self addLog:@"✅ RoomController instance получен"];
             
-            // Пробуем разные названия методов без performSelector
             id players = nil;
             
             if ([rc respondsToSelector:@selector(getPlayers)]) {
@@ -302,10 +294,6 @@ static UIViewController *logViewController = nil;
             if (!players && [rc respondsToSelector:@selector(players)]) {
                 players = [rc players];
                 if (players) [self addLog:@"✅ Players получен через players"];
-            }
-            if (!players && [rc respondsToSelector:@selector(GetPlayers)]) {
-                players = [rc performSelector:@selector(GetPlayers)];
-                if (players) [self addLog:@"✅ Players получен через GetPlayers"];
             }
             
             return players;
@@ -331,6 +319,15 @@ static UIViewController *logViewController = nil;
                     Camera *cam = [Camera main];
                     if (cam) {
                         [self addLog:@"✅ Camera.main работает"];
+                        
+                        // Проверяем позицию через valueForKey
+                        id localRoot = [local valueForKey:@"RootPoint"];
+                        if (localRoot) {
+                            id localPos = [localRoot valueForKey:@"position"];
+                            if (localPos) {
+                                [self addLog:@"✅ local позиция получена через valueForKey"];
+                            }
+                        }
                     } else {
                         [self addLog:@"❌ Camera.main НЕ работает"];
                     }
@@ -477,6 +474,14 @@ static UIViewController *logViewController = nil;
     }
 }
 
+- (float)getFloat:(id)obj forKey:(NSString *)key {
+    id value = [obj valueForKey:key];
+    if (value && [value respondsToSelector:@selector(floatValue)]) {
+        return [value floatValue];
+    }
+    return 0;
+}
+
 - (void)drawRect:(CGRect)rect {
     [super drawRect:rect];
     if (!espEnabled || _enemies.count == 0) return;
@@ -580,16 +585,10 @@ static UIViewController *logViewController = nil;
         }
         if (!allPlayers) return;
         
-        id localRoot = nil;
-        if ([localPlayer respondsToSelector:@selector(RootPoint)]) {
-            localRoot = [localPlayer RootPoint];
-        }
+        id localRoot = [localPlayer valueForKey:@"RootPoint"];
         if (!localRoot) return;
         
-        id localPos = nil;
-        if ([localRoot respondsToSelector:@selector(position)]) {
-            localPos = [localRoot position];
-        }
+        id localPos = [localRoot valueForKey:@"position"];
         if (!localPos) return;
         
         NSMutableArray *enemiesData = [NSMutableArray array];
@@ -614,35 +613,20 @@ static UIViewController *logViewController = nil;
                 }
                 if (isAlly) continue;
                 
-                id transform = nil;
-                if ([player respondsToSelector:@selector(Transform)]) {
-                    transform = [player Transform];
-                }
+                id transform = [player valueForKey:@"Transform"];
                 if (!transform) continue;
                 
-                id worldPos = nil;
-                if ([transform respondsToSelector:@selector(position)]) {
-                    worldPos = [transform position];
-                }
+                id worldPos = [transform valueForKey:@"position"];
                 if (!worldPos) continue;
                 
                 id screenPos = [mainCamera WorldToScreenPoint:worldPos];
                 if (!screenPos) continue;
                 
-                float z = 0;
-                if ([screenPos respondsToSelector:@selector(z)]) {
-                    z = [[screenPos valueForKey:@"z"] floatValue];
-                }
+                float z = [[screenPos valueForKey:@"z"] floatValue];
                 if (z <= 0) continue;
                 
-                float x = 0;
-                if ([screenPos respondsToSelector:@selector(x)]) {
-                    x = [[screenPos valueForKey:@"x"] floatValue];
-                }
-                float y = 0;
-                if ([screenPos respondsToSelector:@selector(y)]) {
-                    y = [[screenPos valueForKey:@"y"] floatValue];
-                }
+                float x = [[screenPos valueForKey:@"x"] floatValue];
+                float y = [[screenPos valueForKey:@"y"] floatValue];
                 y = [UIScreen mainScreen].bounds.size.height - y;
                 
                 float localX = [[localPos valueForKey:@"x"] floatValue];
