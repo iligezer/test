@@ -1,34 +1,21 @@
 #import <UIKit/UIKit.h>
 #import <mach-o/dyld.h>
 
-// ========== ВСЕ RVA ИЗ ДАМПА ==========
-
-// Players
-#define RVA_Players_TryGetPlayer 0x382D754           // bool TryGetPlayer(int id, out INetworkPlayer player)
-#define RVA_Players_get_CurrentPlayerId 0x3838D80    // int get_CurrentPlayerId()
-
-// PlayerStatsTracker
-#define RVA_PlayerStatsTracker_GetPlayersInMatch 0x344944C // int GetPlayersInMatch()
-
-// NetworkPlayer - основные данные
-#define RVA_NetworkPlayer_get_Id 0x37D927C            // int get_Id()
-#define RVA_NetworkPlayer_get_IsMine 0x37D4F30        // bool get_IsMine()
-#define RVA_NetworkPlayer_IsAllyOfLocalPlayer 0x37D973C // bool IsAllyOfLocalPlayer()
-#define RVA_NetworkPlayer_get_IsAlly 0x37DAA38        // bool get_IsAlly()
-#define RVA_NetworkPlayer_get_IsDead 0x37D9490        // bool get_IsDead()
-#define RVA_NetworkPlayer_get_Health 0x37D970C        // float get_Health()
-#define RVA_NetworkPlayer_get_Armor 0x37D96FC         // float get_Armor()
-#define RVA_NetworkPlayer_get_Transform 0x37D9370     // Transform get_Transform()
-#define RVA_NetworkPlayer_get_Name 0x37D401C          // string get_Name()
-#define RVA_NetworkPlayer_get_Players 0x37D45A0       // Players get_Players()
-#define RVA_NetworkPlayer_TryGetPlayerTransform 0x37DD1D8 // bool TryGetPlayerTransform(int id, out Transform transform)
-
-// Transform
-#define RVA_Transform_get_position 0x44CEED0          // Vector3 get_position()
-
-// Camera
-#define RVA_Camera_get_main 0x445BAF8                 // Camera get_main()
-#define RVA_Camera_WorldToScreenPoint 0x445AD5C       // Vector3 WorldToScreenPoint(Vector3 position)
+// ========== RVA ==========
+#define RVA_Players_TryGetPlayer 0x382D754
+#define RVA_Players_get_CurrentPlayerId 0x3838D80
+#define RVA_PlayerStatsTracker_GetPlayersInMatch 0x344944C
+#define RVA_NetworkPlayer_get_Id 0x37D927C
+#define RVA_NetworkPlayer_get_IsMine 0x37D4F30
+#define RVA_NetworkPlayer_IsAllyOfLocalPlayer 0x37D973C
+#define RVA_NetworkPlayer_get_IsDead 0x37D9490
+#define RVA_NetworkPlayer_get_Health 0x37D970C
+#define RVA_NetworkPlayer_get_Transform 0x37D9370
+#define RVA_NetworkPlayer_get_Players 0x37D45A0
+#define RVA_NetworkPlayer_TryGetPlayerTransform 0x37DD1D8
+#define RVA_Transform_get_position 0x44CEED0
+#define RVA_Camera_get_main 0x445BAF8
+#define RVA_Camera_WorldToScreenPoint 0x445AD5C
 
 // ========== БАЗОВЫЙ АДРЕС ==========
 uint64_t getBaseAddress() {
@@ -47,47 +34,28 @@ void* getRealPtr(uint64_t rva) {
 }
 
 // ========== ТИПЫ ФУНКЦИЙ ==========
-
-// Players
 typedef bool (*t_Players_TryGetPlayer)(void *players, int id, void **player);
-typedef int (*t_Players_get_CurrentPlayerId)(void *players);
 typedef int (*t_PlayerStatsTracker_GetPlayersInMatch)();
-
-// NetworkPlayer
 typedef int (*t_NetworkPlayer_get_Id)(void *player);
 typedef bool (*t_NetworkPlayer_get_IsMine)(void *player);
 typedef bool (*t_NetworkPlayer_IsAllyOfLocalPlayer)(void *player);
-typedef bool (*t_NetworkPlayer_get_IsAlly)(void *player);
 typedef bool (*t_NetworkPlayer_get_IsDead)(void *player);
 typedef float (*t_NetworkPlayer_get_Health)(void *player);
-typedef float (*t_NetworkPlayer_get_Armor)(void *player);
 typedef void* (*t_NetworkPlayer_get_Transform)(void *player);
-typedef char* (*t_NetworkPlayer_get_Name)(void *player);
 typedef void* (*t_NetworkPlayer_get_Players)(void *player);
 typedef bool (*t_NetworkPlayer_TryGetPlayerTransform)(int id, void **transform);
-
-// Transform
-typedef void* (*t_Transform_get_position)(void *transform, void *outPosition);
-
-// Camera
+typedef void* (*t_Transform_get_position)(void *transform);
 typedef void* (*t_Camera_get_main)();
-typedef void* (*t_Camera_WorldToScreenPoint)(void *camera, void *worldPos, void *outScreenPos);
+typedef void* (*t_Camera_WorldToScreenPoint)(void *camera, void *worldPos);
 
 // ========== ГЛОБАЛЬНЫЕ УКАЗАТЕЛИ ==========
 static t_Players_TryGetPlayer Players_TryGetPlayer = NULL;
-static t_Players_get_CurrentPlayerId Players_get_CurrentPlayerId = NULL;
 static t_PlayerStatsTracker_GetPlayersInMatch PlayerStatsTracker_GetPlayersInMatch = NULL;
-static t_NetworkPlayer_get_Id NetworkPlayer_get_Id = NULL;
 static t_NetworkPlayer_get_IsMine NetworkPlayer_get_IsMine = NULL;
 static t_NetworkPlayer_IsAllyOfLocalPlayer NetworkPlayer_IsAllyOfLocalPlayer = NULL;
-static t_NetworkPlayer_get_IsAlly NetworkPlayer_get_IsAlly = NULL;
 static t_NetworkPlayer_get_IsDead NetworkPlayer_get_IsDead = NULL;
 static t_NetworkPlayer_get_Health NetworkPlayer_get_Health = NULL;
-static t_NetworkPlayer_get_Armor NetworkPlayer_get_Armor = NULL;
 static t_NetworkPlayer_get_Transform NetworkPlayer_get_Transform = NULL;
-static t_NetworkPlayer_get_Name NetworkPlayer_get_Name = NULL;
-static t_NetworkPlayer_get_Players NetworkPlayer_get_Players = NULL;
-static t_NetworkPlayer_TryGetPlayerTransform NetworkPlayer_TryGetPlayerTransform = NULL;
 static t_Transform_get_position Transform_get_position = NULL;
 static t_Camera_get_main Camera_get_main = NULL;
 static t_Camera_WorldToScreenPoint Camera_WorldToScreenPoint = NULL;
@@ -96,7 +64,7 @@ static BOOL espEnabled = YES;
 static UIWindow *overlayWindow = nil;
 static NSMutableArray *playersList = nil;
 
-// ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
+// ========== ВСПОМОГАТЕЛЬНЫЕ ==========
 UIWindow* getMainWindow() {
     for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
         if ([scene isKindOfClass:[UIWindowScene class]]) {
@@ -118,30 +86,46 @@ UIViewController* getTopViewController() {
     return vc;
 }
 
-// ========== ИНИЦИАЛИЗАЦИЯ ФУНКЦИЙ ==========
+// ========== ПРОВЕРКА ФУНКЦИЙ ==========
+BOOL areFunctionsValid() {
+    return Players_TryGetPlayer != NULL &&
+           PlayerStatsTracker_GetPlayersInMatch != NULL &&
+           NetworkPlayer_get_IsMine != NULL &&
+           NetworkPlayer_IsAllyOfLocalPlayer != NULL &&
+           NetworkPlayer_get_IsDead != NULL &&
+           NetworkPlayer_get_Health != NULL &&
+           NetworkPlayer_get_Transform != NULL &&
+           Transform_get_position != NULL &&
+           Camera_get_main != NULL &&
+           Camera_WorldToScreenPoint != NULL;
+}
+
+// ========== ИНИЦИАЛИЗАЦИЯ ==========
 void initFunctions() {
     uint64_t base = getBaseAddress();
-    NSLog(@"[Aimbot] Base address: 0x%llx", base);
+    NSLog(@"[Aimbot] Base: 0x%llx", base);
     
-    Players_TryGetPlayer = (t_Players_TryGetPlayer)(base + 0x382D754);
-    Players_get_CurrentPlayerId = (t_Players_get_CurrentPlayerId)(base + 0x3838D80);
-    PlayerStatsTracker_GetPlayersInMatch = (t_PlayerStatsTracker_GetPlayersInMatch)(base + 0x344944C);
-    NetworkPlayer_get_Id = (t_NetworkPlayer_get_Id)(base + 0x37D927C);
-    NetworkPlayer_get_IsMine = (t_NetworkPlayer_get_IsMine)(base + 0x37D4F30);
-    NetworkPlayer_IsAllyOfLocalPlayer = (t_NetworkPlayer_IsAllyOfLocalPlayer)(base + 0x37D973C);
-    NetworkPlayer_get_IsAlly = (t_NetworkPlayer_get_IsAlly)(base + 0x37DAA38);
-    NetworkPlayer_get_IsDead = (t_NetworkPlayer_get_IsDead)(base + 0x37D9490);
-    NetworkPlayer_get_Health = (t_NetworkPlayer_get_Health)(base + 0x37D970C);
-    NetworkPlayer_get_Armor = (t_NetworkPlayer_get_Armor)(base + 0x37D96FC);
-    NetworkPlayer_get_Transform = (t_NetworkPlayer_get_Transform)(base + 0x37D9370);
-    NetworkPlayer_get_Name = (t_NetworkPlayer_get_Name)(base + 0x37D401C);
-    NetworkPlayer_get_Players = (t_NetworkPlayer_get_Players)(base + 0x37D45A0);
-    NetworkPlayer_TryGetPlayerTransform = (t_NetworkPlayer_TryGetPlayerTransform)(base + 0x37DD1D8);
-    Transform_get_position = (t_Transform_get_position)(base + 0x44CEED0);
-    Camera_get_main = (t_Camera_get_main)(base + 0x445BAF8);
-    Camera_WorldToScreenPoint = (t_Camera_WorldToScreenPoint)(base + 0x445AD5C);
+    if (base == 0) {
+        NSLog(@"[Aimbot] ❌ Base address not found");
+        return;
+    }
     
-    NSLog(@"[Aimbot] Functions initialized");
+    Players_TryGetPlayer = (t_Players_TryGetPlayer)getRealPtr(RVA_Players_TryGetPlayer);
+    PlayerStatsTracker_GetPlayersInMatch = (t_PlayerStatsTracker_GetPlayersInMatch)getRealPtr(RVA_PlayerStatsTracker_GetPlayersInMatch);
+    NetworkPlayer_get_IsMine = (t_NetworkPlayer_get_IsMine)getRealPtr(RVA_NetworkPlayer_get_IsMine);
+    NetworkPlayer_IsAllyOfLocalPlayer = (t_NetworkPlayer_IsAllyOfLocalPlayer)getRealPtr(RVA_NetworkPlayer_IsAllyOfLocalPlayer);
+    NetworkPlayer_get_IsDead = (t_NetworkPlayer_get_IsDead)getRealPtr(RVA_NetworkPlayer_get_IsDead);
+    NetworkPlayer_get_Health = (t_NetworkPlayer_get_Health)getRealPtr(RVA_NetworkPlayer_get_Health);
+    NetworkPlayer_get_Transform = (t_NetworkPlayer_get_Transform)getRealPtr(RVA_NetworkPlayer_get_Transform);
+    Transform_get_position = (t_Transform_get_position)getRealPtr(RVA_Transform_get_position);
+    Camera_get_main = (t_Camera_get_main)getRealPtr(RVA_Camera_get_main);
+    Camera_WorldToScreenPoint = (t_Camera_WorldToScreenPoint)getRealPtr(RVA_Camera_WorldToScreenPoint);
+    
+    if (areFunctionsValid()) {
+        NSLog(@"[Aimbot] ✅ All functions loaded");
+    } else {
+        NSLog(@"[Aimbot] ❌ Some functions missing");
+    }
 }
 
 // ========== ESP VIEW ==========
@@ -154,8 +138,7 @@ void initFunctions() {
 - (void)drawRect:(CGRect)rect {
     [super drawRect:rect];
     
-    if (!espEnabled) return;
-    if (!Camera_get_main || !Camera_WorldToScreenPoint || !Transform_get_position) return;
+    if (!espEnabled || !areFunctionsValid()) return;
     
     void *cam = Camera_get_main();
     if (!cam) return;
@@ -163,80 +146,78 @@ void initFunctions() {
     CGContextRef ctx = UIGraphicsGetCurrentContext();
     CGContextSetLineWidth(ctx, 2.0);
     
-    // Рисуем каждого игрока
     for (NSValue *playerVal in self.players) {
         void *player = [playerVal pointerValue];
         if (!player) continue;
         
-        // Пропускаем себя
-        if (NetworkPlayer_get_IsMine && NetworkPlayer_get_IsMine(player)) continue;
-        
-        // Пропускаем мёртвых
-        if (NetworkPlayer_get_IsDead && NetworkPlayer_get_IsDead(player)) continue;
-        
-        // Определяем цвет (союзник/враг)
-        BOOL isAlly = NO;
-        if (NetworkPlayer_IsAllyOfLocalPlayer) {
-            isAlly = NetworkPlayer_IsAllyOfLocalPlayer(player);
-        } else if (NetworkPlayer_get_IsAlly) {
-            isAlly = NetworkPlayer_get_IsAlly(player);
-        }
-        
-        CGContextSetStrokeColorWithColor(ctx, isAlly ? [UIColor greenColor].CGColor : [UIColor redColor].CGColor);
-        CGContextSetFillColorWithColor(ctx, isAlly ? [UIColor colorWithRed:0 green:1 blue:0 alpha:0.3].CGColor : [UIColor colorWithRed:1 green:0 blue:0 alpha:0.3].CGColor);
-        
-        // Получаем трансформ и позицию
-        void *transform = NetworkPlayer_get_Transform ? NetworkPlayer_get_Transform(player) : NULL;
-        if (!transform) continue;
-        
-        // Получаем позицию (структура Vector3)
-        struct Vector3 { float x, y, z; } worldPos;
-        Transform_get_position(transform, &worldPos);
-        
-        // Конвертируем в экранные координаты
-        struct Vector3 screenPos;
-        Camera_WorldToScreenPoint(cam, &worldPos, &screenPos);
-        
-        // Рисуем только если игрок перед камерой
-        if (screenPos.z > 0) {
-            float size = 50.0f / screenPos.z; // Размер зависит от расстояния
-            CGRect playerRect = CGRectMake(screenPos.x - size/2, [UIScreen mainScreen].bounds.size.height - screenPos.y - size/2, size, size);
+        @try {
+            // Пропускаем себя
+            if (NetworkPlayer_get_IsMine && NetworkPlayer_get_IsMine(player)) continue;
             
-            // Рисуем прямоугольник
-            CGContextFillRect(ctx, playerRect);
-            CGContextStrokeRect(ctx, playerRect);
+            // Пропускаем мёртвых
+            if (NetworkPlayer_get_IsDead && NetworkPlayer_get_IsDead(player)) continue;
             
-            // Рисуем здоровье
-            if (NetworkPlayer_get_Health) {
-                float health = NetworkPlayer_get_Health(player);
-                NSString *healthText = [NSString stringWithFormat:@"%.0f", health];
-                [healthText drawAtPoint:CGPointMake(screenPos.x - 20, [UIScreen mainScreen].bounds.size.height - screenPos.y - size/2 - 20) withAttributes:@{NSFontAttributeName: [UIFont systemFontOfSize:12], NSForegroundColorAttributeName: [UIColor whiteColor]}];
+            // Союзник или враг
+            BOOL isAlly = NO;
+            if (NetworkPlayer_IsAllyOfLocalPlayer) {
+                isAlly = NetworkPlayer_IsAllyOfLocalPlayer(player);
             }
+            
+            // Получаем трансформ и позицию
+            void *transform = NetworkPlayer_get_Transform ? NetworkPlayer_get_Transform(player) : NULL;
+            if (!transform) continue;
+            
+            void *worldPos = Transform_get_position(transform);
+            if (!worldPos) continue;
+            
+            // Конвертируем в экранные координаты
+            void *screenPos = Camera_WorldToScreenPoint(cam, worldPos);
+            if (!screenPos) continue;
+            
+            // Читаем координаты (упрощённо)
+            float *pos = (float*)screenPos;
+            float x = pos[0];
+            float y = pos[1];
+            float z = pos[2];
+            
+            if (z > 0) {
+                float size = 50.0f / z;
+                CGRect playerRect = CGRectMake(x - size/2, [UIScreen mainScreen].bounds.size.height - y - size/2, size, size);
+                
+                CGContextSetStrokeColorWithColor(ctx, isAlly ? [UIColor greenColor].CGColor : [UIColor redColor].CGColor);
+                CGContextSetFillColorWithColor(ctx, isAlly ? [UIColor colorWithRed:0 green:1 blue:0 alpha:0.3].CGColor : [UIColor colorWithRed:1 green:0 blue:0 alpha:0.3].CGColor);
+                
+                CGContextFillRect(ctx, playerRect);
+                CGContextStrokeRect(ctx, playerRect);
+                
+                // Здоровье
+                if (NetworkPlayer_get_Health) {
+                    float health = NetworkPlayer_get_Health(player);
+                    NSString *text = [NSString stringWithFormat:@"%.0f", health];
+                    [text drawAtPoint:CGPointMake(x - 20, [UIScreen mainScreen].bounds.size.height - y - size/2 - 20) 
+                           withAttributes:@{NSFontAttributeName: [UIFont systemFontOfSize:12], 
+                                           NSForegroundColorAttributeName: [UIColor whiteColor]}];
+                }
+            }
+        } @catch (NSException *e) {
+            NSLog(@"[Aimbot] Exception: %@", e);
         }
     }
 }
 
 @end
 
-// ========== ПОЛУЧЕНИЕ СПИСКА ИГРОКОВ ==========
+// ========== ПОЛУЧЕНИЕ ИГРОКОВ ==========
 NSArray* getPlayersList() {
     NSMutableArray *players = [NSMutableArray array];
     
-    if (!PlayerStatsTracker_GetPlayersInMatch) return players;
+    if (!areFunctionsValid()) return players;
     
     int playerCount = PlayerStatsTracker_GetPlayersInMatch();
-    NSLog(@"[Aimbot] Players in match: %d", playerCount);
+    NSLog(@"[Aimbot] Player count: %d", playerCount);
     
-    // Перебираем возможные ID игроков
-    for (int i = 0; i < playerCount + 10; i++) {
-        void *transform = NULL;
-        if (NetworkPlayer_TryGetPlayerTransform && NetworkPlayer_TryGetPlayerTransform(i, &transform) && transform) {
-            // Нашли игрока, нужно получить его объект NetworkPlayer
-            // TODO: получить NetworkPlayer из transform или по ID
-            // Пока добавляем трансформ как заглушку
-            [players addObject:[NSValue valueWithPointer:transform]];
-        }
-    }
+    // TODO: Нужно получить объект Players и вызывать TryGetPlayer
+    // Пока возвращаем пустой массив для теста
     
     return players;
 }
@@ -253,6 +234,15 @@ void showMenu() {
         espEnabled = !espEnabled;
     }]];
     
+    [alert addAction:[UIAlertAction actionWithTitle:@"📊 Тест функций"
+                                               style:UIAlertActionStyleDefault
+                                             handler:^(UIAlertAction *a){
+        NSString *status = areFunctionsValid() ? @"✅ Функции загружены" : @"❌ Функции не загружены";
+        UIAlertController *info = [UIAlertController alertControllerWithTitle:@"Статус" message:status preferredStyle:UIAlertControllerStyleAlert];
+        [info addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        [getTopViewController() presentViewController:info animated:YES completion:nil];
+    }]];
+    
     [alert addAction:[UIAlertAction actionWithTitle:@"📊 Обновить игроков"
                                                style:UIAlertActionStyleDefault
                                              handler:^(UIAlertAction *a){
@@ -260,7 +250,8 @@ void showMenu() {
         [(ESPView*)overlayWindow.subviews.firstObject setPlayers:playersList];
         [overlayWindow.subviews.firstObject setNeedsDisplay];
         
-        UIAlertController *info = [UIAlertController alertControllerWithTitle:@"✅" message:[NSString stringWithFormat:@"Найдено игроков: %lu", (unsigned long)playersList.count] preferredStyle:UIAlertControllerStyleAlert];
+        NSString *msg = [NSString stringWithFormat:@"Найдено: %lu", (unsigned long)playersList.count];
+        UIAlertController *info = [UIAlertController alertControllerWithTitle:@"✅" message:msg preferredStyle:UIAlertControllerStyleAlert];
         [info addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
         [getTopViewController() presentViewController:info animated:YES completion:nil];
     }]];
@@ -304,14 +295,15 @@ static void init() {
         
         // Таймер обновления
         [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t){
-            if (espEnabled) {
+            if (espEnabled && areFunctionsValid()) {
                 playersList = [getPlayersList() mutableCopy];
                 [(ESPView*)overlayWindow.subviews.firstObject setPlayers:playersList];
                 [overlayWindow.subviews.firstObject setNeedsDisplay];
             }
         }];
         
-        UIAlertController *ready = [UIAlertController alertControllerWithTitle:@"✅ Aimbot" message:@"Загружен" preferredStyle:UIAlertControllerStyleAlert];
+        NSString *status = areFunctionsValid() ? @"✅ Загружен" : @"❌ Ошибка загрузки";
+        UIAlertController *ready = [UIAlertController alertControllerWithTitle:@"Aimbot" message:status preferredStyle:UIAlertControllerStyleAlert];
         [ready addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
         [getTopViewController() presentViewController:ready animated:YES completion:nil];
     });
