@@ -13,27 +13,32 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
       
-      - name: Setup Theos
+      - name: Install system dependencies
         run: |
-          # Клонируем Theos вручную
+          brew install ldid xz
+      
+      - name: Clone Theos
+        run: |
           git clone --recursive https://github.com/theos/theos.git $HOME/theos
           echo "THEOS=$HOME/theos" >> $GITHUB_ENV
           echo "PATH=$HOME/theos/bin:$PATH" >> $GITHUB_ENV
-          
-          # Скачиваем SDK
-          mkdir -p $HOME/theos/sdks
-          curl -L https://github.com/theos/sdks/releases/latest/download/iPhoneOS16.0.sdk.tar.xz -o $HOME/sdk.tar.xz
-          tar -xf $HOME/sdk.tar.xz -C $HOME/theos/sdks/
-          
-      - name: Show files
-        run: |
-          ls -la
-          echo "THEOS=$THEOS"
-          ls -la $THEOS/sdks/
       
-      - name: Build
+      - name: Download iOS SDK
         run: |
-          make clean || true
+          mkdir -p $HOME/theos/sdks
+          curl -L https://github.com/theos/sdks/releases/latest/download/iPhoneOS14.5.sdk.tar.xz -o $HOME/sdk.tar.xz
+          tar -xf $HOME/sdk.tar.xz -C $HOME/theos/sdks/
+          ls -la $HOME/theos/sdks/
+      
+      - name: Show environment
+        run: |
+          echo "THEOS=$THEOS"
+          which ldid || echo "ldid not found"
+          $THEOS/bin/nic.pl || echo "nic.pl not found"
+      
+      - name: Build package
+        run: |
+          make clean
           make package FINALPACKAGE=1
       
       - name: Upload .deb
@@ -41,9 +46,3 @@ jobs:
         with:
           name: aimbot-deb
           path: packages/*.deb
-      
-      - name: Upload .dylib (if exists)
-        uses: actions/upload-artifact@v3
-        with:
-          name: aimbot-dylib
-          path: .theos/obj/debug/*.dylib
