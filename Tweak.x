@@ -1,7 +1,7 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 
-// Путь для сохранения логов (тот, который ты просил)
+// Путь для сохранения логов
 #define LOG_FILE_PATH @"/var/mobile/Documents/modern/aimbot_log.txt"
 
 // Функция для записи в лог (и в консоль, и в файл)
@@ -39,7 +39,7 @@ void writeLog(NSString *format, ...) {
     }
 }
 
-// Интерфейс для плавающей кнопки (как в H5GG)
+// Плавающая кнопка
 @interface FloatButton : UIImageView
 @property (nonatomic, copy) void (^actionBlock)(void);
 - (void)setAction:(void (^)(void))block;
@@ -55,13 +55,12 @@ void writeLog(NSString *format, ...) {
         self.layer.borderWidth = 2;
         self.layer.borderColor = [UIColor whiteColor].CGColor;
         self.userInteractionEnabled = YES;
-        self.image = nil; // убираем иконку, если её нет
         
-        // Добавляем тап для обработки нажатия
+        // Тап для обработки нажатия
         UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleTap)];
         [self addGestureRecognizer:tap];
         
-        // Добавляем перетаскивание
+        // Перетаскивание
         UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
         [self addGestureRecognizer:pan];
     }
@@ -87,48 +86,31 @@ void writeLog(NSString *format, ...) {
 
 @end
 
-// ============================================
-// НОВЫЙ КЛАСС: ПРОЗРАЧНОЕ ОКНО (пропускает нажатия)
-// ============================================
+// Прозрачное окно, пропускающее нажатия в игру
 @interface PassthroughWindow : UIWindow
 @property (nonatomic, weak) FloatButton *floatButton;
-@property (nonatomic, weak) UIView *menuView;
 @end
 
 @implementation PassthroughWindow
 
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    // 1. Находим стандартную view, в которую попал удар
     UIView *hitView = [super hitTest:point withEvent:event];
     
-    // 2. Если мы вообще не попали ни во что, сразу возвращаем nil
-    if (!hitView) {
-        return nil;
-    }
-    
-    // 3. Смотрим, является ли эта view нашей кнопкой или меню (или их сабвью)
+    // Если нажали на кнопку — передаем ей
     if (self.floatButton && (hitView == self.floatButton || [self.floatButton isDescendantOfView:hitView])) {
         return hitView;
     }
-    if (self.menuView && (hitView == self.menuView || [self.menuView isDescendantOfView:hitView])) {
-        return hitView;
-    }
     
-    // 4. Иначе (мы попали в пустую область окна) — возвращаем nil
-    //    Это заставит iOS искать получателя касания в окнах ниже (игра)
+    // Иначе — пропускаем в игру
     return nil;
 }
 
 @end
 
-// ============================================
-// ОСНОВНОЙ КЛАСС УПРАВЛЕНИЯ
-// ============================================
+// Основной класс
 @interface AimbotUI : NSObject
-@property (nonatomic, strong) PassthroughWindow *window;  // ← ИЗМЕНЕНО: теперь PassthroughWindow
+@property (nonatomic, strong) PassthroughWindow *window;
 @property (nonatomic, strong) FloatButton *floatButton;
-@property (nonatomic, strong) UIView *menuView;
-@property (nonatomic, assign) BOOL menuVisible;
 @end
 
 @implementation AimbotUI
@@ -144,87 +126,30 @@ void writeLog(NSString *format, ...) {
 - (void)setupUI {
     writeLog(@"Setting up UI");
     
-    // ========================================
-    // 1. Создаем прозрачное окно (ИЗМЕНЕНО)
-    // ========================================
+    // Создаем прозрачное окно
     self.window = [[PassthroughWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
     self.window.windowLevel = UIWindowLevelAlert + 1;
     self.window.backgroundColor = [UIColor clearColor];
-    self.window.userInteractionEnabled = YES;
     self.window.hidden = NO;
     
-    // ========================================
-    // 2. Создаем плавающую кнопку
-    // ========================================
+    // Создаем кнопку
     self.floatButton = [[FloatButton alloc] init];
-    
-    // Связываем кнопку с окном (чтобы hitTest мог её найти)
     self.window.floatButton = self.floatButton;
     [self.window addSubview:self.floatButton];
     
-    // Устанавливаем действие для кнопки (weakSelf для избежания retain cycle)
+    // Действие при нажатии — сразу запускаем анализ
     __weak typeof(self) weakSelf = self;
     [self.floatButton setAction:^{
-        __strong typeof(weakSelf) strongSelf = weakSelf;
-        if (strongSelf) {
-            [strongSelf toggleMenu];
-        }
+        [weakSelf performAnalysis];
     }];
-    
-    // ========================================
-    // 3. Создаем меню
-    // ========================================
-    self.menuView = [[UIView alloc] initWithFrame:CGRectMake(80, 160, 220, 200)];
-    self.menuView.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.9];
-    self.menuView.layer.cornerRadius = 10;
-    self.menuView.layer.borderWidth = 1;
-    self.menuView.layer.borderColor = [UIColor whiteColor].CGColor;
-    self.menuView.hidden = YES;
-    
-    // Связываем меню с окном
-    self.window.menuView = self.menuView;
-    [self.window addSubview:self.menuView];
-    
-    // Заголовок
-    UILabel *titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, 220, 30)];
-    titleLabel.text = @"Aimbot Menu";
-    titleLabel.textColor = [UIColor whiteColor];
-    titleLabel.textAlignment = NSTextAlignmentCenter;
-    [self.menuView addSubview:titleLabel];
-    
-    // Кнопка "Test"
-    UIButton *testBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    testBtn.frame = CGRectMake(20, 50, 180, 40);
-    [testBtn setTitle:@"Test Scan" forState:UIControlStateNormal];
-    testBtn.backgroundColor = [UIColor lightGrayColor];
-    [testBtn setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
-    testBtn.layer.cornerRadius = 5;
-    [testBtn addTarget:self action:@selector(testScan) forControlEvents:UIControlEventTouchUpInside];
-    [self.menuView addSubview:testBtn];
-    
-    // Кнопка "Close"
-    UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(20, 100, 180, 40);
-    [closeBtn setTitle:@"Close Menu" forState:UIControlStateNormal];
-    closeBtn.backgroundColor = [UIColor lightGrayColor];
-    [closeBtn setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
-    closeBtn.layer.cornerRadius = 5;
-    [closeBtn addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
-    [self.menuView addSubview:closeBtn];
     
     writeLog(@"UI setup complete");
 }
 
-- (void)toggleMenu {
-    self.menuVisible = !self.menuVisible;
-    self.menuView.hidden = !self.menuVisible;
-    writeLog(self.menuVisible ? @"Menu opened" : @"Menu closed");
-}
-
-- (void)testScan {
-    writeLog(@"Test scan started");
+- (void)performAnalysis {
+    writeLog(@"=== НАЧАЛО АНАЛИЗА ===");
     
-    // Список классов для поиска (из Project.Game.dll)
+    // Список классов для поиска
     NSArray *classesToScan = @[
         @"GameManager",
         @"PlayerController",
@@ -238,28 +163,26 @@ void writeLog(NSString *format, ...) {
     for (NSString *className in classesToScan) {
         Class cls = objc_getClass([className UTF8String]);
         if (cls) {
-            writeLog([NSString stringWithFormat:@"✅ Found: %@", className]);
+            writeLog([NSString stringWithFormat:@"✅ Найден класс: %@", className]);
             found++;
         } else {
-            writeLog([NSString stringWithFormat:@"❌ Not found: %@", className]);
+            writeLog([NSString stringWithFormat:@"❌ Не найден: %@", className]);
         }
     }
     
-    writeLog([NSString stringWithFormat:@"Test complete. Found %d/%lu classes", found, (unsigned long)classesToScan.count]);
+    writeLog([NSString stringWithFormat:@"📊 Итого найдено классов: %d из %lu", found, (unsigned long)classesToScan.count]);
+    writeLog(@"=== ФАЙЛ СОХРАНЕН ===");
 }
 
 @end
 
-// ============================================
-// КОНСТРУКТОР
-// ============================================
+// Конструктор
 static AimbotUI *g_ui = nil;
 
 __attribute__((constructor))
 static void init() {
-    writeLog(@"=== AIMBOT TWEAK LOADED ===");
+    writeLog(@"=== AIMBOT TWEAK ЗАГРУЖЕН ===");
     
-    // Ждем загрузки UI
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         g_ui = [[AimbotUI alloc] init];
     });
