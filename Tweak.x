@@ -12,6 +12,51 @@ static UIWindow *g_logWindow = nil;
 static BOOL g_menuVisible = NO;
 static NSMutableArray *g_logs = nil;
 static NSString *g_logFilePath = nil;
+static id g_handler = nil; // Глобальный обработчик
+
+#pragma mark - Вспомогательный класс для обработки событий
+
+@interface FloatButtonHandler : NSObject
+@end
+
+@implementation FloatButtonHandler
+
+- (void)handleTap {
+    g_menuVisible = !g_menuVisible;
+    LOG("Меню переключено: %d", g_menuVisible);
+    
+    NSString *logMsg = [NSString stringWithFormat:@"Меню переключено: %@", 
+                        g_menuVisible ? @"ВКЛ" : @"ВЫКЛ"];
+    writeLog(logMsg);
+    
+    if (g_logWindow) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            g_logWindow.hidden = !g_menuVisible;
+        });
+    }
+}
+
+- (void)handlePan:(UIPanGestureRecognizer *)gesture {
+    if (!gesture.view || !gesture.view.superview) return;
+    
+    CGPoint translation = [gesture translationInView:gesture.view.superview];
+    gesture.view.center = CGPointMake(gesture.view.center.x + translation.x,
+                                       gesture.view.center.y + translation.y);
+    [gesture setTranslation:CGPointZero inView:gesture.view.superview];
+}
+
+- (void)handleClose {
+    g_menuVisible = NO;
+    if (g_logWindow) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            g_logWindow.hidden = YES;
+        });
+    }
+    LOG("Окно логов закрыто");
+    writeLog(@"Окно логов закрыто");
+}
+
+@end
 
 #pragma mark - Логирование
 
@@ -65,40 +110,6 @@ void writeLog(NSString *message) {
     }
 }
 
-#pragma mark - Действия кнопок
-
-void toggleMenu() {
-    g_menuVisible = !g_menuVisible;
-    LOG("Меню переключено: %d", g_menuVisible);
-    writeLog([NSString stringWithFormat:@"Меню переключено: %@", g_menuVisible ? @"ВКЛ" : @"ВЫКЛ"]);
-    
-    if (!g_logWindow) return;
-    
-    dispatch_async(dispatch_get_main_queue(), ^{
-        g_logWindow.hidden = !g_menuVisible;
-    });
-}
-
-void dragButton(UIPanGestureRecognizer *gesture) {
-    if (!gesture.view || !gesture.view.superview) return;
-    
-    CGPoint translation = [gesture translationInView:gesture.view.superview];
-    gesture.view.center = CGPointMake(gesture.view.center.x + translation.x,
-                                       gesture.view.center.y + translation.y);
-    [gesture setTranslation:CGPointZero inView:gesture.view.superview];
-}
-
-void closeLogWindow() {
-    g_menuVisible = NO;
-    if (g_logWindow) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            g_logWindow.hidden = YES;
-        });
-    }
-    LOG("Окно логов закрыто");
-    writeLog(@"Окно логов закрыто");
-}
-
 #pragma mark - Создание UI
 
 void createFloatingButton() {
@@ -145,48 +156,19 @@ void createFloatingButton() {
         label.userInteractionEnabled = NO;
         [g_floatButton addSubview:label];
         
-        // Добавляем тап-распознаватель с БЛОКОМ
+        // Создаём глобальный обработчик
+        g_handler = [[FloatButtonHandler alloc] init];
+        
+        // Добавляем тап-распознаватель
         UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] 
-                                       initWithTarget:g_floatButton 
+                                       initWithTarget:g_handler 
                                        action:@selector(handleTap)];
-        
-        // Но лучше использовать блок через вспомогательный класс или прямой обработчик
-        // Используем вспомогательный блок-обработчик
-        __weak UIView *weakButton = g_floatButton;
-        tap = [[UITapGestureRecognizer alloc] initWithTarget:nil action:nil];
-        tap.name = @"tapHandler";
-        
-        // Добавляем перетаскивание через блок
-        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] 
-                                       initWithTarget:nil 
-                                       action:nil];
-        
-        // Правильный способ - добавить через KVO или создать вспомогательный класс
-        // Вместо этого используем простой подход с переопределением touchesBegan
-        
-        // ЛУЧШИЙ ВАРИАНТ - создаём вспомогательный класс для обработки
-        @interface FloatButtonHandler : NSObject
-        @property (nonatomic, assign) CGPoint startPoint;
-        @end
-        
-        @implementation FloatButtonHandler
-        - (void)handleTap {
-            toggleMenu();
-        }
-        
-        - (void)handlePan:(UIPanGestureRecognizer *)gesture {
-            dragButton(gesture);
-        }
-        @end
-        
-        FloatButtonHandler *handler = [[FloatButtonHandler alloc] init];
-        
-        // Добавляем тап-распознаватель правильно
-        tap = [[UITapGestureRecognizer alloc] initWithTarget:handler action:@selector(handleTap)];
         [g_floatButton addGestureRecognizer:tap];
         
         // Добавляем перетаскивание
-        pan = [[UIPanGestureRecognizer alloc] initWithTarget:handler action:@selector(handlePan:)];
+        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] 
+                                       initWithTarget:g_handler 
+                                       action:@selector(handlePan:)];
         [g_floatButton addGestureRecognizer:pan];
         
         [g_floatWindow addSubview:g_floatButton];
@@ -228,8 +210,8 @@ void createFloatingButton() {
         closeBtn.backgroundColor = [UIColor systemRedColor];
         closeBtn.tintColor = [UIColor whiteColor];
         
-        // Добавляем действие кнопке через блок
-        [closeBtn addTarget:handler action:@selector(handleClose) forControlEvents:UIControlEventTouchUpInside];
+        // Добавляем действие кнопке
+        [closeBtn addTarget:g_handler action:@selector(handleClose) forControlEvents:UIControlEventTouchUpInside];
         
         [container addSubview:closeBtn];
         
@@ -247,7 +229,7 @@ static void init() {
     initLogging();
     writeLog(@"✅ Aimbot твик загружен");
     
-    // Ждём 3 секунды, чтобы приложение загрузилось
+    // Ждём 3 секунды, чтоб�� приложение загрузилось
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), 
                    dispatch_get_main_queue(), ^{
         LOG("Создаём UI...");
