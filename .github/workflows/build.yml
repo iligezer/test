@@ -8,40 +8,25 @@ on:
 jobs:
   build:
     runs-on: macos-latest
-    
+
     steps:
-      - name: Checkout
-        uses: actions/checkout@v3
-      
-      - name: Install Dependencies
-        run: |
-          brew install ldid xz
-      
-      - name: Clone Theos
-        run: |
-          git clone --recursive https://github.com/theos/theos.git $HOME/theos
-          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
-      
-      - name: Download iOS 15.0 SDK (рабочая версия)
-        run: |
-          mkdir -p $HOME/theos/sdks
-          curl -L https://github.com/xybp888/iOS-SDKs/releases/download/latest/iPhoneOS15.0.sdk.tar.xz -o $HOME/sdk.tar.xz
-          tar -xf $HOME/sdk.tar.xz -C $HOME/theos/sdks/
-          ls -la $HOME/theos/sdks/
-      
+      - uses: actions/checkout@v3
+
+      - name: Setup Theos
+        uses: Randomblock1/theos-action@v1
+        with:
+          theos-dir: 'theos'
+          theos-src: 'https://github.com/theos/theos'
+          theos-sdks: 'https://github.com/theos/sdks'
+
       - name: Build Package
         run: |
+          export THEOS=./theos
           make clean
           make package FINALPACKAGE=1
-      
+
       - name: Upload .deb
         uses: actions/upload-artifact@v3
         with:
           name: aimbot-deb
           path: packages/*.deb
-      
-      - name: Upload .dylib
-        uses: actions/upload-artifact@v3
-        with:
-          name: aimbot-dylib
-          path: .theos/obj/debug/*.dylib
