@@ -6,6 +6,7 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = aimbot
 aimbot_FILES = Tweak.x
 aimbot_CFLAGS = -fobjc-arc
+aimbot_FRAMEWORKS = UIKit Foundation
 
 include $(THEOS_MAKE_PATH)/tweak.mk
 
