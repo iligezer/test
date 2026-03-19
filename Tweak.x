@@ -22,20 +22,15 @@ void* getRealPtr(uint64_t rva) {
     return base ? (void*)(base + rva) : NULL;
 }
 
-// ========== ПОЛУЧЕНИЕ ГЛАВНОГО ОКНА (ЧЕРЕЗ СЦЕНЫ) ==========
+// ========== ПОЛУЧЕНИЕ ГЛАВНОГО ОКНА (ТОЛЬКО ЧЕРЕЗ СЦЕНЫ) ==========
 UIWindow* getMainWindow() {
-    if (@available(iOS 15.0, *)) {
-        for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-            if ([scene isKindOfClass:[UIWindowScene class]]) {
-                UIWindowScene *windowScene = (UIWindowScene *)scene;
-                for (UIWindow *window in windowScene.windows) {
-                    if (window.isKeyWindow) return window;
-                }
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if ([scene isKindOfClass:[UIWindowScene class]]) {
+            UIWindowScene *windowScene = (UIWindowScene *)scene;
+            for (UIWindow *window in windowScene.windows) {
+                if (window.isKeyWindow) return window;
             }
         }
-    } else {
-        // Fallback для старых версий
-        return [UIApplication sharedApplication].keyWindow;
     }
     return nil;
 }
@@ -66,23 +61,20 @@ UIViewController* getTopViewController() {
     return self;
 }
 - (void)tap {
-    // Пытаемся вызвать IL2CPP функцию
     void *(*func)() = getRealPtr(RVA_GameManager_GetLocalPlayer);
     
     NSString *msg;
     if (func) {
         void *result = func();
-        msg = [NSString stringWithFormat:@"✅ Вызов успешен\nАдрес функции: %p\nРезультат: %p", func, result];
+        msg = [NSString stringWithFormat:@"✅ Вызов успешен\nАдрес: %p\nРезультат: %p", func, result];
     } else {
-        msg = @"❌ Не удалось получить адрес функции";
+        msg = @"❌ Адрес функции не получен";
     }
     
-    // Показываем результат на экране
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Aimbot Debug"
                                                                    message:msg
                                                             preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-    
     [getTopViewController() presentViewController:alert animated:YES completion:nil];
 }
 @end
@@ -92,14 +84,16 @@ __attribute__((constructor))
 static void init() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         UIWindow *win = getMainWindow();
-        if (!win) return;
+        if (!win) {
+            NSLog(@"[Aimbot] Окно не найдено");
+            return;
+        }
         
         SimpleButton *btn = [[SimpleButton alloc] init];
         [win addSubview:btn];
         
-        // Показываем алерт при загрузке
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Aimbot"
-                                                                       message:[NSString stringWithFormat:@"Твик загружен\nBase: %llx", getBaseAddress()]
+                                                                       message:[NSString stringWithFormat:@"Загружен\nBase: 0x%llx", getBaseAddress()]
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
         [getTopViewController() presentViewController:alert animated:YES completion:nil];
