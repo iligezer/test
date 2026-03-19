@@ -1,74 +1,55 @@
 #import <UIKit/UIKit.h>
 #import <mach-o/dyld.h>
 
-// ========== RVA ==========
-#define RVA_Players_TryGetPlayer 0x382D754
-#define RVA_Players_get_CurrentPlayerId 0x3838D80
-#define RVA_PlayerStatsTracker_GetPlayersInMatch 0x344944C
-#define RVA_NetworkPlayer_get_Id 0x37D927C
-#define RVA_NetworkPlayer_get_IsMine 0x37D4F30
-#define RVA_NetworkPlayer_IsAllyOfLocalPlayer 0x37D973C
-#define RVA_NetworkPlayer_get_IsDead 0x37D9490
-#define RVA_NetworkPlayer_get_Health 0x37D970C
-#define RVA_NetworkPlayer_get_Transform 0x37D9370
-#define RVA_NetworkPlayer_get_Players 0x37D45A0
-#define RVA_NetworkPlayer_TryGetPlayerTransform 0x37DD1D8
-#define RVA_Transform_get_position 0x44CEED0
-#define RVA_Camera_get_main 0x445BAF8
-#define RVA_Camera_WorldToScreenPoint 0x445AD5C
+// ========== ТВОИ RVA (ИЗ ТВОЕГО СКРИНШОТА) ==========
+#define RVA_Camera_get_main         0x10871faf8
+#define RVA_Camera_WorldToScreen    0x10871ed5c
+#define RVA_Transform_get_position   0x108792ed0
+#define RVA_Player_IsMine            0x10716cbe4
+#define RVA_Player_IsDead            0x107166230
+#define RVA_Player_IsAlly            0x10715fe28
+#define RVA_Player_GetHealth         0x10717f44
+#define RVA_Player_GetTransform      0x10716cc10
 
 // ========== БАЗОВЫЙ АДРЕС ==========
-uint64_t getBaseAddress() {
-    for (uint32_t i = 0; i < _dyld_image_count(); i++) {
-        const char *name = _dyld_get_image_name(i);
-        if (name && strstr(name, "ModernStrike")) {
-            return (uint64_t)_dyld_get_image_header(i);
-        }
-    }
-    return 0;
-}
-
-void* getRealPtr(uint64_t rva) {
-    uint64_t base = getBaseAddress();
-    return base ? (void*)(base + rva) : NULL;
-}
+#define BASE_ADDR 0x1042c4000
 
 // ========== ТИПЫ ФУНКЦИЙ ==========
-typedef bool (*t_Players_TryGetPlayer)(void *players, int id, void **player);
-typedef int (*t_PlayerStatsTracker_GetPlayersInMatch)();
-typedef int (*t_NetworkPlayer_get_Id)(void *player);
-typedef bool (*t_NetworkPlayer_get_IsMine)(void *player);
-typedef bool (*t_NetworkPlayer_IsAllyOfLocalPlayer)(void *player);
-typedef bool (*t_NetworkPlayer_get_IsDead)(void *player);
-typedef float (*t_NetworkPlayer_get_Health)(void *player);
-typedef void* (*t_NetworkPlayer_get_Transform)(void *player);
-typedef void* (*t_NetworkPlayer_get_Players)(void *player);
-typedef bool (*t_NetworkPlayer_TryGetPlayerTransform)(int id, void **transform);
-typedef void* (*t_Transform_get_position)(void *transform);
-typedef void* (*t_Camera_get_main)();
-typedef void* (*t_Camera_WorldToScreenPoint)(void *camera, void *worldPos);
+typedef void *(*t_get_main_camera)();
+typedef void *(*t_world_to_screen)(void *camera, void *worldPos);
+typedef void *(*t_get_position)(void *transform);
+typedef bool (*t_is_mine)(void *player);
+typedef bool (*t_is_dead)(void *player);
+typedef bool (*t_is_ally)(void *player);
+typedef float (*t_get_health)(void *player);
+typedef void *(*t_get_transform)(void *player);
 
-// ========== ГЛОБАЛЬНЫЕ УКАЗАТЕЛИ ==========
-static t_Players_TryGetPlayer Players_TryGetPlayer = NULL;
-static t_PlayerStatsTracker_GetPlayersInMatch PlayerStatsTracker_GetPlayersInMatch = NULL;
-static t_NetworkPlayer_get_IsMine NetworkPlayer_get_IsMine = NULL;
-static t_NetworkPlayer_IsAllyOfLocalPlayer NetworkPlayer_IsAllyOfLocalPlayer = NULL;
-static t_NetworkPlayer_get_IsDead NetworkPlayer_get_IsDead = NULL;
-static t_NetworkPlayer_get_Health NetworkPlayer_get_Health = NULL;
-static t_NetworkPlayer_get_Transform NetworkPlayer_get_Transform = NULL;
-static t_Transform_get_position Transform_get_position = NULL;
-static t_Camera_get_main Camera_get_main = NULL;
-static t_Camera_WorldToScreenPoint Camera_WorldToScreenPoint = NULL;
+// ========== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ==========
+static t_get_main_camera Camera_main = NULL;
+static t_world_to_screen Camera_WorldToScreen = NULL;
+static t_get_position Transform_get_position = NULL;
+static t_is_mine Player_IsMine = NULL;
+static t_is_dead Player_IsDead = NULL;
+static t_is_ally Player_IsAlly = NULL;
+static t_get_health Player_GetHealth = NULL;
+static t_get_transform Player_GetTransform = NULL;
 
-static BOOL espEnabled = YES;
+static BOOL espEnabled = NO;
+static NSMutableString *logText = nil;
 static UIWindow *overlayWindow = nil;
-static NSMutableArray *playersList = nil;
+static UIWindow *logWindow = nil;
 
-// ========== ВСПОМОГАТЕЛЬНЫЕ ==========
+// ========== ПОЛУЧЕНИЕ АДРЕСОВ ==========
+void* getRealPtr(uint64_t addr) {
+    return (void*)addr; // Используем абсолютные адреса
+}
+
+// ========== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==========
 UIWindow* getMainWindow() {
     for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
         if ([scene isKindOfClass:[UIWindowScene class]]) {
-            for (UIWindow *window in ((UIWindowScene*)scene).windows) {
+            UIWindowScene *windowScene = (UIWindowScene*)scene;
+            for (UIWindow *window in windowScene.windows) {
                 if (window.isKeyWindow) return window;
             }
         }
@@ -86,140 +67,161 @@ UIViewController* getTopViewController() {
     return vc;
 }
 
-// ========== ПРОВЕРКА ФУНКЦИЙ ==========
-BOOL areFunctionsValid() {
-    return Players_TryGetPlayer != NULL &&
-           PlayerStatsTracker_GetPlayersInMatch != NULL &&
-           NetworkPlayer_get_IsMine != NULL &&
-           NetworkPlayer_IsAllyOfLocalPlayer != NULL &&
-           NetworkPlayer_get_IsDead != NULL &&
-           NetworkPlayer_get_Health != NULL &&
-           NetworkPlayer_get_Transform != NULL &&
-           Transform_get_position != NULL &&
-           Camera_get_main != NULL &&
-           Camera_WorldToScreenPoint != NULL;
+// ========== ЛОГИРОВАНИЕ ==========
+void addLog(NSString *text) {
+    if (!logText) logText = [[NSMutableString alloc] init];
+    [logText appendFormat:@"%@\n", text];
+    NSLog(@"%@", text);
 }
 
-// ========== ИНИЦИАЛИЗАЦИЯ ==========
-void initFunctions() {
-    uint64_t base = getBaseAddress();
-    NSLog(@"[Aimbot] Base: 0x%llx", base);
-    
-    if (base == 0) {
-        NSLog(@"[Aimbot] ❌ Base address not found");
+void showLogWindow() {
+    if (logWindow) {
+        logWindow.hidden = NO;
         return;
     }
     
-    Players_TryGetPlayer = (t_Players_TryGetPlayer)getRealPtr(RVA_Players_TryGetPlayer);
-    PlayerStatsTracker_GetPlayersInMatch = (t_PlayerStatsTracker_GetPlayersInMatch)getRealPtr(RVA_PlayerStatsTracker_GetPlayersInMatch);
-    NetworkPlayer_get_IsMine = (t_NetworkPlayer_get_IsMine)getRealPtr(RVA_NetworkPlayer_get_IsMine);
-    NetworkPlayer_IsAllyOfLocalPlayer = (t_NetworkPlayer_IsAllyOfLocalPlayer)getRealPtr(RVA_NetworkPlayer_IsAllyOfLocalPlayer);
-    NetworkPlayer_get_IsDead = (t_NetworkPlayer_get_IsDead)getRealPtr(RVA_NetworkPlayer_get_IsDead);
-    NetworkPlayer_get_Health = (t_NetworkPlayer_get_Health)getRealPtr(RVA_NetworkPlayer_get_Health);
-    NetworkPlayer_get_Transform = (t_NetworkPlayer_get_Transform)getRealPtr(RVA_NetworkPlayer_get_Transform);
-    Transform_get_position = (t_Transform_get_position)getRealPtr(RVA_Transform_get_position);
-    Camera_get_main = (t_Camera_get_main)getRealPtr(RVA_Camera_get_main);
-    Camera_WorldToScreenPoint = (t_Camera_WorldToScreenPoint)getRealPtr(RVA_Camera_WorldToScreenPoint);
+    logWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    logWindow.windowLevel = UIWindowLevelAlert + 2;
+    logWindow.backgroundColor = [UIColor colorWithWhite:0 alpha:0.9];
     
-    if (areFunctionsValid()) {
-        NSLog(@"[Aimbot] ✅ All functions loaded");
-    } else {
-        NSLog(@"[Aimbot] ❌ Some functions missing");
+    UITextView *textView = [[UITextView alloc] initWithFrame:CGRectMake(20, 60, logWindow.bounds.size.width-40, logWindow.bounds.size.height-150)];
+    textView.backgroundColor = [UIColor blackColor];
+    textView.textColor = [UIColor greenColor];
+    textView.font = [UIFont fontWithName:@"Courier" size:12];
+    textView.text = logText;
+    textView.editable = NO;
+    textView.layer.cornerRadius = 10;
+    [logWindow addSubview:textView];
+    
+    UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    copyBtn.frame = CGRectMake(20, logWindow.bounds.size.height-80, 100, 40);
+    copyBtn.backgroundColor = [UIColor systemBlueColor];
+    copyBtn.layer.cornerRadius = 10;
+    [copyBtn setTitle:@"📋 Копировать" forState:UIControlStateNormal];
+    [copyBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [copyBtn addTarget:self action:@selector(copyLog) forControlEvents:UIControlEventTouchUpInside];
+    [logWindow addSubview:copyBtn];
+    
+    UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    closeBtn.frame = CGRectMake(logWindow.bounds.size.width-120, logWindow.bounds.size.height-80, 100, 40);
+    closeBtn.backgroundColor = [UIColor systemRedColor];
+    closeBtn.layer.cornerRadius = 10;
+    [closeBtn setTitle:@"❌ Закрыть" forState:UIControlStateNormal];
+    [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [closeBtn addTarget:self action:@selector(closeLogWindow) forControlEvents:UIControlEventTouchUpInside];
+    [logWindow addSubview:closeBtn];
+    
+    [logWindow makeKeyAndVisible];
+}
+
+void copyLog() {
+    UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
+    pasteboard.string = logText;
+    
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"✅"
+                                                                   message:@"Скопировано"
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [getTopViewController() presentViewController:alert animated:YES completion:^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            [alert dismissViewControllerAnimated:YES completion:nil];
+        });
+    }];
+}
+
+void closeLogWindow() {
+    logWindow.hidden = YES;
+}
+
+// ========== СКАНИРОВАНИЕ ==========
+void scanAndShowLog() {
+    [logText setString:@""];
+    
+    addLog(@"=== IL2CPP SCAN ===");
+    addLog([NSString stringWithFormat:@"Base: 0x%llx", BASE_ADDR]);
+    addLog([NSString stringWithFormat:@"Camera.main: %p", Camera_main]);
+    addLog([NSString stringWithFormat:@"WorldToScreen: %p", Camera_WorldToScreen]);
+    addLog([NSString stringWithFormat:@"get_position: %p", Transform_get_position]);
+    addLog([NSString stringWithFormat:@"IsMine: %p", Player_IsMine]);
+    addLog([NSString stringWithFormat:@"IsDead: %p", Player_IsDead]);
+    addLog([NSString stringWithFormat:@"IsAlly: %p", Player_IsAlly]);
+    addLog([NSString stringWithFormat:@"GetHealth: %p", Player_GetHealth]);
+    addLog([NSString stringWithFormat:@"GetTransform: %p", Player_GetTransform]);
+    
+    if (Camera_main) {
+        void *cam = Camera_main();
+        addLog([NSString stringWithFormat:@"Camera instance: %p", cam]);
     }
+    
+    showLogWindow();
 }
 
 // ========== ESP VIEW ==========
 @interface ESPView : UIView
-@property (nonatomic, strong) NSArray *players;
 @end
 
 @implementation ESPView
-
 - (void)drawRect:(CGRect)rect {
     [super drawRect:rect];
     
-    if (!espEnabled || !areFunctionsValid()) return;
+    if (!espEnabled) return;
+    if (!Camera_main || !Camera_WorldToScreen || !Transform_get_position) return;
     
-    void *cam = Camera_get_main();
+    void *cam = Camera_main();
     if (!cam) return;
     
+    // Тестовая отрисовка (пока просто точка)
     CGContextRef ctx = UIGraphicsGetCurrentContext();
-    CGContextSetLineWidth(ctx, 2.0);
-    
-    for (NSValue *playerVal in self.players) {
-        void *player = [playerVal pointerValue];
-        if (!player) continue;
-        
-        @try {
-            // Пропускаем себя
-            if (NetworkPlayer_get_IsMine && NetworkPlayer_get_IsMine(player)) continue;
-            
-            // Пропускаем мёртвых
-            if (NetworkPlayer_get_IsDead && NetworkPlayer_get_IsDead(player)) continue;
-            
-            // Союзник или враг
-            BOOL isAlly = NO;
-            if (NetworkPlayer_IsAllyOfLocalPlayer) {
-                isAlly = NetworkPlayer_IsAllyOfLocalPlayer(player);
-            }
-            
-            // Получаем трансформ и позицию
-            void *transform = NetworkPlayer_get_Transform ? NetworkPlayer_get_Transform(player) : NULL;
-            if (!transform) continue;
-            
-            void *worldPos = Transform_get_position(transform);
-            if (!worldPos) continue;
-            
-            // Конвертируем в экранные координаты
-            void *screenPos = Camera_WorldToScreenPoint(cam, worldPos);
-            if (!screenPos) continue;
-            
-            // Читаем координаты (упрощённо)
-            float *pos = (float*)screenPos;
-            float x = pos[0];
-            float y = pos[1];
-            float z = pos[2];
-            
-            if (z > 0) {
-                float size = 50.0f / z;
-                CGRect playerRect = CGRectMake(x - size/2, [UIScreen mainScreen].bounds.size.height - y - size/2, size, size);
-                
-                CGContextSetStrokeColorWithColor(ctx, isAlly ? [UIColor greenColor].CGColor : [UIColor redColor].CGColor);
-                CGContextSetFillColorWithColor(ctx, isAlly ? [UIColor colorWithRed:0 green:1 blue:0 alpha:0.3].CGColor : [UIColor colorWithRed:1 green:0 blue:0 alpha:0.3].CGColor);
-                
-                CGContextFillRect(ctx, playerRect);
-                CGContextStrokeRect(ctx, playerRect);
-                
-                // Здоровье
-                if (NetworkPlayer_get_Health) {
-                    float health = NetworkPlayer_get_Health(player);
-                    NSString *text = [NSString stringWithFormat:@"%.0f", health];
-                    [text drawAtPoint:CGPointMake(x - 20, [UIScreen mainScreen].bounds.size.height - y - size/2 - 20) 
-                           withAttributes:@{NSFontAttributeName: [UIFont systemFontOfSize:12], 
-                                           NSForegroundColorAttributeName: [UIColor whiteColor]}];
-                }
-            }
-        } @catch (NSException *e) {
-            NSLog(@"[Aimbot] Exception: %@", e);
-        }
-    }
+    CGContextSetFillColorWithColor(ctx, [UIColor redColor].CGColor);
+    CGContextFillEllipseInRect(ctx, CGRectMake(100, 100, 10, 10));
 }
-
 @end
 
-// ========== ПОЛУЧЕНИЕ ИГРОКОВ ==========
-NSArray* getPlayersList() {
-    NSMutableArray *players = [NSMutableArray array];
-    
-    if (!areFunctionsValid()) return players;
-    
-    int playerCount = PlayerStatsTracker_GetPlayersInMatch();
-    NSLog(@"[Aimbot] Player count: %d", playerCount);
-    
-    // TODO: Нужно получить объект Players и вызывать TryGetPlayer
-    // Пока возвращаем пустой массив для теста
-    
-    return players;
+// ========== ИНИЦИАЛИЗАЦИЯ ==========
+__attribute__((constructor))
+static void init() {
+    @autoreleasepool {
+        logText = [[NSMutableString alloc] init];
+        
+        Camera_main = (t_get_main_camera)getRealPtr(RVA_Camera_get_main);
+        Camera_WorldToScreen = (t_world_to_screen)getRealPtr(RVA_Camera_WorldToScreen);
+        Transform_get_position = (t_get_position)getRealPtr(RVA_Transform_get_position);
+        Player_IsMine = (t_is_mine)getRealPtr(RVA_Player_IsMine);
+        Player_IsDead = (t_is_dead)getRealPtr(RVA_Player_IsDead);
+        Player_IsAlly = (t_is_ally)getRealPtr(RVA_Player_IsAlly);
+        Player_GetHealth = (t_get_health)getRealPtr(RVA_Player_GetHealth);
+        Player_GetTransform = (t_get_transform)getRealPtr(RVA_Player_GetTransform);
+        
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            UIWindow *mainWindow = getMainWindow();
+            if (!mainWindow) return;
+            
+            UIButton *menuBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+            menuBtn.frame = CGRectMake(20, 150, 60, 60);
+            menuBtn.backgroundColor = [UIColor systemBlueColor];
+            menuBtn.layer.cornerRadius = 30;
+            [menuBtn setTitle:@"M" forState:UIControlStateNormal];
+            [menuBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+            [menuBtn addTarget:self action:@selector(showMenu) forControlEvents:UIControlEventTouchUpInside];
+            [mainWindow addSubview:menuBtn];
+            
+            overlayWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+            overlayWindow.windowLevel = UIWindowLevelAlert + 1;
+            overlayWindow.backgroundColor = [UIColor clearColor];
+            overlayWindow.userInteractionEnabled = NO;
+            
+            ESPView *espView = [[ESPView alloc] initWithFrame:[UIScreen mainScreen].bounds];
+            espView.backgroundColor = [UIColor clearColor];
+            [overlayWindow addSubview:espView];
+            
+            [overlayWindow makeKeyAndVisible];
+            
+            [NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *t){
+                if (espEnabled) {
+                    [espView setNeedsDisplay];
+                }
+            }];
+        });
+    }
 }
 
 // ========== МЕНЮ ==========
@@ -234,26 +236,16 @@ void showMenu() {
         espEnabled = !espEnabled;
     }]];
     
-    [alert addAction:[UIAlertAction actionWithTitle:@"📊 Тест функций"
+    [alert addAction:[UIAlertAction actionWithTitle:@"🔍 Сканировать"
                                                style:UIAlertActionStyleDefault
                                              handler:^(UIAlertAction *a){
-        NSString *status = areFunctionsValid() ? @"✅ Функции загружены" : @"❌ Функции не загружены";
-        UIAlertController *info = [UIAlertController alertControllerWithTitle:@"Статус" message:status preferredStyle:UIAlertControllerStyleAlert];
-        [info addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-        [getTopViewController() presentViewController:info animated:YES completion:nil];
+        scanAndShowLog();
     }]];
     
-    [alert addAction:[UIAlertAction actionWithTitle:@"📊 Обновить игроков"
+    [alert addAction:[UIAlertAction actionWithTitle:@"📋 Показать лог"
                                                style:UIAlertActionStyleDefault
                                              handler:^(UIAlertAction *a){
-        playersList = [getPlayersList() mutableCopy];
-        [(ESPView*)overlayWindow.subviews.firstObject setPlayers:playersList];
-        [overlayWindow.subviews.firstObject setNeedsDisplay];
-        
-        NSString *msg = [NSString stringWithFormat:@"Найдено: %lu", (unsigned long)playersList.count];
-        UIAlertController *info = [UIAlertController alertControllerWithTitle:@"✅" message:msg preferredStyle:UIAlertControllerStyleAlert];
-        [info addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-        [getTopViewController() presentViewController:info animated:YES completion:nil];
+        showLogWindow();
     }]];
     
     [alert addAction:[UIAlertAction actionWithTitle:@"Отмена"
@@ -261,50 +253,4 @@ void showMenu() {
                                              handler:nil]];
     
     [getTopViewController() presentViewController:alert animated:YES completion:nil];
-}
-
-// ========== ЗАГРУЗКА ==========
-__attribute__((constructor))
-static void init() {
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        initFunctions();
-        
-        UIWindow *mainWindow = getMainWindow();
-        if (!mainWindow) return;
-        
-        // Кнопка меню
-        UIButton *menuBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        menuBtn.frame = CGRectMake(20, 150, 60, 60);
-        menuBtn.backgroundColor = [UIColor systemBlueColor];
-        menuBtn.layer.cornerRadius = 30;
-        [menuBtn setTitle:@"M" forState:UIControlStateNormal];
-        [menuBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        [menuBtn addTarget:[NSObject class] action:@selector(showMenu) forControlEvents:UIControlEventTouchUpInside];
-        [mainWindow addSubview:menuBtn];
-        
-        // ESP окно
-        overlayWindow = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-        overlayWindow.windowLevel = UIWindowLevelAlert + 1;
-        overlayWindow.backgroundColor = [UIColor clearColor];
-        overlayWindow.userInteractionEnabled = NO;
-        
-        ESPView *espView = [[ESPView alloc] initWithFrame:[UIScreen mainScreen].bounds];
-        espView.backgroundColor = [UIColor clearColor];
-        [overlayWindow addSubview:espView];
-        [overlayWindow makeKeyAndVisible];
-        
-        // Таймер обновления
-        [NSTimer scheduledTimerWithTimeInterval:1.0 repeats:YES block:^(NSTimer *t){
-            if (espEnabled && areFunctionsValid()) {
-                playersList = [getPlayersList() mutableCopy];
-                [(ESPView*)overlayWindow.subviews.firstObject setPlayers:playersList];
-                [overlayWindow.subviews.firstObject setNeedsDisplay];
-            }
-        }];
-        
-        NSString *status = areFunctionsValid() ? @"✅ Загружен" : @"❌ Ошибка загрузки";
-        UIAlertController *ready = [UIAlertController alertControllerWithTitle:@"Aimbot" message:status preferredStyle:UIAlertControllerStyleAlert];
-        [ready addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-        [getTopViewController() presentViewController:ready animated:YES completion:nil];
-    });
 }
