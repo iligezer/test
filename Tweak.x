@@ -3,61 +3,14 @@
 
 // ==================== ОБЪЯВЛЕНИЯ КЛАССОВ ====================
 
-// BehaviourInject
+// BehaviourInject - только объявления, реализации нет
 @interface Context : NSObject
 + (instancetype)create:(NSString *)name;
 - (id)resolve:(Class)type;
 @end
 
-// Основные классы игры
-@interface FirstPersonController : NSObject
-- (id)RootPoint;
-@end
-
-@interface INetworkPlayer : NSObject
-- (BOOL)IsMine;
-- (BOOL)IsDead;
-- (BOOL)IsAllyOfLocalPlayer;
-- (id)Transform;
-- (float)GetCurrentHealth;
-- (id)QuarkPlayer;
-@end
-
-@interface QuarkRoomPlayer : NSObject
-- (BOOL)IsBot;
-- (NSString *)Username;
-@end
-
-@interface Camera : NSObject
-+ (instancetype)main;
-- (id)WorldToScreenPoint:(id)point;
-@end
-
-@interface Transform : NSObject
-// Убираем прямой метод position, будем использовать valueForKey:
-@end
-
-@interface Vector3 : NSObject
-// Убираем прямые методы x,y,z, будем использовать valueForKey:
-@end
-
-@interface Players : NSObject
-- (id)All;
-- (BOOL)TryGetCurrentController:(id *)controller;
-@end
-
-@interface GameManager : NSObject
-+ (instancetype)sharedInstance;
-- (id)getPlayers;
-- (id)players;
-@end
-
-@interface RoomController : NSObject
-+ (instancetype)instance;
-+ (instancetype)sharedInstance;
-- (id)getPlayers;
-- (id)players;
-@end
+// Мы НЕ ОБЪЯВЛЯЕМ классы типа Camera, Transform и т.д.
+// Вместо этого везде используем objc_getClass и id
 
 // ==================== ПЛАВАЮЩАЯ КНОПКА ====================
 
@@ -316,20 +269,26 @@ static UIViewController *logViewController = nil;
                 if (hasLocal && local) {
                     [self addLog:@"✅ TryGetCurrentController работает, local получен"];
                     
-                    Camera *cam = [Camera main];
-                    if (cam) {
-                        [self addLog:@"✅ Camera.main работает"];
-                        
-                        // Проверяем позицию через valueForKey
-                        id localRoot = [local valueForKey:@"RootPoint"];
-                        if (localRoot) {
-                            id localPos = [localRoot valueForKey:@"position"];
-                            if (localPos) {
-                                [self addLog:@"✅ local позиция получена через valueForKey"];
+                    // Получаем камеру через objc_getClass
+                    Class cameraClass = objc_getClass("Camera");
+                    if (cameraClass) {
+                        id cam = [cameraClass main];
+                        if (cam) {
+                            [self addLog:@"✅ Camera.main работает"];
+                            
+                            // Проверяем позицию через valueForKey
+                            id localRoot = [local valueForKey:@"RootPoint"];
+                            if (localRoot) {
+                                id localPos = [localRoot valueForKey:@"position"];
+                                if (localPos) {
+                                    [self addLog:@"✅ local позиция получена через valueForKey"];
+                                }
                             }
+                        } else {
+                            [self addLog:@"❌ Camera.main вернул nil"];
                         }
                     } else {
-                        [self addLog:@"❌ Camera.main НЕ работает"];
+                        [self addLog:@"❌ Camera class not found"];
                     }
                 } else {
                     [self addLog:@"❌ TryGetCurrentController вернул NO"];
@@ -576,7 +535,11 @@ static UIViewController *logViewController = nil;
             return;
         }
         
-        Camera *mainCamera = [Camera main];
+        // Получаем камеру через objc_getClass
+        Class cameraClass = objc_getClass("Camera");
+        if (!cameraClass) return;
+        
+        id mainCamera = [cameraClass main];
         if (!mainCamera) return;
         
         NSArray *allPlayers = nil;
