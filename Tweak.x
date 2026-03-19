@@ -7,6 +7,12 @@ static UIButton *g_floatButton = nil;
 static BOOL g_menuVisible = NO;
 static UIView *g_menuView = nil;
 
+#pragma mark - Действия (объявляем заранее)
+
+void toggleMenu();
+void testAction();
+void dragButton(UIPanGestureRecognizer *gesture);
+
 #pragma mark - Создание плавающей кнопки
 
 void createFloatingButton() {
@@ -36,14 +42,14 @@ void createFloatingButton() {
         [g_floatButton setTitle:@"🎯" forState:UIControlStateNormal];
         g_floatButton.titleLabel.font = [UIFont systemFontOfSize:24];
         
-        // Добавляем действие
-        [g_floatButton addTarget:[self class] 
+        // Добавляем действие (nil вместо self)
+        [g_floatButton addTarget:nil 
                           action:@selector(toggleMenu) 
                 forControlEvents:UIControlEventTouchUpInside];
         
         // Добавляем возможность перетаскивания
         UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] 
-                                       initWithTarget:[self class] 
+                                       initWithTarget:nil 
                                        action:@selector(dragButton:)];
         [g_floatButton addGestureRecognizer:pan];
         
@@ -70,7 +76,7 @@ void createFloatingButton() {
         [testBtn setTitle:@"Test" forState:UIControlStateNormal];
         testBtn.backgroundColor = [UIColor systemGray5Color];
         testBtn.layer.cornerRadius = 5;
-        [testBtn addTarget:[self class] 
+        [testBtn addTarget:nil 
                     action:@selector(testAction) 
           forControlEvents:UIControlEventTouchUpInside];
         [g_menuView addSubview:testBtn];
@@ -81,7 +87,7 @@ void createFloatingButton() {
         [closeBtn setTitle:@"Close" forState:UIControlStateNormal];
         closeBtn.backgroundColor = [UIColor systemGray5Color];
         closeBtn.layer.cornerRadius = 5;
-        [closeBtn addTarget:[self class] 
+        [closeBtn addTarget:nil 
                      action:@selector(toggleMenu) 
            forControlEvents:UIControlEventTouchUpInside];
         [g_menuView addSubview:closeBtn];
