@@ -83,17 +83,19 @@ void scanClasses() {
         self.layer.borderColor = [UIColor whiteColor].CGColor;
         self.userInteractionEnabled = YES;
         
-        // Добавляем обработчики жестов
         UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleTap)];
         [self addGestureRecognizer:tap];
         
         UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
         [self addGestureRecognizer:pan];
+        
+        writeLog(@"🔵 Кнопка создана, frame: %@", NSStringFromCGRect(self.frame));
     }
     return self;
 }
 
 - (void)handleTap {
+    writeLog(@"🔵 Кнопка нажата (жест)");
     if (self.actionBlock) {
         self.actionBlock();
     }
@@ -112,7 +114,7 @@ void scanClasses() {
 @end
 
 // ============================================
-// ПРОЗРАЧНОЕ ОКНО (ПРОПУСКАЕТ ВСЁ, КРОМЕ КНОПКИ)
+// ПРОЗРАЧНОЕ ОКНО
 // ============================================
 @interface PassthroughWindow : UIWindow
 @property (nonatomic, weak) FloatButton *floatButton;
@@ -121,14 +123,15 @@ void scanClasses() {
 @implementation PassthroughWindow
 
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
-    // Проверяем, попадает ли точка в область кнопки
+    // Проверяем кнопку
     if (self.floatButton && !self.floatButton.hidden && self.floatButton.alpha > 0) {
         CGPoint buttonPoint = [self convertPoint:point toView:self.floatButton];
         if ([self.floatButton pointInside:buttonPoint withEvent:event]) {
+            writeLog(@"👆 Касание по кнопке");
             return self.floatButton;
         }
     }
-    // Если точка не в кнопке, возвращаем nil — касание пойдёт в окно игры
+    // Всё остальное — пропускаем в игру
     return nil;
 }
 
@@ -155,18 +158,20 @@ void scanClasses() {
 - (void)setupUI {
     writeLog(@"Создание интерфейса...");
     
-    // Создаём окно с низким уровнем, чтобы не блокировать игру
+    // Создаём окно поверх игры
     self.window = [[PassthroughWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
-    self.window.windowLevel = UIWindowLevelNormal - 1; // чуть ниже, чем у игры
+    self.window.windowLevel = UIWindowLevelNormal + 100; // гарантированно выше игры
     self.window.backgroundColor = [UIColor clearColor];
     self.window.hidden = NO;
+    writeLog(@"Окно создано, уровень: %f", self.window.windowLevel);
     
     // Создаём кнопку
     self.floatButton = [[FloatButton alloc] init];
     self.window.floatButton = self.floatButton;
     [self.window addSubview:self.floatButton];
+    writeLog(@"Кнопка добавлена в окно");
     
-    // Действие при нажатии на кнопку
+    // Действие на нажатие
     __weak typeof(self) weakSelf = self;
     [self.floatButton setAction:^{
         __strong typeof(weakSelf) strongSelf = weakSelf;
@@ -177,7 +182,7 @@ void scanClasses() {
         }
     }];
     
-    writeLog(@"✅ Интерфейс создан. Нажми синюю кнопку.");
+    writeLog(@"✅ Интерфейс создан. Жми синюю кнопку.");
 }
 
 @end
