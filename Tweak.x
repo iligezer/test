@@ -47,6 +47,7 @@ static NSMutableArray *safeRegions = nil;
 + (void)addLog:(NSString*)text;
 + (void)findSafeRegions;
 + (void)scanForPlayers;
++ (void)resetScan;
 + (UIWindow*)mainWindow;
 + (void)handlePan:(UIPanGestureRecognizer*)gesture;
 @end
@@ -94,8 +95,8 @@ static NSMutableArray *safeRegions = nil;
 }
 
 + (void)showMenu {
-    CGFloat menuWidth = 260;
-    CGFloat menuHeight = 300;
+    CGFloat menuWidth = 280;
+    CGFloat menuHeight = 350;
     CGFloat menuX = ([UIScreen mainScreen].bounds.size.width - menuWidth) / 2;
     CGFloat menuY = ([UIScreen mainScreen].bounds.size.height - menuHeight) / 2;
     
@@ -110,32 +111,45 @@ static NSMutableArray *safeRegions = nil;
     title.textAlignment = NSTextAlignmentCenter;
     [menuWindow addSubview:title];
     
+    // Кнопка 1: СБРОС (нажать в меню перед матчем)
+    UIButton *resetBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    resetBtn.frame = CGRectMake(20, 50, menuWidth-40, 40);
+    resetBtn.backgroundColor = [UIColor systemOrangeColor];
+    [resetBtn setTitle:@"🔄 СБРОС (ПЕРЕД МАТЧЕМ)" forState:UIControlStateNormal];
+    [resetBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    [resetBtn addTarget:self action:@selector(resetScan) forControlEvents:UIControlEventTouchUpInside];
+    [menuWindow addSubview:resetBtn];
+    
+    // Кнопка 2: НАЙТИ РЕГИОНЫ (после загрузки карты)
     UIButton *findRegionsBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    findRegionsBtn.frame = CGRectMake(20, 50, menuWidth-40, 40);
+    findRegionsBtn.frame = CGRectMake(20, 100, menuWidth-40, 40);
     findRegionsBtn.backgroundColor = [UIColor systemBlueColor];
     [findRegionsBtn setTitle:@"🔍 НАЙТИ РЕГИОНЫ" forState:UIControlStateNormal];
     [findRegionsBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [findRegionsBtn addTarget:self action:@selector(findSafeRegions) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:findRegionsBtn];
     
+    // Кнопка 3: ИСКАТЬ ИГРОКОВ (после регионов)
     UIButton *scanPlayersBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    scanPlayersBtn.frame = CGRectMake(20, 100, menuWidth-40, 40);
+    scanPlayersBtn.frame = CGRectMake(20, 150, menuWidth-40, 40);
     scanPlayersBtn.backgroundColor = [UIColor systemPurpleColor];
     [scanPlayersBtn setTitle:@"🎯 ИСКАТЬ ИГРОКОВ" forState:UIControlStateNormal];
     [scanPlayersBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [scanPlayersBtn addTarget:self action:@selector(scanForPlayers) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:scanPlayersBtn];
     
+    // Кнопка 4: ПОКАЗАТЬ ЛОГ
     UIButton *logBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    logBtn.frame = CGRectMake(20, 150, menuWidth-40, 40);
+    logBtn.frame = CGRectMake(20, 200, menuWidth-40, 40);
     logBtn.backgroundColor = [UIColor systemGrayColor];
     [logBtn setTitle:@"📋 ПОКАЗАТЬ ЛОГ" forState:UIControlStateNormal];
     [logBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     [logBtn addTarget:self action:@selector(showLogWindow) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:logBtn];
     
+    // Кнопка 5: ЗАКРЫТЬ
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(20, 200, menuWidth-40, 40);
+    closeBtn.frame = CGRectMake(20, 250, menuWidth-40, 40);
     closeBtn.backgroundColor = [UIColor systemRedColor];
     [closeBtn setTitle:@"✖️ ЗАКРЫТЬ" forState:UIControlStateNormal];
     [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
@@ -152,7 +166,19 @@ static NSMutableArray *safeRegions = nil;
     [menuWindow resignKeyWindow];
 }
 
-// ========== ШАГ 1: НАЙТИ БЕЗОПАСНЫЕ РЕГИОНЫ ==========
+// ========== СБРОС (нажать В МЕНЮ перед матчем) ==========
++ (void)resetScan {
+    [safeRegions removeAllObjects];
+    [foundPlayers removeAllObjects];
+    [logText setString:@""];
+    [self addLog:@"🔄 ПАМЯТЬ ОЧИЩЕНА"];
+    [self addLog:@"1. Зайди в матч"];
+    [self addLog:@"2. Нажми НАЙТИ РЕГИОНЫ"];
+    [self addLog:@"3. Нажми ИСКАТЬ ИГРОКОВ"];
+    [self showLogWindow];
+}
+
+// ========== ШАГ 1: НАЙТИ БЕЗОПАСНЫЕ РЕГИОНЫ (в матче) ==========
 + (void)findSafeRegions {
     [logText setString:@""];
     [self addLog:@"🔍 ПОИСК БЕЗОПАСНЫХ РЕГИОНОВ..."];
@@ -174,13 +200,11 @@ static NSMutableArray *safeRegions = nil;
         
         regionCount++;
         
-        // Проверяем, можно ли читать
+        // Только читаемые регионы
         if (info.protection & VM_PROT_READ) {
-            
-            // Проверяем размер (не слишком маленький/большой)
             if (size >= 4096 && size <= 20*1024*1024) {
                 
-                // Пробуем прочитать первые 4 байта для проверки
+                // Проверяем, читается ли
                 uint32_t test = 0;
                 vm_size_t test_read = 0;
                 kern_return_t kr = vm_read_overwrite(task, address, 4, (vm_address_t)&test, &test_read);
@@ -191,49 +215,36 @@ static NSMutableArray *safeRegions = nil;
                         @"address": @(address),
                         @"size": @(size)
                     }];
-                    
-                    if (safeCount <= 20) {
-                        [self addLog:[NSString stringWithFormat:@"✅ Регион %d: 0x%llx - %llu KB", 
-                                      safeCount, address, size/1024]];
-                    }
                 }
             }
         }
         
         address += size;
-        
         if (regionCount % 100 == 0) usleep(1000);
     }
     
-    [self addLog:[NSString stringWithFormat:@"\n📊 Всего регионов: %d", regionCount]];
-    [self addLog:[NSString stringWithFormat:@"📊 Безопасных регионов: %d", safeCount]];
-    [self addLog:@"✅ Можно искать игроков"];
-    
+    [self addLog:[NSString stringWithFormat:@"📊 Найдено безопасных регионов: %d", safeCount]];
+    [self addLog:@"✅ Теперь можно искать игроков"];
     [self showLogWindow];
 }
 
-// ========== ШАГ 2: ИСКАТЬ ИГРОКОВ В БЕЗОПАСНЫХ РЕГИОНАХ ==========
+// ========== ШАГ 2: ИСКАТЬ ИГРОКОВ (только в безопасных регионах) ==========
 + (void)scanForPlayers {
     if (!safeRegions || safeRegions.count == 0) {
-        [self addLog:@"❌ Сначала найди безопасные регионы"];
+        [self addLog:@"❌ Сначала найди регионы (кнопка НАЙТИ РЕГИОНЫ)"];
         [self showLogWindow];
         return;
     }
     
-    [logText setString:@""];
-    [self addLog:@"🎯 ПОИСК ИГРОКОВ В БЕЗОПАСНЫХ РЕГИОНАХ..."];
-    
+    [self addLog:@"🎯 ПОИСК ИГРОКОВ..."];
     foundPlayers = [NSMutableArray array];
     task_t task = mach_task_self();
-    
-    int totalScanned = 0;
     int candidates = 0;
     
     for (NSDictionary *region in safeRegions) {
         vm_address_t addr = [region[@"address"] unsignedLongLongValue];
         vm_size_t size = [region[@"size"] unsignedLongValue];
         
-        // Читаем весь регион
         uint8_t *buffer = malloc(size);
         vm_size_t data_read = 0;
         
@@ -241,27 +252,20 @@ static NSMutableArray *safeRegions = nil;
         
         if (kr == KERN_SUCCESS && data_read == size) {
             
-            // Ищем координаты (три float подряд)
             for (int i = 0; i < data_read - 64; i += 4) {
-                totalScanned++;
                 
                 float *x = (float*)(buffer + i);
                 float *y = (float*)(buffer + i + 4);
                 float *z = (float*)(buffer + i + 8);
                 
-                // Проверяем на валидность
                 if (isfinite(*x) && isfinite(*y) && isfinite(*z) &&
                     fabs(*x) < 10000 && fabs(*y) < 10000 && fabs(*z) < 10000) {
                     
-                    // Ищем здоровье рядом
                     float health = 0;
-                    unsigned long healthAddr = 0;
-                    
                     for (int off = -0x40; off < 0x40; off += 4) {
                         float *h = (float*)(buffer + i + off);
                         if (isfinite(*h) && *h > 0 && *h < 200) {
                             health = *h;
-                            healthAddr = addr + i + off;
                             break;
                         }
                     }
@@ -269,16 +273,15 @@ static NSMutableArray *safeRegions = nil;
                     if (health > 0) {
                         candidates++;
                         
-                        // Ищем имя (UTF-16 для русского)
+                        // Ищем имя (UTF-16)
                         NSString *name = nil;
                         for (int off = -0x80; off < 0x80; off += 2) {
                             uint16_t *chars = (uint16_t*)(buffer + i + off);
                             
                             int validChars = 0;
                             for (int j = 0; j < 16; j++) {
-                                if (chars[j] > 0x20 && chars[j] < 0x7F) { // английские
-                                    validChars++;
-                                } else if (chars[j] >= 0x0400 && chars[j] <= 0x04FF) { // русские
+                                if ((chars[j] > 0x20 && chars[j] < 0x7F) || // английские
+                                    (chars[j] >= 0x0400 && chars[j] <= 0x04FF)) { // русские
                                     validChars++;
                                 } else if (chars[j] == 0) {
                                     break;
@@ -299,33 +302,23 @@ static NSMutableArray *safeRegions = nil;
                         p.x = *x;
                         p.y = *y;
                         p.z = *z;
-                        p.address = healthAddr;
                         p.name = name;
                         
                         [foundPlayers addObject:p];
                         
-                        [self addLog:[NSString stringWithFormat:@"\n🎯 КАНДИДАТ #%d:", candidates]];
-                        [self addLog:[NSString stringWithFormat:@"   Координаты: (%.1f, %.1f, %.1f)", p.x, p.y, p.z]];
-                        [self addLog:[NSString stringWithFormat:@"   Здоровье: %.1f", p.health]];
-                        [self addLog:[NSString stringWithFormat:@"   Адрес: 0x%lx", p.address]];
-                        if (p.name) [self addLog:[NSString stringWithFormat:@"   Имя: %@", p.name]];
+                        [self addLog:[NSString stringWithFormat:@"🎯 Игрок %d: (%.0f,%.0f,%.0f) HP:%.0f %@",
+                                      candidates, p.x, p.y, p.z, p.health, p.name ?: @""]];
                         
-                        // Пропускаем структуру
-                        i += 0x80;
+                        i += 0x80; // пропускаем структуру
                     }
                 }
             }
         }
-        
         free(buffer);
-        
-        // Пауза между регионами
         usleep(1000);
     }
     
-    [self addLog:[NSString stringWithFormat:@"\n📊 Просканировано адресов: %d", totalScanned]];
-    [self addLog:[NSString stringWithFormat:@"📊 Найдено кандидатов: %d", candidates]];
-    
+    [self addLog:[NSString stringWithFormat:@"\n📊 Найдено игроков: %d", candidates]];
     [self showLogWindow];
 }
 
@@ -420,6 +413,7 @@ static void init() {
             [mainWindow addSubview:floatingButton];
             
             [ButtonHandler addLog:@"✅ Твик загружен"];
+            [ButtonHandler addLog:@"⚡ Нажми СБРОС перед матчем"];
         });
     }
 }
