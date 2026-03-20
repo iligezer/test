@@ -1,26 +1,144 @@
 #import <UIKit/UIKit.h>
+#import <mach-o/dyld.h>
 #import <mach/mach.h>
 #import <objc/runtime.h>
 
 // ========== НАСТРОЙКИ ==========
-#define SCAN_START 0x240000000
-#define SCAN_END   0x290000000
+#define MY_ID 71068432
+#define STRUCT_SIZE 0x1000 // размер структуры игрока
+
+// Смещения внутри структуры (из твоих находок)
+#define OFFSET_ID        0x08
+#define OFFSET_GOLD      0x0C
+#define OFFSET_SILVER    0x10
+#define OFFSET_HEALTH    0x28
+#define OFFSET_X         0x50  // предположительно, нужно уточнить
+#define OFFSET_Y         0x54  // предположительно, нужно уточнить
+#define OFFSET_Z         0x58  // предположительно, нужно уточнить
+#define OFFSET_NAME_PTR  0x60  // указатель на имя (если есть)
+
+// RVA функций (из твоих скриншотов)
+#define RVA_Camera_get_main         0x445BAF8
+#define RVA_Camera_WorldToScreen    0x445AD5C
+
+// ========== ТИПЫ ФУНКЦИЙ ==========
+typedef void *(*t_Camera_get_main)();
+typedef void *(*t_Camera_WorldToScreen)(void *camera, void *worldPos);
+
+static t_Camera_get_main Camera_get_main = NULL;
+static t_Camera_WorldToScreen Camera_WorldToScreen = NULL;
 
 static NSMutableString *logText = nil;
+static UIWindow *overlayWindow = nil;
 static UIWindow *logWindow = nil;
 static UIButton *floatingButton = nil;
-static NSMutableArray *addresses = nil;
-static NSMutableArray *values = nil;
-static BOOL isScanning = NO;
+static NSMutableArray *players = nil;
+static uint64_t baseAddr = 0;
 
+// ========== МОДЕЛЬ ИГРОКА ==========
+@interface Player : NSObject
+@property (assign) uint64_t address;      // адрес структуры
+@property (assign) int playerId;           // ID игрока
+@property (assign) int gold;
+@property (assign) int silver;
+@property (assign) float health;
+@property (assign) float x, y, z;
+@property (strong) NSString *name;
+@property (assign) BOOL isLocal;           // свой игрок
+@end
+
+@implementation Player
+- (NSString *)description {
+    return [NSString stringWithFormat:@"ID:%d HP:%.1f (%.1f,%.1f,%.1f) %@%@",
+            self.playerId, self.health, self.x, self.y, self.z,
+            self.name ?: @"", self.isLocal ? @" 👤" : @""];
+}
+@end
+
+// ========== ESP VIEW ==========
+@interface ESPView : UIView
+@end
+
+@implementation ESPView
+- (void)drawRect:(CGRect)rect {
+    [super drawRect:rect];
+    
+    if (!players || players.count == 0) return;
+    if (!Camera_get_main || !Camera_WorldToScreen) return;
+    
+    void *cam = Camera_get_main();
+    if (!cam) return;
+    
+    CGContextRef ctx = UIGraphicsGetCurrentContext();
+    
+    for (Player *p in players) {
+        if (p.health <= 0) continue; // не рисуем мертвых
+        if (p.isLocal) continue;     // не рисуем себя
+        
+        float position[3] = {p.x, p.y, p.z};
+        void *screenPos = Camera_WorldToScreen(cam, position);
+        
+        if (screenPos) {
+            float *screen = (float*)screenPos;
+            float screenX = screen[0] * rect.size.width;
+            float screenY = screen[1] * rect.size.height;
+            
+            if (screenX < 0 || screenX > rect.size.width ||
+                screenY < 0 || screenY > rect.size.height) continue;
+            
+            // Цвет (красный для врагов)
+            UIColor *color = [UIColor redColor];
+            CGContextSetFillColorWithColor(ctx, color.CGColor);
+            CGContextFillEllipseInRect(ctx, CGRectMake(screenX - 5, screenY - 5, 10, 10));
+            
+            // Информация над игроком
+            NSString *info = [NSString stringWithFormat:@"HP:%.0f", p.health];
+            [info drawAtPoint:CGPointMake(screenX + 10, screenY - 15) withAttributes:@{
+                NSFontAttributeName: [UIFont boldSystemFontOfSize:12],
+                NSForegroundColorAttributeName: UIColor.whiteColor,
+                NSStrokeColorAttributeName: UIColor.blackColor,
+                NSStrokeWidthAttributeName: @-2
+            }];
+        }
+    }
+}
+@end
+
+// ========== ПОЛУЧЕНИЕ БАЗОВОГО АДРЕСА ==========
+uint64_t getBaseAddress() {
+    for (uint32_t i = 0; i < _dyld_image_count(); i++) {
+        const char *name = _dyld_get_image_name(i);
+        if (name && strstr(name, "ModernStrike")) {
+            return (uint64_t)_dyld_get_image_header(i);
+        }
+    }
+    return 0;
+}
+
+void* getRealPtr(uint64_t rva) {
+    uint64_t base = getBaseAddress();
+    return base ? (void*)(base + rva) : NULL;
+}
+
+// ========== ЧТЕНИЕ ПАМЯТИ ==========
+uint32_t readU32(uint64_t addr) {
+    uint32_t val = 0;
+    vm_size_t read;
+    vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, &read);
+    return val;
+}
+
+float readFloat(uint64_t addr) {
+    float val = 0;
+    vm_size_t read;
+    vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, &read);
+    return val;
+}
+
+// ========== ИНТЕРФЕЙС ==========
 @interface ButtonHandler : NSObject
 + (void)showMenu;
-+ (void)startFullScan;
-+ (void)filterChanged;
-+ (void)filterUnchanged;
-+ (void)showResults;
-+ (void)showMemoryAround;
-+ (void)resetScan;
++ (void)scanPlayers;
 + (void)addLog:(NSString*)text;
 + (void)showLog;
 + (UIWindow*)mainWindow;
@@ -33,7 +151,7 @@ static BOOL isScanning = NO;
     self = [super initWithFrame:frame];
     self.backgroundColor = [UIColor systemBlueColor];
     self.layer.cornerRadius = frame.size.width/2;
-    [self setTitle:@"🔍" forState:UIControlStateNormal];
+    [self setTitle:@"⚡" forState:UIControlStateNormal];
     [self addTarget:[ButtonHandler class] action:@selector(showMenu) forControlEvents:UIControlEventTouchUpInside];
     return self;
 }
@@ -52,7 +170,7 @@ static BOOL isScanning = NO;
 }
 
 + (void)showMenu {
-    CGFloat w = 260, h = 350;
+    CGFloat w = 260, h = 300;
     UIWindow *menu = [[UIWindow alloc] initWithFrame:CGRectMake((UIScreen.mainScreen.bounds.size.width-w)/2, (UIScreen.mainScreen.bounds.size.height-h)/2, w, h)];
     menu.windowLevel = UIWindowLevelAlert + 3;
     menu.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.95];
@@ -71,12 +189,8 @@ static BOOL isScanning = NO;
         y += 45;
     };
     
-    btn(@"🔍 ПОЛНЫЙ СКАН", @selector(startFullScan), UIColor.systemBlueColor);
-    btn(@"📈 ИЗМЕНИЛОСЬ", @selector(filterChanged), UIColor.systemOrangeColor);
-    btn(@"⏸️ НЕ ИЗМЕНИЛОСЬ", @selector(filterUnchanged), UIColor.systemGrayColor);
-    btn(@"📋 РЕЗУЛЬТАТЫ", @selector(showResults), UIColor.systemPurpleColor);
-    btn(@"📌 ПАМЯТЬ", @selector(showMemoryAround), UIColor.systemTealColor);
-    btn(@"🔄 СБРОС", @selector(resetScan), UIColor.systemRedColor);
+    btn(@"🔍 НАЙТИ ИГРОКОВ", @selector(scanPlayers), UIColor.systemBlueColor);
+    btn(@"📋 ПОКАЗАТЬ ЛОГ", @selector(showLog), UIColor.systemPurpleColor);
     btn(@"❌ ЗАКРЫТЬ", @selector(closeMenu), UIColor.systemRedColor);
     
     [menu makeKeyAndVisible];
@@ -88,169 +202,102 @@ static BOOL isScanning = NO;
     menu.hidden = YES;
 }
 
-+ (void)startFullScan {
-    if (isScanning) {
-        [self addLog:@"⏳ Сканирование уже идет..."];
-        return;
-    }
++ (void)scanPlayers {
+    players = [NSMutableArray array];
+    baseAddr = getBaseAddress();
     
-    addresses = [NSMutableArray array];
-    values = [NSMutableArray array];
-    isScanning = YES;
+    [self addLog:@"\n🔍 ПОИСК ИГРОКОВ ПО СТРУКТУРЕ"];
+    [self addLog:[NSString stringWithFormat:@"📌 База: 0x%llx", baseAddr]];
     
-    [self addLog:@"\n🔍 ПОЛНЫЙ СКАН (автоматически)"];
-    [self addLog:[NSString stringWithFormat:@"Диапазон: 0x%llx - 0x%llx", SCAN_START, SCAN_END]];
-    [self showLog];
+    task_t task = mach_task_self();
+    vm_address_t addr = 0;
+    vm_size_t size = 0;
+    vm_region_basic_info_data_64_t info;
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t object_name;
     
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
-        task_t task = mach_task_self();
-        int total = 0;
-        int chunkSize = 0x400000; // 4 МБ за раз
+    int total = 0;
+    int found = 0;
+    
+    while (vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info, &count, &object_name) == KERN_SUCCESS) {
         
-        for (uint64_t addr = SCAN_START; addr < SCAN_END; addr += chunkSize) {
-            if (!isScanning) break;
+        if (size > 4096 && size < 10*1024*1024 && (info.protection & VM_PROT_READ)) {
             
-            uint64_t chunkEnd = addr + chunkSize;
-            if (chunkEnd > SCAN_END) chunkEnd = SCAN_END;
+            uint8_t *buffer = malloc(size);
+            vm_size_t read;
             
-            for (uint64_t a = addr; a < chunkEnd; a += 4) {
-                float val;
-                vm_size_t read;
-                if (vm_read_overwrite(task, a, 4, (vm_address_t)&val, &read) == KERN_SUCCESS) {
-                    [addresses addObject:@(a)];
-                    [values addObject:@(val)];
+            if (vm_read_overwrite(task, addr, size, (vm_address_t)buffer, &read) == KERN_SUCCESS) {
+                
+                for (int i = 0; i < size - STRUCT_SIZE; i += 4) {
                     total++;
+                    
+                    // Проверяем, есть ли по смещению OFFSET_ID наш ID
+                    uint32_t *pid = (uint32_t*)(buffer + i + OFFSET_ID);
+                    if (*pid == MY_ID) {
+                        // Нашли своего игрока!
+                        Player *p = [Player new];
+                        p.address = addr + i;
+                        p.playerId = *pid;
+                        p.gold = *(uint32_t*)(buffer + i + OFFSET_GOLD);
+                        p.silver = *(uint32_t*)(buffer + i + OFFSET_SILVER);
+                        p.health = *(float*)(buffer + i + OFFSET_HEALTH);
+                        p.x = *(float*)(buffer + i + OFFSET_X);
+                        p.y = *(float*)(buffer + i + OFFSET_Y);
+                        p.z = *(float*)(buffer + i + OFFSET_Z);
+                        p.isLocal = YES;
+                        
+                        [players addObject:p];
+                        found++;
+                        
+                        [self addLog:[NSString stringWithFormat:@"✅ СВОЙ: 0x%llx", p.address]];
+                        
+                        i += 0x100; // пропускаем структуру
+                    }
+                    
+                    // Проверяем другие структуры (враги)
+                    uint32_t *val = (uint32_t*)(buffer + i + OFFSET_HEALTH);
+                    if (*val > 0 && *val < 200 && *(uint32_t*)(buffer + i + OFFSET_ID) != MY_ID) {
+                        // Похоже на врага
+                        Player *p = [Player new];
+                        p.address = addr + i;
+                        p.playerId = *(uint32_t*)(buffer + i + OFFSET_ID);
+                        p.health = *(float*)(buffer + i + OFFSET_HEALTH);
+                        p.x = *(float*)(buffer + i + OFFSET_X);
+                        p.y = *(float*)(buffer + i + OFFSET_Y);
+                        p.z = *(float*)(buffer + i + OFFSET_Z);
+                        p.isLocal = NO;
+                        
+                        [players addObject:p];
+                        found++;
+                        
+                        i += 0x100;
+                    }
                 }
             }
-            
-            dispatch_async(dispatch_get_main_queue(), ^{
-                [self addLog:[NSString stringWithFormat:@"📊 Прочитано %d float...", total]];
-                [self updateLog];
-            });
-            
-            usleep(10000); // пауза 10ms между чанками
+            free(buffer);
         }
         
-        dispatch_async(dispatch_get_main_queue(), ^{
-            isScanning = NO;
-            [self addLog:[NSString stringWithFormat:@"✅ ГОТОВО: %lu float", (unsigned long)addresses.count]];
-            [self showLog];
-        });
-    });
-}
-
-+ (void)filterChanged {
-    if (!addresses || addresses.count == 0) return;
-    
-    NSMutableArray *newAddr = [NSMutableArray array];
-    NSMutableArray *newVal = [NSMutableArray array];
-    task_t task = mach_task_self();
-    
-    for (int i = 0; i < addresses.count; i++) {
-        uint64_t addr = [addresses[i] unsignedLongLongValue];
-        float cur;
-        vm_size_t read;
-        if (vm_read_overwrite(task, addr, 4, (vm_address_t)&cur, &read) == KERN_SUCCESS) {
-            float old = [values[i] floatValue];
-            if (fabs(cur - old) > 0.001) {
-                [newAddr addObject:@(addr)];
-                [newVal addObject:@(cur)];
-            }
-        }
+        addr += size;
     }
     
-    addresses = newAddr;
-    values = newVal;
-    [self addLog:[NSString stringWithFormat:@"📊 Осталось %lu", (unsigned long)addresses.count]];
-    [self showLog];
-}
-
-+ (void)filterUnchanged {
-    if (!addresses || addresses.count == 0) return;
+    [self addLog:[NSString stringWithFormat:@"📊 Проверено адресов: %d", total]];
+    [self addLog:[NSString stringWithFormat:@"🎯 Найдено игроков: %d", found]];
     
-    NSMutableArray *newAddr = [NSMutableArray array];
-    NSMutableArray *newVal = [NSMutableArray array];
-    task_t task = mach_task_self();
-    
-    for (int i = 0; i < addresses.count; i++) {
-        uint64_t addr = [addresses[i] unsignedLongLongValue];
-        float cur;
-        vm_size_t read;
-        if (vm_read_overwrite(task, addr, 4, (vm_address_t)&cur, &read) == KERN_SUCCESS) {
-            float old = [values[i] floatValue];
-            if (fabs(cur - old) <= 0.001) {
-                [newAddr addObject:@(addr)];
-                [newVal addObject:@(cur)];
-            }
-        }
+    // Выводим список
+    for (Player *p in players) {
+        [self addLog:p.description];
     }
     
-    addresses = newAddr;
-    values = newVal;
-    [self addLog:[NSString stringWithFormat:@"📊 Осталось %lu", (unsigned long)addresses.count]];
     [self showLog];
-}
-
-+ (void)showResults {
-    [self addLog:@"\n📋 РЕЗУЛЬТАТЫ:"];
-    for (int i = 0; i < MIN(20, addresses.count); i++) {
-        [self addLog:[NSString stringWithFormat:@"%d. 0x%llx = %.3f", i+1, [addresses[i] unsignedLongLongValue], [values[i] floatValue]]];
-    }
-    [self showLog];
-}
-
-+ (void)showMemoryAround {
-    if (!addresses || addresses.count == 0) {
-        [self addLog:@"❌ Нет адресов"];
-        [self showLog];
-        return;
-    }
     
-    uint64_t addr = [addresses[0] unsignedLongLongValue];
-    addr = addr & ~0xF;
-    
-    [self addLog:[NSString stringWithFormat:@"\n📌 ПАМЯТЬ ВОКРУГ 0x%llx", addr]];
-    
-    task_t task = mach_task_self();
-    uint8_t buffer[128];
-    vm_size_t read;
-    
-    if (vm_read_overwrite(task, addr - 0x40, 128, (vm_address_t)buffer, &read) == KERN_SUCCESS) {
-        for (int i = 0; i < 128; i += 16) {
-            uint64_t lineAddr = addr - 0x40 + i;
-            NSMutableString *hex = [NSMutableString string];
-            for (int j = 0; j < 16; j++) [hex appendFormat:@"%02x ", buffer[i+j]];
-            [self addLog:[NSString stringWithFormat:@"0x%08llx: %@", lineAddr, hex]];
-        }
-    } else {
-        [self addLog:@"❌ Ошибка чтения"];
-    }
-    [self showLog];
-}
-
-+ (void)resetScan {
-    [addresses removeAllObjects];
-    [values removeAllObjects];
-    isScanning = NO;
-    [self addLog:@"🔄 СБРОШЕНО"];
-    [self showLog];
+    // Обновляем ESP
+    [overlayWindow.subviews.firstObject setNeedsDisplay];
 }
 
 + (void)addLog:(NSString*)t {
     if (!logText) logText = [NSMutableString new];
     [logText appendFormat:@"%@\n", t];
     NSLog(@"%@", t);
-}
-
-+ (void)updateLog {
-    if (logWindow) {
-        UITextView *tv = logWindow.subviews.firstObject;
-        tv.text = logText;
-        if (tv.text.length > 0) {
-            NSRange bottom = NSMakeRange(tv.text.length - 1, 1);
-            [tv scrollRangeToVisible:bottom];
-        }
-    }
 }
 
 + (void)showLog {
@@ -294,12 +341,36 @@ static BOOL isScanning = NO;
 
 @end
 
-__attribute__((constructor)) static void init() {
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        UIWindow *w = [ButtonHandler mainWindow];
-        if (w) {
+// ========== ИНИЦИАЛИЗАЦИЯ ==========
+__attribute__((constructor))
+static void init() {
+    @autoreleasepool {
+        logText = [NSMutableString new];
+        
+        // Загружаем функции камеры
+        Camera_get_main = (t_Camera_get_main)getRealPtr(RVA_Camera_get_main);
+        Camera_WorldToScreen = (t_Camera_WorldToScreen)getRealPtr(RVA_Camera_WorldToScreen);
+        
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            UIWindow *mainWindow = [ButtonHandler mainWindow];
+            if (!mainWindow) return;
+            
             floatingButton = [[FloatingButton alloc] initWithFrame:CGRectMake(20, 150, 50, 50)];
-            [w addSubview:floatingButton];
-        }
-    });
+            [mainWindow addSubview:floatingButton];
+            
+            overlayWindow = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
+            overlayWindow.windowLevel = UIWindowLevelAlert + 1;
+            overlayWindow.backgroundColor = UIColor.clearColor;
+            overlayWindow.userInteractionEnabled = NO;
+            
+            ESPView *espView = [[ESPView alloc] initWithFrame:UIScreen.mainScreen.bounds];
+            espView.backgroundColor = UIColor.clearColor;
+            [overlayWindow addSubview:espView];
+            
+            [overlayWindow makeKeyAndVisible];
+            
+            [ButtonHandler addLog:@"✅ ESP ЗАГРУЖЕН"];
+            [ButtonHandler addLog:@"⚡ ЖМИ КНОПКУ ДЛЯ ПОИСКА"];
+        });
+    }
 }
