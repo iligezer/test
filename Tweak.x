@@ -302,12 +302,17 @@ static BOOL espEnabled = YES;
 
 + (void)showLog {
     if (!logWindow) {
-        CGFloat w = UIScreen.mainScreen.bounds.size.width - 40;
+        CGFloat w = 300;
         CGFloat h = 400;
-        logWindow = [[UIWindow alloc] initWithFrame:CGRectMake(20, 100, w, h)];
+        CGFloat x = (UIScreen.mainScreen.bounds.size.width - w) / 2;
+        CGFloat y = (UIScreen.mainScreen.bounds.size.height - h) / 2;
+        
+        logWindow = [[UIWindow alloc] initWithFrame:CGRectMake(x, y, w, h)];
         logWindow.windowLevel = UIWindowLevelAlert + 2;
         logWindow.backgroundColor = [UIColor colorWithWhite:0 alpha:0.95];
         logWindow.layer.cornerRadius = 15;
+        logWindow.layer.borderWidth = 2;
+        logWindow.layer.borderColor = UIColor.systemGreenColor.CGColor;
         
         UITextView *tv = [[UITextView alloc] initWithFrame:CGRectMake(5, 5, w-10, h-80)];
         tv.backgroundColor = UIColor.blackColor;
