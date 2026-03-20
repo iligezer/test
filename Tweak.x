@@ -88,6 +88,8 @@ static BOOL espEnabled = YES;
 @end
 
 // ========== ПЛАВАЮЩАЯ КНОПКА ==========
+@class ButtonHandler;
+
 @interface FloatingButton : UIButton
 @end
 
@@ -120,7 +122,10 @@ static BOOL espEnabled = YES;
 }
 
 - (void)tapped {
-    [ButtonHandler showMenu];
+    Class handler = NSClassFromString(@"ButtonHandler");
+    if (handler) {
+        [handler performSelector:@selector(showMenu)];
+    }
 }
 @end
 
