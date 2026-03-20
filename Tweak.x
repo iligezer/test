@@ -72,11 +72,9 @@ static BOOL espEnabled = YES;
         float sy = s[1] * rect.size.height;
         
         if (sx > 0 && sx < rect.size.width && sy > 0 && sy < rect.size.height) {
-            // Рисуем точку
             CGContextSetFillColorWithColor(ctx, [UIColor redColor].CGColor);
             CGContextFillEllipseInRect(ctx, CGRectMake(sx-4, sy-4, 8, 8));
             
-            // Рисуем здоровье
             NSString *hp = [NSString stringWithFormat:@"%.0f", p.health];
             [hp drawAtPoint:CGPointMake(sx+8, sy-12) withAttributes:@{
                 NSFontAttributeName: [UIFont boldSystemFontOfSize:11],
@@ -134,6 +132,8 @@ static BOOL espEnabled = YES;
 + (void)toggleESP;
 + (void)addLog:(NSString*)text;
 + (void)showLog;
++ (void)closeLog;
++ (void)copyLog;
 + (uint64_t)getBaseAddress;
 + (UIWindow*)mainWindow;
 @end
@@ -231,7 +231,7 @@ static BOOL espEnabled = YES;
     mach_port_t object_name;
     
     int found = 0;
-    int scanLimit = 500000;
+    int scanned = 0;
     
     while (vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info, &count, &object_name) == KERN_SUCCESS && found < 30) {
         
@@ -243,22 +243,29 @@ static BOOL espEnabled = YES;
             if (vm_read_overwrite(task, addr, size, (vm_address_t)buffer, &read) == KERN_SUCCESS) {
                 
                 for (int i = 0; i < size - 0x100; i += 8) {
-                    // Ищем высоту (Y) — должна быть 1.5-1.6
-                    float *y = (float*)(buffer + i + OFFSET_Y);
-                    if (*y < 1.5 || *y > 1.6) continue;
+                    scanned++;
                     
-                    // Читаем X и Z
-                    float *x = (float*)(buffer + i + OFFSET_X);
-                    float *z = (float*)(buffer + i + OFFSET_Z);
+                    // Читаем X, Y, Z как три float подряд
+                    float *x = (float*)(buffer + i);
+                    float *y = (float*)(buffer + i + 4);
+                    float *z = (float*)(buffer + i + 8);
+                    
+                    // Фильтр 1: координаты не нулевые и не огромные
+                    if (fabs(*x) < 0.1 && fabs(*y) < 0.1 && fabs(*z) < 0.1) continue;
+                    if (fabs(*x) > 10000 || fabs(*y) > 10000 || fabs(*z) > 10000) continue;
+                    
+                    // Фильтр 2: броня рядом (10000-150000)
                     int *armor = (int*)(buffer + i + OFFSET_ARMOR);
+                    if (*armor < 10000 || *armor > 150000) continue;
                     
+                    // Нашли игрока!
                     Player *p = [[Player alloc] init];
                     p.x = *x;
                     p.y = *y;
                     p.z = *z;
                     p.armor = *armor;
-                    p.health = 100; // временно
-                    p.isLocal = (found == 0); // первый игрок = свой
+                    p.health = 100;
+                    p.isLocal = NO;
                     
                     [players addObject:p];
                     found++;
@@ -276,6 +283,7 @@ static BOOL espEnabled = YES;
         if (found % 100 == 0) usleep(1000);
     }
     
+    [self addLog:[NSString stringWithFormat:@"📊 Проверено адресов: %d", scanned]];
     [self addLog:[NSString stringWithFormat:@"🎯 Найдено игроков: %d", found]];
     [overlayWindow.subviews.firstObject setNeedsDisplay];
     [self showLog];
