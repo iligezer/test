@@ -96,9 +96,12 @@ static uint64_t scanEnd = 0x290000000;
     
     [self addLog:@"\n🔍 ПЕРВЫЙ СКАН"];
     [self addLog:[NSString stringWithFormat:@"Диапазон: 0x%llx - 0x%llx", scanStart, scanEnd]];
+    [self showLog];
     
     task_t task = mach_task_self();
     int count = 0;
+    
+    // Сканируем блоками по 1000 адресов с паузой
     for (uint64_t addr = scanStart; addr < scanEnd; addr += 4) {
         float val;
         vm_size_t read;
@@ -107,9 +110,35 @@ static uint64_t scanEnd = 0x290000000;
             [values addObject:@(val)];
             count++;
         }
+        
+        // Каждые 10000 адресов обновляем лог и делаем паузу
+        if (count % 10000 == 0) {
+            [self addLog:[NSString stringWithFormat:@"   Прочитано %d...", count]];
+            [self updateLog];
+            usleep(1000); // пауза 1ms
+        }
+        
+        // Каждые 100000 адресов даем игре подышать подольше
+        if (count % 100000 == 0) {
+            usleep(10000); // пауза 10ms
+        }
     }
+    
     [self addLog:[NSString stringWithFormat:@"✅ Найдено %lu float", (unsigned long)addresses.count]];
     [self showLog];
+}
+
+// Добавь эту функцию для обновления лога без открытия
++ (void)updateLog {
+    if (logWindow) {
+        UITextView *tv = logWindow.subviews.firstObject;
+        tv.text = logText;
+        // Скроллим вниз
+        if (tv.text.length > 0) {
+            NSRange bottom = NSMakeRange(tv.text.length - 1, 1);
+            [tv scrollRangeToVisible:bottom];
+        }
+    }
 }
 
 + (void)filterWithBlock:(BOOL(^)(float old, float cur))block {
