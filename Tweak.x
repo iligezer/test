@@ -20,8 +20,25 @@ static t_get_position Transform_get_position = NULL;
 static NSMutableString *logText = nil;
 static UIWindow *logWindow = nil;
 static UIButton *floatingButton = nil;
-static NSMutableArray *trackedAddresses = nil;
-static NSMutableArray *currentValues = nil;
+
+// Структура для хранения адреса и его значений
+@interface AddressHistory : NSObject
+@property (assign) unsigned long long address;
+@property (strong) NSMutableArray *values; // история значений
+@end
+
+@implementation AddressHistory
+- (instancetype)initWithAddress:(unsigned long long)addr {
+    self = [super init];
+    if (self) {
+        self.address = addr;
+        self.values = [NSMutableArray array];
+    }
+    return self;
+}
+@end
+
+static NSMutableArray *trackedHistory = nil; // массив AddressHistory
 
 // ========== ОБЪЯВЛЕНИЕ ==========
 @interface ButtonHandler : NSObject
@@ -35,8 +52,9 @@ static NSMutableArray *currentValues = nil;
 + (void)showAddresses;
 + (void)clearAddresses;
 + (void)startScan;
-+ (void)refreshChanged;
-+ (void)refreshUnchanged;
++ (void)scanChanged;
++ (void)scanUnchanged;
++ (void)filterByCount:(int)minChanges;
 + (void)showCandidates;
 + (UIViewController*)topViewController;
 + (UIWindow*)mainWindow;
@@ -97,8 +115,8 @@ static NSMutableArray *currentValues = nil;
 }
 
 + (void)showMenu {
-    CGFloat menuWidth = 300;
-    CGFloat menuHeight = 550;
+    CGFloat menuWidth = 320;
+    CGFloat menuHeight = 600;
     CGFloat menuX = ([UIScreen mainScreen].bounds.size.width - menuWidth) / 2;
     CGFloat menuY = ([UIScreen mainScreen].bounds.size.height - menuHeight) / 2;
     
@@ -110,7 +128,7 @@ static NSMutableArray *currentValues = nil;
     menuWindow.layer.borderColor = [UIColor systemBlueColor].CGColor;
     
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 15, menuWidth, 30)];
-    title.text = @"⚡ COORD FINDER";
+    title.text = @"⚡ HISTORY TRACKER";
     title.textColor = [UIColor whiteColor];
     title.textAlignment = NSTextAlignmentCenter;
     title.font = [UIFont boldSystemFontOfSize:20];
@@ -133,12 +151,12 @@ static NSMutableArray *currentValues = nil;
     
     yPos += btnHeight + btnSpacing;
     
-    // Кнопка: ПОКАЗАТЬ АДРЕСА
+    // Кнопка: ПОКАЗАТЬ ВСЕ
     UIButton *showBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     showBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
     showBtn.backgroundColor = [UIColor systemPurpleColor];
     showBtn.layer.cornerRadius = 10;
-    [showBtn setTitle:@"📋 ПОКАЗАТЬ АДРЕСА" forState:UIControlStateNormal];
+    [showBtn setTitle:@"📋 ПОКАЗАТЬ ВСЕ" forState:UIControlStateNormal];
     [showBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     showBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
     [showBtn addTarget:self action:@selector(showAddresses) forControlEvents:UIControlEventTouchUpInside];
@@ -159,38 +177,47 @@ static NSMutableArray *currentValues = nil;
     
     yPos += btnHeight + btnSpacing;
     
-    // Кнопка: ИЗМЕНИЛОСЬ
+    // Кнопка: ДОБАВИТЬ ИЗМЕНЕНИЕ
+    UIButton *addBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    addBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
+    addBtn.backgroundColor = [UIColor systemOrangeColor];
+    [addBtn setTitle:@"📝 ДОБАВИТЬ ИЗМЕНЕНИЕ" forState:UIControlStateNormal];
+    [addBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    addBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
+    [addBtn addTarget:self action:@selector(scanChanged) forControlEvents:UIControlEventTouchUpInside];
+    [menuWindow addSubview:addBtn];
+    
+    yPos += btnHeight + btnSpacing;
+    
+    // Кнопка: ПОКАЗАТЬ ИЗМЕНИВШИЕСЯ
     UIButton *changedBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     changedBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
-    changedBtn.backgroundColor = [UIColor systemOrangeColor];
-    changedBtn.layer.cornerRadius = 10;
-    [changedBtn setTitle:@"📈 ИЗМЕНИЛОСЬ" forState:UIControlStateNormal];
+    changedBtn.backgroundColor = [UIColor systemIndigoColor];
+    [changedBtn setTitle:@"📈 ПОКАЗАТЬ ИЗМЕНИВШИЕСЯ" forState:UIControlStateNormal];
     [changedBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     changedBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
-    [changedBtn addTarget:self action:@selector(refreshChanged) forControlEvents:UIControlEventTouchUpInside];
+    [changedBtn addTarget:self action:@selector(filterByCount:) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:changedBtn];
     
     yPos += btnHeight + btnSpacing;
     
-    // Кнопка: НЕ ИЗМЕНИЛОСЬ
+    // Кнопка: ПОКАЗАТЬ НЕИЗМЕННЫЕ
     UIButton *unchangedBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     unchangedBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
     unchangedBtn.backgroundColor = [UIColor systemRedColor];
-    unchangedBtn.layer.cornerRadius = 10;
-    [unchangedBtn setTitle:@"📉 НЕ ИЗМЕНИЛОСЬ" forState:UIControlStateNormal];
+    [unchangedBtn setTitle:@"📉 ПОКАЗАТЬ НЕИЗМЕННЫЕ" forState:UIControlStateNormal];
     [unchangedBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     unchangedBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
-    [unchangedBtn addTarget:self action:@selector(refreshUnchanged) forControlEvents:UIControlEventTouchUpInside];
+    [unchangedBtn addTarget:self action:@selector(filterByCount:) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:unchangedBtn];
     
     yPos += btnHeight + btnSpacing;
     
-    // Кнопка: КАНДИДАТЫ
+    // Кнопка: ТОП КАНДИДАТЫ
     UIButton *candidatesBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     candidatesBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
-    candidatesBtn.backgroundColor = [UIColor systemIndigoColor];
-    candidatesBtn.layer.cornerRadius = 10;
-    [candidatesBtn setTitle:@"🎯 ПОКАЗАТЬ КАНДИДАТОВ" forState:UIControlStateNormal];
+    candidatesBtn.backgroundColor = [UIColor systemTealColor];
+    [candidatesBtn setTitle:@"🎯 ТОП КАНДИДАТЫ" forState:UIControlStateNormal];
     [candidatesBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     candidatesBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
     [candidatesBtn addTarget:self action:@selector(showCandidates) forControlEvents:UIControlEventTouchUpInside];
@@ -234,8 +261,8 @@ static NSMutableArray *currentValues = nil;
 
 // ========== ВСТАВИТЬ АДРЕС ИЗ БУФЕРА ==========
 + (void)pasteAddress {
-    if (!trackedAddresses) {
-        trackedAddresses = [NSMutableArray array];
+    if (!trackedHistory) {
+        trackedHistory = [NSMutableArray array];
     }
     
     UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
@@ -257,9 +284,23 @@ static NSMutableArray *currentValues = nil;
         }
         
         if (addr > 0) {
-            [trackedAddresses addObject:@(addr)];
-            [self addLog:[NSString stringWithFormat:@"✅ Вставлен: 0x%llx", addr]];
-            [self addLog:[NSString stringWithFormat:@"📊 Всего: %lu", (unsigned long)trackedAddresses.count]];
+            // Проверяем, есть ли уже такой адрес
+            BOOL exists = NO;
+            for (AddressHistory *h in trackedHistory) {
+                if (h.address == addr) {
+                    exists = YES;
+                    break;
+                }
+            }
+            
+            if (!exists) {
+                AddressHistory *history = [[AddressHistory alloc] initWithAddress:addr];
+                [trackedHistory addObject:history];
+                [self addLog:[NSString stringWithFormat:@"✅ Вставлен: 0x%llx", addr]];
+            } else {
+                [self addLog:[NSString stringWithFormat:@"⏩ Уже есть: 0x%llx", addr]];
+            }
+            [self addLog:[NSString stringWithFormat:@"📊 Всего адресов: %lu", (unsigned long)trackedHistory.count]];
         } else {
             [self addLog:[NSString stringWithFormat:@"❌ Ошибка: %@", addrStr]];
         }
@@ -269,16 +310,17 @@ static NSMutableArray *currentValues = nil;
     [self updateLogWindow];
 }
 
-// ========== ПОКАЗАТЬ АДРЕСА ==========
+// ========== ПОКАЗАТЬ ВСЕ АДРЕСА ==========
 + (void)showAddresses {
     [self addLog:@"\n📋 СОХРАНЕННЫЕ АДРЕСА:"];
     
-    if (!trackedAddresses || trackedAddresses.count == 0) {
+    if (!trackedHistory || trackedHistory.count == 0) {
         [self addLog:@"❌ Нет адресов"];
     } else {
-        for (int i = 0; i < trackedAddresses.count; i++) {
-            NSNumber *addrNum = trackedAddresses[i];
-            [self addLog:[NSString stringWithFormat:@"%d. 0x%llx", i+1, (unsigned long long)[addrNum unsignedLongLongValue]]];
+        for (int i = 0; i < trackedHistory.count; i++) {
+            AddressHistory *h = trackedHistory[i];
+            [self addLog:[NSString stringWithFormat:@"%d. 0x%llx (%lu значений)", 
+                          i+1, h.address, (unsigned long)h.values.count]];
         }
     }
     [self showLogWindow];
@@ -286,179 +328,189 @@ static NSMutableArray *currentValues = nil;
 
 // ========== ОЧИСТИТЬ ВСЕ ==========
 + (void)clearAddresses {
-    [trackedAddresses removeAllObjects];
-    [currentValues removeAllObjects];
+    [trackedHistory removeAllObjects];
     [self addLog:@"🗑️ Все адреса очищены"];
     [self updateLogWindow];
 }
 
-// ========== НАЧАТЬ СКАНИРОВАНИЕ (С РАСШИРЕНИЕМ) ==========
+// ========== НАЧАТЬ СКАНИРОВАНИЕ ==========
 + (void)startScan {
-    if (!trackedAddresses || trackedAddresses.count == 0) {
+    if (!trackedHistory || trackedHistory.count == 0) {
         [self addLog:@"❌ Нет адресов для сканирования"];
         [self updateLogWindow];
         return;
     }
     
-    // Расширяем массив адресами выше и ниже (шаг 4 байта, диапазон 0x800)
-    NSMutableArray *expandedAddresses = [NSMutableArray array];
-    int range = 0x800; // 2048 байт вверх и вниз
-    int step = 4;      // шаг 4 байта (для float)
+    // Расширяем каждый адрес в диапазоне ±0x800
+    NSMutableArray *newHistory = [NSMutableArray array];
+    int range = 0x800;
+    int step = 4;
     
-    for (NSNumber *addrNum in trackedAddresses) {
-        unsigned long long baseAddr = [addrNum unsignedLongLongValue];
+    for (AddressHistory *h in trackedHistory) {
+        unsigned long long baseAddr = h.address;
         
         for (int offset = -range; offset <= range; offset += step) {
             unsigned long long newAddr = baseAddr + offset;
-            [expandedAddresses addObject:@(newAddr)];
+            
+            // Проверяем, нет ли уже такого
+            BOOL exists = NO;
+            for (AddressHistory *existing in newHistory) {
+                if (existing.address == newAddr) {
+                    exists = YES;
+                    break;
+                }
+            }
+            
+            if (!exists) {
+                AddressHistory *newH = [[AddressHistory alloc] initWithAddress:newAddr];
+                [newHistory addObject:newH];
+            }
         }
     }
     
-    trackedAddresses = expandedAddresses;
-    currentValues = [NSMutableArray array];
+    trackedHistory = newHistory;
     
+    [self addLog:[NSString stringWithFormat:@"\n🔍 РАСШИРЕННОЕ ДО %lu АДРЕСОВ", (unsigned long)trackedHistory.count]];
+    
+    // Читаем начальные значения
     task_t task = mach_task_self();
-    
-    [self addLog:[NSString stringWithFormat:@"\n🔍 РАСШИРЕННОЕ СКАНИРОВАНИЕ"]];
-    [self addLog:[NSString stringWithFormat:@"📊 Диапазон: ±0x%x байт", range]];
-    [self addLog:[NSString stringWithFormat:@"📊 Шаг: %d байта", step]];
-    [self addLog:[NSString stringWithFormat:@"📊 Всего адресов: %lu", (unsigned long)trackedAddresses.count]];
-    
     int success = 0;
-    for (NSNumber *addrNum in trackedAddresses) {
-        vm_address_t addr = [addrNum unsignedLongLongValue];
+    
+    for (AddressHistory *h in trackedHistory) {
+        vm_address_t addr = (vm_address_t)h.address;
         float value = 0;
         vm_size_t data_read = 0;
         kern_return_t kr = vm_read_overwrite(task, addr, 4, (vm_address_t)&value, &data_read);
         
         if (kr == KERN_SUCCESS) {
-            [currentValues addObject:@(value)];
+            [h.values addObject:@(value)];
             success++;
         } else {
-            [currentValues addObject:@(0.0f)];
+            [h.values addObject:@(0.0f)];
         }
     }
     
     [self addLog:[NSString stringWithFormat:@"✅ Успешно прочитано: %d", success]];
-    [self addLog:@"✅ Начальные значения сохранены"];
-    [self addLog:@"📊 Двигайся и нажимай ИЗМЕНИЛОСЬ/НЕ ИЗМЕНИЛОСЬ"];
+    [self addLog:@"📊 Двигайся и нажимай ДОБАВИТЬ ИЗМЕНЕНИЕ"];
     [self updateLogWindow];
 }
 
-// ========== ИЗМЕНИЛОСЬ ==========
-+ (void)refreshChanged {
-    if (!trackedAddresses || trackedAddresses.count == 0 || !currentValues) {
-        [self addLog:@"❌ Сначала начни сканирование"];
+// ========== ДОБАВИТЬ НОВОЕ ИЗМЕНЕНИЕ ==========
++ (void)scanChanged {
+    if (!trackedHistory || trackedHistory.count == 0) {
+        [self addLog:@"❌ Нет адресов для сканирования"];
         [self updateLogWindow];
         return;
     }
     
-    NSMutableArray *newAddresses = [NSMutableArray array];
-    NSMutableArray *newValues = [NSMutableArray array];
     task_t task = mach_task_self();
+    int step = (int)trackedHistory.count;
+    int success = 0;
     
-    [self addLog:@"\n📈 ПОИСК ИЗМЕНИВШИХСЯ..."];
-    int changed = 0;
-    
-    for (int i = 0; i < trackedAddresses.count; i++) {
-        NSNumber *addrNum = trackedAddresses[i];
-        vm_address_t addr = [addrNum unsignedLongLongValue];
-        
+    for (AddressHistory *h in trackedHistory) {
+        vm_address_t addr = (vm_address_t)h.address;
         float value = 0;
         vm_size_t data_read = 0;
         kern_return_t kr = vm_read_overwrite(task, addr, 4, (vm_address_t)&value, &data_read);
         
         if (kr == KERN_SUCCESS) {
-            float oldValue = [currentValues[i] floatValue];
-            if (fabs(value - oldValue) > 0.001f) {
-                [newAddresses addObject:addrNum];
-                [newValues addObject:@(value)];
-                changed++;
-            }
+            [h.values addObject:@(value)];
+            success++;
+        } else {
+            [h.values addObject:@(0.0f)];
         }
     }
     
-    trackedAddresses = newAddresses;
-    currentValues = newValues;
-    
-    [self addLog:[NSString stringWithFormat:@"✅ Найдено изменившихся: %d", changed]];
-    [self addLog:[NSString stringWithFormat:@"📊 Осталось адресов: %lu", (unsigned long)trackedAddresses.count]];
+    [self addLog:[NSString stringWithFormat:@"📝 Добавлено %d новых значений", success]];
+    [self addLog:[NSString stringWithFormat:@"📊 Всего записей: %lu", (unsigned long)trackedHistory.count]];
     [self updateLogWindow];
 }
 
-// ========== НЕ ИЗМЕНИЛОСЬ ==========
-+ (void)refreshUnchanged {
-    if (!trackedAddresses || trackedAddresses.count == 0 || !currentValues) {
-        [self addLog:@"❌ Сначала начни сканирование"];
+// ========== ФИЛЬТР ПО КОЛИЧЕСТВУ ИЗМЕНЕНИЙ ==========
++ (void)filterByCount:(UIButton*)sender {
+    if (!trackedHistory || trackedHistory.count == 0) {
+        [self addLog:@"❌ Нет данных"];
         [self updateLogWindow];
         return;
     }
     
-    NSMutableArray *newAddresses = [NSMutableArray array];
-    NSMutableArray *newValues = [NSMutableArray array];
-    task_t task = mach_task_self();
+    BOOL wantChanged = [sender.currentTitle containsString:@"ИЗМЕНИВШИЕСЯ"];
+    NSMutableArray *filtered = [NSMutableArray array];
     
-    [self addLog:@"\n📉 ПОИСК НЕИЗМЕНИВШИХСЯ..."];
-    int unchanged = 0;
-    
-    for (int i = 0; i < trackedAddresses.count; i++) {
-        NSNumber *addrNum = trackedAddresses[i];
-        vm_address_t addr = [addrNum unsignedLongLongValue];
+    for (AddressHistory *h in trackedHistory) {
+        if (h.values.count < 2) continue;
         
-        float value = 0;
-        vm_size_t data_read = 0;
-        kern_return_t kr = vm_read_overwrite(task, addr, 4, (vm_address_t)&value, &data_read);
+        // Считаем сколько раз значение менялось
+        int changes = 0;
+        float lastValue = [h.values[0] floatValue];
         
-        if (kr == KERN_SUCCESS) {
-            float oldValue = [currentValues[i] floatValue];
-            if (fabs(value - oldValue) <= 0.001f) {
-                [newAddresses addObject:addrNum];
-                [newValues addObject:@(value)];
-                unchanged++;
+        for (int i = 1; i < h.values.count; i++) {
+            float val = [h.values[i] floatValue];
+            if (fabs(val - lastValue) > 0.001f) {
+                changes++;
+                lastValue = val;
             }
+        }
+        
+        if (wantChanged && changes > 0) {
+            [filtered addObject:h];
+        } else if (!wantChanged && changes == 0) {
+            [filtered addObject:h];
         }
     }
     
-    trackedAddresses = newAddresses;
-    currentValues = newValues;
+    trackedHistory = filtered;
     
-    [self addLog:[NSString stringWithFormat:@"✅ Найдено неизменившихся: %d", unchanged]];
-    [self addLog:[NSString stringWithFormat:@"📊 Осталось адресов: %lu", (unsigned long)trackedAddresses.count]];
+    [self addLog:[NSString stringWithFormat:@"\n🔍 После фильтра осталось: %lu", (unsigned long)trackedHistory.count]];
     [self updateLogWindow];
 }
 
-// ========== ПОКАЗАТЬ КАНДИДАТОВ ==========
+// ========== ПОКАЗАТЬ КАНДИДАТЫ ==========
 + (void)showCandidates {
-    [self addLog:@"\n🎯 ТЕКУЩИЕ КАНДИДАТЫ:"];
+    [self addLog:@"\n🎯 ТОП КАНДИДАТЫ (много изменений):"];
     
-    if (!trackedAddresses || trackedAddresses.count == 0) {
-        [self addLog:@"❌ Нет кандидатов"];
+    if (!trackedHistory || trackedHistory.count == 0) {
+        [self addLog:@"❌ Нет данных"];
     } else {
-        // Группируем по 3 (для поиска XYZ)
-        for (int i = 0; i < trackedAddresses.count; i++) {
-            NSNumber *addrNum = trackedAddresses[i];
-            float value = currentValues ? [currentValues[i] floatValue] : 0;
+        // Сортируем по количеству изменений
+        NSArray *sorted = [trackedHistory sortedArrayUsingComparator:^NSComparisonResult(AddressHistory *h1, AddressHistory *h2) {
+            if (h1.values.count < 2) return NSOrderedAscending;
+            if (h2.values.count < 2) return NSOrderedDescending;
             
-            // Показываем только осмысленные значения (не 0 и не огромные)
-            if (fabs(value) > 0.1 && fabs(value) < 10000) {
-                [self addLog:[NSString stringWithFormat:@"%d. 0x%llx = %.3f", 
-                              i+1, (unsigned long long)[addrNum unsignedLongLongValue], value]];
-                
-                // Показываем следующие два адреса как возможные Y и Z
-                if (i + 1 < trackedAddresses.count) {
-                    float y = [currentValues[i+1] floatValue];
-                    if (fabs(y) > 0.1 && fabs(y) < 10000) {
-                        [self addLog:[NSString stringWithFormat:@"   Y: 0x%llx = %.3f", 
-                                      (unsigned long long)[trackedAddresses[i+1] unsignedLongLongValue], y]];
-                    }
-                }
-                if (i + 2 < trackedAddresses.count) {
-                    float z = [currentValues[i+2] floatValue];
-                    if (fabs(z) > 0.1 && fabs(z) < 10000) {
-                        [self addLog:[NSString stringWithFormat:@"   Z: 0x%llx = %.3f", 
-                                      (unsigned long long)[trackedAddresses[i+2] unsignedLongLongValue], z]];
-                    }
-                }
+            // Считаем изменения
+            int changes1 = 0, changes2 = 0;
+            float last1 = [h1.values[0] floatValue];
+            float last2 = [h2.values[0] floatValue];
+            
+            for (int i = 1; i < h1.values.count; i++) {
+                if (fabs([h1.values[i] floatValue] - last1) > 0.001f) changes1++;
+                last1 = [h1.values[i] floatValue];
+            }
+            for (int i = 1; i < h2.values.count; i++) {
+                if (fabs([h2.values[i] floatValue] - last2) > 0.001f) changes2++;
+                last2 = [h2.values[i] floatValue];
+            }
+            
+            return changes2 - changes1;
+        }];
+        
+        int count = 0;
+        for (AddressHistory *h in sorted) {
+            if (h.values.count < 2) continue;
+            if (count++ >= 20) break;
+            
+            // Показываем адрес и последние 3 значения
+            int lastIdx = (int)h.values.count - 1;
+            float v1 = [h.values[lastIdx] floatValue];
+            float v2 = (lastIdx > 0) ? [h.values[lastIdx-1] floatValue] : 0;
+            float v3 = (lastIdx > 1) ? [h.values[lastIdx-2] floatValue] : 0;
+            
+            [self addLog:[NSString stringWithFormat:@"%d. 0x%llx: %.3f | %.3f | %.3f", 
+                          count, h.address, v3, v2, v1]];
+            
+            // Показываем возможные XYZ тройки
+            if (count % 3 == 0) {
+                [self addLog:@"   ---"];
             }
         }
     }
