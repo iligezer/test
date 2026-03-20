@@ -1,23 +1,19 @@
 #import <UIKit/UIKit.h>
 #import <mach-o/dyld.h>
-#import <objc/runtime.h>
 
 // ========== ТВОИ RVA ==========
-#define RVA_GameManager_GetLocalPlayer       0x3839064
-#define RVA_Player_GetHealth                 0x2EACF44
-#define RVA_Player_GetTransform              0x2EA8C10
-#define RVA_Transform_get_position           0x44CEED0
+#define RVA_Camera_get_main         0x445BAF8
+#define RVA_Camera_WorldToScreen    0x445AD5C
+#define RVA_Transform_get_position   0x44CEED0
 
 // ========== ТИПЫ ФУНКЦИЙ ==========
-typedef void *(*t_GameManager_GetLocalPlayer)(void *gameManager);
-typedef float (*t_Player_GetHealth)(void *player);
-typedef void *(*t_Player_GetTransform)(void *player);
+typedef void *(*t_Camera_get_main)();
+typedef void *(*t_Camera_WorldToScreen)(void *camera, void *worldPos);
 typedef void *(*t_Transform_get_position)(void *transform);
 
 // ========== ГЛОБАЛЬНЫЕ ==========
-static t_GameManager_GetLocalPlayer GameManager_GetLocalPlayer = NULL;
-static t_Player_GetHealth Player_GetHealth = NULL;
-static t_Player_GetTransform Player_GetTransform = NULL;
+static t_Camera_get_main Camera_get_main = NULL;
+static t_Camera_WorldToScreen Camera_WorldToScreen = NULL;
 static t_Transform_get_position Transform_get_position = NULL;
 static NSMutableString *logText = nil;
 static UIWindow *logWindow = nil;
@@ -39,10 +35,10 @@ void* getRealPtr(uint64_t rva) {
     return base ? (void*)(base + rva) : NULL;
 }
 
-// ========== ОБЪЯВЛЕНИЕ ==========
+// ========== ИНТЕРФЕЙС ==========
 @interface ButtonHandler : NSObject
 + (void)showMenu;
-+ (void)testFunctions;
++ (void)testCamera;
 + (void)addLog:(NSString*)text;
 + (void)showLog;
 + (UIWindow*)mainWindow;
@@ -55,7 +51,7 @@ void* getRealPtr(uint64_t rva) {
     self = [super initWithFrame:frame];
     self.backgroundColor = [UIColor systemBlueColor];
     self.layer.cornerRadius = frame.size.width/2;
-    [self setTitle:@"⚡" forState:UIControlStateNormal];
+    [self setTitle:@"📷" forState:UIControlStateNormal];
     [self addTarget:[ButtonHandler class] action:@selector(showMenu) forControlEvents:UIControlEventTouchUpInside];
     return self;
 }
@@ -81,7 +77,7 @@ void* getRealPtr(uint64_t rva) {
     menu.layer.cornerRadius = 10;
     
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, w, 30)];
-    title.text = @"⚡ RVA ТЕСТ";
+    title.text = @"📷 КАМЕРА ТЕСТ";
     title.textColor = UIColor.whiteColor;
     title.textAlignment = NSTextAlignmentCenter;
     [menu addSubview:title];
@@ -90,9 +86,9 @@ void* getRealPtr(uint64_t rva) {
     testBtn.frame = CGRectMake(20, 50, w-40, 45);
     testBtn.backgroundColor = UIColor.systemBlueColor;
     testBtn.layer.cornerRadius = 8;
-    [testBtn setTitle:@"🔍 ПРОВЕРИТЬ RVA" forState:UIControlStateNormal];
+    [testBtn setTitle:@"🔍 ВЫЗВАТЬ КАМЕРУ" forState:UIControlStateNormal];
     [testBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    [testBtn addTarget:self action:@selector(testFunctions) forControlEvents:UIControlEventTouchUpInside];
+    [testBtn addTarget:self action:@selector(testCamera) forControlEvents:UIControlEventTouchUpInside];
     [menu addSubview:testBtn];
     
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -113,31 +109,32 @@ void* getRealPtr(uint64_t rva) {
     menu.hidden = YES;
 }
 
-+ (void)testFunctions {
++ (void)testCamera {
     logText = [NSMutableString new];
     
-    [self addLog:@"🔍 ПРОВЕРКА RVA"];
-    [self addLog:@"================="];
+    [self addLog:@"📷 ТЕСТ КАМЕРЫ"];
+    [self addLog:@"==============="];
     
     uint64_t base = getBaseAddress();
     [self addLog:[NSString stringWithFormat:@"📌 Base: 0x%llx", base]];
     
     // Загружаем функции
-    GameManager_GetLocalPlayer = (t_GameManager_GetLocalPlayer)getRealPtr(RVA_GameManager_GetLocalPlayer);
-    Player_GetHealth = (t_Player_GetHealth)getRealPtr(RVA_Player_GetHealth);
-    Player_GetTransform = (t_Player_GetTransform)getRealPtr(RVA_Player_GetTransform);
+    Camera_get_main = (t_Camera_get_main)getRealPtr(RVA_Camera_get_main);
+    Camera_WorldToScreen = (t_Camera_WorldToScreen)getRealPtr(RVA_Camera_WorldToScreen);
     Transform_get_position = (t_Transform_get_position)getRealPtr(RVA_Transform_get_position);
     
-    [self addLog:[NSString stringWithFormat:@"✅ GetLocalPlayer: %p", GameManager_GetLocalPlayer]];
-    [self addLog:[NSString stringWithFormat:@"✅ GetHealth: %p", Player_GetHealth]];
-    [self addLog:[NSString stringWithFormat:@"✅ GetTransform: %p", Player_GetTransform]];
-    [self addLog:[NSString stringWithFormat:@"✅ GetPosition: %p", Transform_get_position]];
+    [self addLog:[NSString stringWithFormat:@"✅ Camera_get_main: %p", Camera_get_main]];
+    [self addLog:[NSString stringWithFormat:@"✅ WorldToScreen: %p", Camera_WorldToScreen]];
+    [self addLog:[NSString stringWithFormat:@"✅ get_position: %p", Transform_get_position]];
     
-    // Пытаемся вызвать (но без GameManager.Instance не получится)
-    if (GameManager_GetLocalPlayer) {
-        [self addLog:@"⚠️ Нужен GameManager.Instance"];
-        [self addLog:@"📌 Найди в dump.cs:"];
-        [self addLog:@"   public static GameManager Instance { get; }"];
+    // ПЫТАЕМСЯ ВЫЗВАТЬ
+    if (Camera_get_main) {
+        @try {
+            void *cam = Camera_get_main();
+            [self addLog:[NSString stringWithFormat:@"✅ Камера вызвана -> %p", cam]];
+        } @catch (NSException *e) {
+            [self addLog:[NSString stringWithFormat:@"❌ Ошибка: %@", e.reason]];
+        }
     }
     
     [self showLog];
