@@ -1,22 +1,50 @@
 #import <UIKit/UIKit.h>
 #import <mach-o/dyld.h>
-#import <mach/mach.h>
 #import <objc/runtime.h>
 
-// ========== НАСТРОЙКИ ==========
+// ========== ТВОИ RVA ==========
+#define RVA_GameManager_GetLocalPlayer       0x3839064
+#define RVA_Player_GetHealth                 0x2EACF44
+#define RVA_Player_GetTransform              0x2EA8C10
+#define RVA_Transform_get_position           0x44CEED0
+
+// ========== ТИПЫ ФУНКЦИЙ ==========
+typedef void *(*t_GameManager_GetLocalPlayer)(void *gameManager);
+typedef float (*t_Player_GetHealth)(void *player);
+typedef void *(*t_Player_GetTransform)(void *player);
+typedef void *(*t_Transform_get_position)(void *transform);
+
+// ========== ГЛОБАЛЬНЫЕ ==========
+static t_GameManager_GetLocalPlayer GameManager_GetLocalPlayer = NULL;
+static t_Player_GetHealth Player_GetHealth = NULL;
+static t_Player_GetTransform Player_GetTransform = NULL;
+static t_Transform_get_position Transform_get_position = NULL;
 static NSMutableString *logText = nil;
 static UIWindow *logWindow = nil;
 static UIButton *floatingButton = nil;
-static NSMutableArray *addresses = nil;
-static NSMutableArray *values = nil;
+
+// ========== ПОЛУЧЕНИЕ АДРЕСОВ ==========
+uint64_t getBaseAddress() {
+    for (uint32_t i = 0; i < _dyld_image_count(); i++) {
+        const char *name = _dyld_get_image_name(i);
+        if (name && (strstr(name, "ModernStrike") || strstr(name, "GameAssembly"))) {
+            return (uint64_t)_dyld_get_image_header(i);
+        }
+    }
+    return 0;
+}
+
+void* getRealPtr(uint64_t rva) {
+    uint64_t base = getBaseAddress();
+    return base ? (void*)(base + rva) : NULL;
+}
 
 // ========== ОБЪЯВЛЕНИЕ ==========
 @interface ButtonHandler : NSObject
 + (void)showMenu;
-+ (void)closeMenu;
-+ (void)copyLog;
-+ (void)showLog;
++ (void)testFunctions;
 + (void)addLog:(NSString*)text;
++ (void)showLog;
 + (UIWindow*)mainWindow;
 @end
 
@@ -46,32 +74,32 @@ static NSMutableArray *values = nil;
 }
 
 + (void)showMenu {
-    CGFloat w = 250, h = 200;
+    CGFloat w = 260, h = 200;
     UIWindow *menu = [[UIWindow alloc] initWithFrame:CGRectMake((UIScreen.mainScreen.bounds.size.width-w)/2, (UIScreen.mainScreen.bounds.size.height-h)/2, w, h)];
     menu.windowLevel = UIWindowLevelAlert + 3;
     menu.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.95];
     menu.layer.cornerRadius = 10;
     
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, w, 30)];
-    title.text = @"⚡ ТЕСТ";
+    title.text = @"⚡ RVA ТЕСТ";
     title.textColor = UIColor.whiteColor;
     title.textAlignment = NSTextAlignmentCenter;
     [menu addSubview:title];
     
     UIButton *testBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    testBtn.frame = CGRectMake(20, 50, w-40, 40);
+    testBtn.frame = CGRectMake(20, 50, w-40, 45);
     testBtn.backgroundColor = UIColor.systemBlueColor;
     testBtn.layer.cornerRadius = 8;
-    [testBtn setTitle:@"ТЕСТ" forState:UIControlStateNormal];
+    [testBtn setTitle:@"🔍 ПРОВЕРИТЬ RVA" forState:UIControlStateNormal];
     [testBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    [testBtn addTarget:self action:@selector(testFunc) forControlEvents:UIControlEventTouchUpInside];
+    [testBtn addTarget:self action:@selector(testFunctions) forControlEvents:UIControlEventTouchUpInside];
     [menu addSubview:testBtn];
     
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(20, 100, w-40, 40);
+    closeBtn.frame = CGRectMake(20, 105, w-40, 45);
     closeBtn.backgroundColor = UIColor.systemRedColor;
     closeBtn.layer.cornerRadius = 8;
-    [closeBtn setTitle:@"ЗАКРЫТЬ" forState:UIControlStateNormal];
+    [closeBtn setTitle:@"✖️ ЗАКРЫТЬ" forState:UIControlStateNormal];
     [closeBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     [closeBtn addTarget:self action:@selector(closeMenu) forControlEvents:UIControlEventTouchUpInside];
     [menu addSubview:closeBtn];
@@ -85,40 +113,73 @@ static NSMutableArray *values = nil;
     menu.hidden = YES;
 }
 
-+ (void)testFunc {
-    [self addLog:@"✅ ТЕСТ РАБОТАЕТ"];
++ (void)testFunctions {
+    logText = [NSMutableString new];
+    
+    [self addLog:@"🔍 ПРОВЕРКА RVA"];
+    [self addLog:@"================="];
+    
+    uint64_t base = getBaseAddress();
+    [self addLog:[NSString stringWithFormat:@"📌 Base: 0x%llx", base]];
+    
+    // Загружаем функции
+    GameManager_GetLocalPlayer = (t_GameManager_GetLocalPlayer)getRealPtr(RVA_GameManager_GetLocalPlayer);
+    Player_GetHealth = (t_Player_GetHealth)getRealPtr(RVA_Player_GetHealth);
+    Player_GetTransform = (t_Player_GetTransform)getRealPtr(RVA_Player_GetTransform);
+    Transform_get_position = (t_Transform_get_position)getRealPtr(RVA_Transform_get_position);
+    
+    [self addLog:[NSString stringWithFormat:@"✅ GetLocalPlayer: %p", GameManager_GetLocalPlayer]];
+    [self addLog:[NSString stringWithFormat:@"✅ GetHealth: %p", Player_GetHealth]];
+    [self addLog:[NSString stringWithFormat:@"✅ GetTransform: %p", Player_GetTransform]];
+    [self addLog:[NSString stringWithFormat:@"✅ GetPosition: %p", Transform_get_position]];
+    
+    // Пытаемся вызвать (но без GameManager.Instance не получится)
+    if (GameManager_GetLocalPlayer) {
+        [self addLog:@"⚠️ Нужен GameManager.Instance"];
+        [self addLog:@"📌 Найди в dump.cs:"];
+        [self addLog:@"   public static GameManager Instance { get; }"];
+    }
+    
     [self showLog];
 }
 
 + (void)addLog:(NSString*)t {
     if (!logText) logText = [NSMutableString new];
     [logText appendFormat:@"%@\n", t];
+    NSLog(@"%@", t);
 }
 
 + (void)showLog {
     if (!logWindow) {
-        logWindow = [[UIWindow alloc] initWithFrame:CGRectMake(20, 70, UIScreen.mainScreen.bounds.size.width-40, 300)];
+        logWindow = [[UIWindow alloc] initWithFrame:CGRectMake(20, 70, UIScreen.mainScreen.bounds.size.width-40, 350)];
         logWindow.windowLevel = UIWindowLevelAlert + 2;
         logWindow.backgroundColor = [UIColor colorWithWhite:0 alpha:0.95];
+        logWindow.layer.cornerRadius = 10;
         
-        UITextView *tv = [[UITextView alloc] initWithFrame:CGRectMake(5, 5, logWindow.bounds.size.width-10, 240)];
+        UITextView *tv = [[UITextView alloc] initWithFrame:CGRectMake(5, 5, logWindow.bounds.size.width-10, 290)];
         tv.backgroundColor = UIColor.blackColor;
         tv.textColor = UIColor.greenColor;
-        tv.font = [UIFont fontWithName:@"Courier" size:12];
+        tv.font = [UIFont fontWithName:@"Courier" size:11];
         tv.editable = NO;
         [logWindow addSubview:tv];
         
-        UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        closeBtn.frame = CGRectMake(logWindow.bounds.size.width-60, 250, 50, 30);
-        [closeBtn setTitle:@"X" forState:UIControlStateNormal];
-        [closeBtn addTarget:self action:@selector(hideLog) forControlEvents:UIControlEventTouchUpInside];
-        [logWindow addSubview:closeBtn];
-        
         UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        copyBtn.frame = CGRectMake(20, 250, 80, 30);
-        [copyBtn setTitle:@"Копировать" forState:UIControlStateNormal];
+        copyBtn.frame = CGRectMake(20, 300, 100, 35);
+        [copyBtn setTitle:@"📋 Копировать" forState:UIControlStateNormal];
+        copyBtn.backgroundColor = UIColor.systemBlueColor;
+        copyBtn.layer.cornerRadius = 6;
+        [copyBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
         [copyBtn addTarget:self action:@selector(copyLog) forControlEvents:UIControlEventTouchUpInside];
         [logWindow addSubview:copyBtn];
+        
+        UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+        closeBtn.frame = CGRectMake(logWindow.bounds.size.width-70, 300, 50, 35);
+        [closeBtn setTitle:@"✖️" forState:UIControlStateNormal];
+        closeBtn.backgroundColor = UIColor.systemRedColor;
+        closeBtn.layer.cornerRadius = 6;
+        [closeBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+        [closeBtn addTarget:self action:@selector(hideLog) forControlEvents:UIControlEventTouchUpInside];
+        [logWindow addSubview:closeBtn];
     }
     
     UITextView *tv = logWindow.subviews.firstObject;
