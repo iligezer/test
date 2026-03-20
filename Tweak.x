@@ -33,6 +33,7 @@ static UIWindow *overlayWindow = nil;
 static UIWindow *logWindow = nil;
 static UIWindow *menuWindow = nil;
 static UIPanGestureRecognizer *panGesture = nil;
+static UIButton *floatingButton = nil;
 static NSMutableArray *players = nil;
 static uint64_t baseAddr = 0;
 
@@ -192,7 +193,7 @@ static uint64_t baseAddr = 0;
     
     // Заголовок
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 30, w, 30)];
-    title.text = ⚡ AIMBOT ESP";
+    title.text = @"⚡ AIMBOT ESP";
     title.textColor = UIColor.whiteColor;
     title.textAlignment = NSTextAlignmentCenter;
     title.font = [UIFont boldSystemFontOfSize:24];
@@ -241,7 +242,7 @@ static uint64_t baseAddr = 0;
 // ========== ОПТИМИЗИРОВАННЫЙ ПОИСК ==========
 + (void)scanPlayers {
     players = [NSMutableArray array];
-    baseAddr = getBaseAddress();
+    baseAddr = [self getBaseAddress];
     
     [self addLog:@"\n🔍 ПОИСК ИГРОКОВ"];
     [self addLog:@"================"];
@@ -275,7 +276,7 @@ static uint64_t baseAddr = 0;
                         float health = *(float*)(buffer + i + OFFSET_HEALTH);
                         if (health > 0 && health < 200) {
                             
-                            Player *p = [Player new];
+                            Player *p = [[Player alloc] init];
                             p.address = addr + i;
                             p.health = health;
                             p.y = y;
@@ -315,7 +316,7 @@ static uint64_t baseAddr = 0;
 }
 
 // ========== ПОЛУЧЕНИЕ БАЗОВОГО АДРЕСА ==========
-uint64_t getBaseAddress() {
++ (uint64_t)getBaseAddress {
     for (uint32_t i = 0; i < _dyld_image_count(); i++) {
         const char *name = _dyld_get_image_name(i);
         if (name && (strstr(name, "ModernStrike") || strstr(name, "GameAssembly"))) {
@@ -325,8 +326,8 @@ uint64_t getBaseAddress() {
     return 0;
 }
 
-void* getRealPtr(uint64_t rva) {
-    uint64_t base = getBaseAddress();
++ (void*)getRealPtr:(uint64_t)rva {
+    uint64_t base = [self getBaseAddress];
     return base ? (void*)(base + rva) : NULL;
 }
 
@@ -393,8 +394,9 @@ static void init() {
     @autoreleasepool {
         logText = [NSMutableString new];
         
-        Camera_get_main = (t_Camera_get_main)getRealPtr(RVA_Camera_get_main);
-        Camera_WorldToScreen = (t_Camera_WorldToScreen)getRealPtr(RVA_Camera_WorldToScreen);
+        uint64_t base = [ButtonHandler getBaseAddress];
+        Camera_get_main = (t_Camera_get_main)(base + RVA_Camera_get_main);
+        Camera_WorldToScreen = (t_Camera_WorldToScreen)(base + RVA_Camera_WorldToScreen);
         
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
             UIWindow *w = [ButtonHandler mainWindow];
