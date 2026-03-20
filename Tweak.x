@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <mach/mach.h>
+#import <objc/runtime.h>
 
 static NSMutableString *logText = nil;
 static UIWindow *logWindow = nil;
@@ -58,7 +59,7 @@ static uint64_t scanEnd = 0x290000000;
     menu.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.95];
     menu.layer.cornerRadius = 10;
     
-    int y = 20;
+    __block int y = 20;
     void (^btn)(NSString*, SEL) = ^(NSString *t, SEL s) {
         UIButton *b = [UIButton buttonWithType:UIButtonTypeSystem];
         b.frame = CGRectMake(10, y, w-20, 35);
@@ -85,7 +86,8 @@ static uint64_t scanEnd = 0x290000000;
 }
 
 + (void)closeMenu {
-    [objc_getAssociatedObject(self, @selector(closeMenu)) setHidden:YES];
+    UIWindow *menu = objc_getAssociatedObject(self, @selector(closeMenu));
+    menu.hidden = YES;
 }
 
 + (void)firstScan {
@@ -104,9 +106,6 @@ static uint64_t scanEnd = 0x290000000;
             [addresses addObject:@(addr)];
             [values addObject:@(val)];
             count++;
-        }
-        if (count % 10000 == 0) {
-            [self addLog:[NSString stringWithFormat:@"   Прочитано %d...", count]];
         }
     }
     [self addLog:[NSString stringWithFormat:@"✅ Найдено %lu float", (unsigned long)addresses.count]];
@@ -152,7 +151,6 @@ static uint64_t scanEnd = 0x290000000;
     [self showLog];
 }
 
-// ========== ПОКАЗАТЬ ПАМЯТЬ ВОКРУГ АДРЕСА ==========
 + (void)showMemoryAround {
     if (!addresses || addresses.count == 0) {
         [self addLog:@"❌ Нет адресов для просмотра"];
@@ -160,9 +158,8 @@ static uint64_t scanEnd = 0x290000000;
         return;
     }
     
-    // Берем первый адрес из списка
     uint64_t addr = [addresses[0] unsignedLongLongValue];
-    addr = addr & ~0xF; // выравниваем по 16 байт для читаемости
+    addr = addr & ~0xF;
     
     [self addLog:[NSString stringWithFormat:@"\n📌 ПАМЯТЬ ВОКРУГ 0x%llx", addr]];
     [self addLog:@"───────────────────────────────"];
@@ -171,18 +168,15 @@ static uint64_t scanEnd = 0x290000000;
     uint8_t buffer[128];
     vm_size_t read;
     
-    // Читаем 128 байт (64 до адреса, 64 после)
     if (vm_read_overwrite(task, addr - 0x40, 128, (vm_address_t)buffer, &read) == KERN_SUCCESS) {
         for (int i = 0; i < 128; i += 16) {
             uint64_t lineAddr = addr - 0x40 + i;
             
-            // HEX часть
             NSMutableString *hex = [NSMutableString string];
             for (int j = 0; j < 16; j++) {
                 [hex appendFormat:@"%02x ", buffer[i+j]];
             }
             
-            // ASCII часть (только печатные символы)
             NSMutableString *ascii = [NSMutableString string];
             for (int j = 0; j < 16; j++) {
                 char c = buffer[i+j];
@@ -190,15 +184,7 @@ static uint64_t scanEnd = 0x290000000;
                 else [ascii appendString:@"."];
             }
             
-            // Float значения (каждые 4 байта)
-            NSMutableString *floats = [NSMutableString string];
-            for (int j = 0; j < 16; j += 4) {
-                float f = *(float*)(buffer + i + j);
-                [floats appendFormat:@"%8.3f ", f];
-            }
-            
             [self addLog:[NSString stringWithFormat:@"0x%08llx: %@ | %@", lineAddr, hex, ascii]];
-            [self addLog:[NSString stringWithFormat:@"               float: %@", floats]];
         }
     } else {
         [self addLog:@"❌ Не удалось прочитать память"];
