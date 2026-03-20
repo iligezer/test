@@ -247,30 +247,38 @@ static BOOL espEnabled = YES;
             
             if (vm_read_overwrite(task, addr, size, (vm_address_t)buffer, &read) == KERN_SUCCESS) {
                 
-                for (int i = 0; i < size - 0x100; i += 8) {
+                for (int i = 0; i < size - 0x100; i += 4) {
                     scanned++;
                     
-                    // Читаем X, Y, Z как три float подряд
-                    float *x = (float*)(buffer + i);
-                    float *y = (float*)(buffer + i + 4);
-                    float *z = (float*)(buffer + i + 8);
+                    // Читаем Y (высота) — главный признак
+                    float *y = (float*)(buffer + i);
+                    if (*y < 1.5 || *y > 1.6) continue;
                     
-                    // Фильтр 1: координаты не нулевые и не огромные
-                    if (fabs(*x) < 0.1 && fabs(*y) < 0.1 && fabs(*z) < 0.1) continue;
-                    if (fabs(*x) > 10000 || fabs(*y) > 10000 || fabs(*z) > 10000) continue;
+                    // Читаем X (на 4 байта меньше)
+                    if (i < 4) continue;
+                    float *x = (float*)(buffer + i - 4);
                     
-                    // Фильтр 2: броня рядом (10000-150000)
-                    int *armor = (int*)(buffer + i + OFFSET_ARMOR);
-                    if (*armor < 10000 || *armor > 150000) continue;
+                    // Читаем Z (на 4 байта больше)
+                    if (i + 4 >= size) continue;
+                    float *z = (float*)(buffer + i + 4);
                     
-                    // Нашли игрока!
+                    // Проверяем, что координаты разумные
+                    if (fabs(*x) > 10000 || fabs(*z) > 10000) continue;
+                    if (fabs(*x) < 0.1 && fabs(*z) < 0.1) continue;
+                    
+                    // Читаем броню (на +0x0C от Y)
+                    int *armor = NULL;
+                    if (i + 12 < size) {
+                        armor = (int*)(buffer + i + 12);
+                    }
+                    
                     Player *p = [[Player alloc] init];
                     p.x = *x;
                     p.y = *y;
                     p.z = *z;
-                    p.armor = *armor;
+                    p.armor = armor ? *armor : 0;
                     p.health = 100;
-                    p.isLocal = NO;
+                    p.isLocal = (found == 0);
                     
                     [players addObject:p];
                     found++;
@@ -278,7 +286,7 @@ static BOOL espEnabled = YES;
                     [self addLog:[NSString stringWithFormat:@"✅ Игрок %d: (%.1f,%.1f,%.1f) 🛡️%d",
                                   found, p.x, p.y, p.z, p.armor]];
                     
-                    i += 0x80;
+                    i += 0x40;
                     if (found >= 20) break;
                 }
             }
