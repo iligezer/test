@@ -53,8 +53,9 @@ static NSMutableArray *trackedHistory = nil; // массив AddressHistory
 + (void)clearAddresses;
 + (void)startScan;
 + (void)scanChanged;
-+ (void)scanUnchanged;
-+ (void)filterByCount:(int)minChanges;
++ (void)showChanged;
++ (void)showUnchanged;
++ (void)filterByCount:(BOOL)wantChanged;
 + (void)showCandidates;
 + (UIViewController*)topViewController;
 + (UIWindow*)mainWindow;
@@ -115,37 +116,37 @@ static NSMutableArray *trackedHistory = nil; // массив AddressHistory
 }
 
 + (void)showMenu {
-    CGFloat menuWidth = 320;
-    CGFloat menuHeight = 600;
+    CGFloat menuWidth = 280;
+    CGFloat menuHeight = 480;
     CGFloat menuX = ([UIScreen mainScreen].bounds.size.width - menuWidth) / 2;
     CGFloat menuY = ([UIScreen mainScreen].bounds.size.height - menuHeight) / 2;
     
     UIWindow *menuWindow = [[UIWindow alloc] initWithFrame:CGRectMake(menuX, menuY, menuWidth, menuHeight)];
     menuWindow.windowLevel = UIWindowLevelAlert + 3;
     menuWindow.backgroundColor = [UIColor colorWithWhite:0.2 alpha:0.95];
-    menuWindow.layer.cornerRadius = 15;
-    menuWindow.layer.borderWidth = 2;
-    menuWindow.layer.borderColor = [UIColor systemBlueColor].CGColor;
+    menuWindow.layer.cornerRadius = 10;
+    menuWindow.layer.borderWidth = 1;
+    menuWindow.layer.borderColor = [UIColor whiteColor].CGColor;
     
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 15, menuWidth, 30)];
-    title.text = @"⚡ HISTORY TRACKER";
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 5, menuWidth, 25)];
+    title.text = @"⚡ TRACKER";
     title.textColor = [UIColor whiteColor];
     title.textAlignment = NSTextAlignmentCenter;
-    title.font = [UIFont boldSystemFontOfSize:20];
+    title.font = [UIFont boldSystemFontOfSize:16];
     [menuWindow addSubview:title];
     
-    int yPos = 60;
-    int btnHeight = 45;
-    int btnSpacing = 5;
+    int yPos = 35;
+    int btnHeight = 35;
+    int btnSpacing = 2;
     
     // Кнопка: ВСТАВИТЬ АДРЕС
     UIButton *pasteBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    pasteBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
+    pasteBtn.frame = CGRectMake(10, yPos, menuWidth-20, btnHeight);
     pasteBtn.backgroundColor = [UIColor systemBlueColor];
-    pasteBtn.layer.cornerRadius = 10;
+    pasteBtn.layer.cornerRadius = 6;
     [pasteBtn setTitle:@"📋 ВСТАВИТЬ АДРЕС" forState:UIControlStateNormal];
     [pasteBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    pasteBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
+    pasteBtn.titleLabel.font = [UIFont boldSystemFontOfSize:13];
     [pasteBtn addTarget:self action:@selector(pasteAddress) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:pasteBtn];
     
@@ -153,12 +154,12 @@ static NSMutableArray *trackedHistory = nil; // массив AddressHistory
     
     // Кнопка: ПОКАЗАТЬ ВСЕ
     UIButton *showBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    showBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
+    showBtn.frame = CGRectMake(10, yPos, menuWidth-20, btnHeight);
     showBtn.backgroundColor = [UIColor systemPurpleColor];
-    showBtn.layer.cornerRadius = 10;
+    showBtn.layer.cornerRadius = 6;
     [showBtn setTitle:@"📋 ПОКАЗАТЬ ВСЕ" forState:UIControlStateNormal];
     [showBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    showBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
+    showBtn.titleLabel.font = [UIFont boldSystemFontOfSize:13];
     [showBtn addTarget:self action:@selector(showAddresses) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:showBtn];
     
@@ -166,12 +167,12 @@ static NSMutableArray *trackedHistory = nil; // массив AddressHistory
     
     // Кнопка: НАЧАТЬ СКАНИРОВАНИЕ
     UIButton *startBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    startBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
+    startBtn.frame = CGRectMake(10, yPos, menuWidth-20, btnHeight);
     startBtn.backgroundColor = [UIColor systemGreenColor];
-    startBtn.layer.cornerRadius = 10;
+    startBtn.layer.cornerRadius = 6;
     [startBtn setTitle:@"🔍 НАЧАТЬ СКАНИРОВАНИЕ" forState:UIControlStateNormal];
     [startBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    startBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
+    startBtn.titleLabel.font = [UIFont boldSystemFontOfSize:13];
     [startBtn addTarget:self action:@selector(startScan) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:startBtn];
     
@@ -179,11 +180,12 @@ static NSMutableArray *trackedHistory = nil; // массив AddressHistory
     
     // Кнопка: ДОБАВИТЬ ИЗМЕНЕНИЕ
     UIButton *addBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    addBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
+    addBtn.frame = CGRectMake(10, yPos, menuWidth-20, btnHeight);
     addBtn.backgroundColor = [UIColor systemOrangeColor];
+    addBtn.layer.cornerRadius = 6;
     [addBtn setTitle:@"📝 ДОБАВИТЬ ИЗМЕНЕНИЕ" forState:UIControlStateNormal];
     [addBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    addBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
+    addBtn.titleLabel.font = [UIFont boldSystemFontOfSize:13];
     [addBtn addTarget:self action:@selector(scanChanged) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:addBtn];
     
@@ -191,35 +193,38 @@ static NSMutableArray *trackedHistory = nil; // массив AddressHistory
     
     // Кнопка: ПОКАЗАТЬ ИЗМЕНИВШИЕСЯ
     UIButton *changedBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    changedBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
+    changedBtn.frame = CGRectMake(10, yPos, menuWidth-20, btnHeight);
     changedBtn.backgroundColor = [UIColor systemIndigoColor];
+    changedBtn.layer.cornerRadius = 6;
     [changedBtn setTitle:@"📈 ПОКАЗАТЬ ИЗМЕНИВШИЕСЯ" forState:UIControlStateNormal];
     [changedBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    changedBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
-    [changedBtn addTarget:self action:@selector(filterByCount:) forControlEvents:UIControlEventTouchUpInside];
+    changedBtn.titleLabel.font = [UIFont boldSystemFontOfSize:13];
+    [changedBtn addTarget:self action:@selector(showChanged) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:changedBtn];
     
     yPos += btnHeight + btnSpacing;
     
     // Кнопка: ПОКАЗАТЬ НЕИЗМЕННЫЕ
     UIButton *unchangedBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    unchangedBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
+    unchangedBtn.frame = CGRectMake(10, yPos, menuWidth-20, btnHeight);
     unchangedBtn.backgroundColor = [UIColor systemRedColor];
+    unchangedBtn.layer.cornerRadius = 6;
     [unchangedBtn setTitle:@"📉 ПОКАЗАТЬ НЕИЗМЕННЫЕ" forState:UIControlStateNormal];
     [unchangedBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    unchangedBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
-    [unchangedBtn addTarget:self action:@selector(filterByCount:) forControlEvents:UIControlEventTouchUpInside];
+    unchangedBtn.titleLabel.font = [UIFont boldSystemFontOfSize:13];
+    [unchangedBtn addTarget:self action:@selector(showUnchanged) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:unchangedBtn];
     
     yPos += btnHeight + btnSpacing;
     
     // Кнопка: ТОП КАНДИДАТЫ
     UIButton *candidatesBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    candidatesBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
+    candidatesBtn.frame = CGRectMake(10, yPos, menuWidth-20, btnHeight);
     candidatesBtn.backgroundColor = [UIColor systemTealColor];
+    candidatesBtn.layer.cornerRadius = 6;
     [candidatesBtn setTitle:@"🎯 ТОП КАНДИДАТЫ" forState:UIControlStateNormal];
     [candidatesBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    candidatesBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
+    candidatesBtn.titleLabel.font = [UIFont boldSystemFontOfSize:13];
     [candidatesBtn addTarget:self action:@selector(showCandidates) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:candidatesBtn];
     
@@ -227,12 +232,12 @@ static NSMutableArray *trackedHistory = nil; // массив AddressHistory
     
     // Кнопка: ОЧИСТИТЬ
     UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    clearBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
+    clearBtn.frame = CGRectMake(10, yPos, menuWidth-20, btnHeight);
     clearBtn.backgroundColor = [UIColor systemGrayColor];
-    clearBtn.layer.cornerRadius = 10;
-    [clearBtn setTitle:@"🗑️ ОЧИСТИТЬ ВСЕ" forState:UIControlStateNormal];
+    clearBtn.layer.cornerRadius = 6;
+    [clearBtn setTitle:@"🗑️ ОЧИСТИТЬ" forState:UIControlStateNormal];
     [clearBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    clearBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
+    clearBtn.titleLabel.font = [UIFont boldSystemFontOfSize:13];
     [clearBtn addTarget:self action:@selector(clearAddresses) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:clearBtn];
     
@@ -240,12 +245,12 @@ static NSMutableArray *trackedHistory = nil; // массив AddressHistory
     
     // Кнопка: ЗАКРЫТЬ
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(20, yPos, menuWidth-40, btnHeight);
+    closeBtn.frame = CGRectMake(10, yPos, menuWidth-20, btnHeight);
     closeBtn.backgroundColor = [UIColor systemRedColor];
-    closeBtn.layer.cornerRadius = 10;
+    closeBtn.layer.cornerRadius = 6;
     [closeBtn setTitle:@"✖️ ЗАКРЫТЬ" forState:UIControlStateNormal];
     [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    closeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
+    closeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:13];
     [closeBtn addTarget:self action:@selector(closeMenu) forControlEvents:UIControlEventTouchUpInside];
     [menuWindow addSubview:closeBtn];
     
@@ -404,7 +409,6 @@ static NSMutableArray *trackedHistory = nil; // массив AddressHistory
     }
     
     task_t task = mach_task_self();
-    int step = (int)trackedHistory.count;
     int success = 0;
     
     for (AddressHistory *h in trackedHistory) {
@@ -426,15 +430,24 @@ static NSMutableArray *trackedHistory = nil; // массив AddressHistory
     [self updateLogWindow];
 }
 
+// ========== ПОКАЗАТЬ ИЗМЕНИВШИЕСЯ ==========
++ (void)showChanged {
+    [self filterByCount:YES];
+}
+
+// ========== ПОКАЗАТЬ НЕИЗМЕННЫЕ ==========
++ (void)showUnchanged {
+    [self filterByCount:NO];
+}
+
 // ========== ФИЛЬТР ПО КОЛИЧЕСТВУ ИЗМЕНЕНИЙ ==========
-+ (void)filterByCount:(UIButton*)sender {
++ (void)filterByCount:(BOOL)wantChanged {
     if (!trackedHistory || trackedHistory.count == 0) {
         [self addLog:@"❌ Нет данных"];
         [self updateLogWindow];
         return;
     }
     
-    BOOL wantChanged = [sender.currentTitle containsString:@"ИЗМЕНИВШИЕСЯ"];
     NSMutableArray *filtered = [NSMutableArray array];
     
     for (AddressHistory *h in trackedHistory) {
@@ -628,7 +641,7 @@ static void init() {
             UIWindow *mainWindow = [ButtonHandler mainWindow];
             if (!mainWindow) return;
             
-            floatingButton = [[FloatingButton alloc] initWithFrame:CGRectMake(20, 150, 60, 60)];
+            floatingButton = [[FloatingButton alloc] initWithFrame:CGRectMake(20, 150, 50, 50)];
             [mainWindow addSubview:floatingButton];
             
             [ButtonHandler addLog:@"✅ Твик загружен"];
