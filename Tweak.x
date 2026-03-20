@@ -1,10 +1,11 @@
 #import <UIKit/UIKit.h>
 #import <mach-o/dyld.h>
+#import <objc/runtime.h> // ← ЭТОГО НЕ ХВАТАЛО!
 
 // ========== ТВОИ RVA ==========
-#define RVA_Camera_get_main         0x445BAF8
-#define RVA_Camera_WorldToScreen    0x445AD5C
-#define RVA_Transform_get_position   0x44CEED0
+#define RVA_Camera_get_main         0x10871faf8
+#define RVA_Camera_WorldToScreen    0x10871ed5c
+#define RVA_Transform_get_position   0x108792ed0
 
 // ========== ТИПЫ ФУНКЦИЙ ==========
 typedef void *(*t_Camera_get_main)();
@@ -38,7 +39,7 @@ void* getRealPtr(uint64_t rva) {
 // ========== ИНТЕРФЕЙС ==========
 @interface ButtonHandler : NSObject
 + (void)showMenu;
-+ (void)testCamera;
++ (void)testFunctions;
 + (void)addLog:(NSString*)text;
 + (void)showLog;
 + (UIWindow*)mainWindow;
@@ -77,7 +78,7 @@ void* getRealPtr(uint64_t rva) {
     menu.layer.cornerRadius = 10;
     
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, w, 30)];
-    title.text = @"📷 КАМЕРА ТЕСТ";
+    title.text = @"📷 ТЕСТ ФУНКЦИЙ";
     title.textColor = UIColor.whiteColor;
     title.textAlignment = NSTextAlignmentCenter;
     [menu addSubview:title];
@@ -86,9 +87,9 @@ void* getRealPtr(uint64_t rva) {
     testBtn.frame = CGRectMake(20, 50, w-40, 45);
     testBtn.backgroundColor = UIColor.systemBlueColor;
     testBtn.layer.cornerRadius = 8;
-    [testBtn setTitle:@"🔍 ВЫЗВАТЬ КАМЕРУ" forState:UIControlStateNormal];
+    [testBtn setTitle:@"🔍 ВЫЗВАТЬ ВСЕ" forState:UIControlStateNormal];
     [testBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    [testBtn addTarget:self action:@selector(testCamera) forControlEvents:UIControlEventTouchUpInside];
+    [testBtn addTarget:self action:@selector(testFunctions) forControlEvents:UIControlEventTouchUpInside];
     [menu addSubview:testBtn];
     
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -109,11 +110,11 @@ void* getRealPtr(uint64_t rva) {
     menu.hidden = YES;
 }
 
-+ (void)testCamera {
++ (void)testFunctions {
     logText = [NSMutableString new];
     
-    [self addLog:@"📷 ТЕСТ КАМЕРЫ"];
-    [self addLog:@"==============="];
+    [self addLog:@"🔍 ТЕСТ ВСЕХ RVA"];
+    [self addLog:@"================="];
     
     uint64_t base = getBaseAddress();
     [self addLog:[NSString stringWithFormat:@"📌 Base: 0x%llx", base]];
@@ -127,13 +128,13 @@ void* getRealPtr(uint64_t rva) {
     [self addLog:[NSString stringWithFormat:@"✅ WorldToScreen: %p", Camera_WorldToScreen]];
     [self addLog:[NSString stringWithFormat:@"✅ get_position: %p", Transform_get_position]];
     
-    // ПЫТАЕМСЯ ВЫЗВАТЬ
+    // Вызываем Camera.get_main()
     if (Camera_get_main) {
         @try {
             void *cam = Camera_get_main();
-            [self addLog:[NSString stringWithFormat:@"✅ Камера вызвана -> %p", cam]];
+            [self addLog:[NSString stringWithFormat:@"✅ Камера: %p", cam]];
         } @catch (NSException *e) {
-            [self addLog:[NSString stringWithFormat:@"❌ Ошибка: %@", e.reason]];
+            [self addLog:[NSString stringWithFormat:@"❌ Ошибка камеры: %@", e.reason]];
         }
     }
     
