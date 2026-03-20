@@ -5,7 +5,7 @@
 
 // ========== ТВОИ ДАННЫЕ ==========
 #define MY_ID 71068432
-#define MY_NICK @"giviNgGrebe"
+#define MY_NICK @"Dojki"
 #define STRUCT_SIZE 0x200
 
 // СМЕЩЕНИЯ (ВРЕМЕННЫЕ)
@@ -123,7 +123,6 @@ static uint64_t baseAddr = 0;
     self.titleLabel.font = [UIFont boldSystemFontOfSize:28];
     [self addTarget:self action:@selector(tapped) forControlEvents:UIControlEventTouchUpInside];
     
-    // Плавающий жест
     panGesture = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(pan:)];
     [self addGestureRecognizer:panGesture];
     return self;
@@ -135,7 +134,6 @@ static uint64_t baseAddr = 0;
     center.x += translation.x;
     center.y += translation.y;
     
-    // Ограничиваем краями экрана
     center.x = MAX(self.frame.size.width/2, MIN(center.x, UIScreen.mainScreen.bounds.size.width - self.frame.size.width/2));
     center.y = MAX(self.frame.size.height/2 + 50, MIN(center.y, UIScreen.mainScreen.bounds.size.height - self.frame.size.height/2 - 50));
     
@@ -144,7 +142,10 @@ static uint64_t baseAddr = 0;
 }
 
 - (void)tapped {
-    [ButtonHandler showMenu];
+    Class handler = NSClassFromString(@"ButtonHandler");
+    if (handler) {
+        [handler performSelector:@selector(showMenu)];
+    }
 }
 @end
 
@@ -157,6 +158,7 @@ static uint64_t baseAddr = 0;
 + (void)showLog;
 + (void)hideLog;
 + (void)copyLog;
++ (uint64_t)getBaseAddress;
 + (UIWindow*)mainWindow;
 @end
 
@@ -191,7 +193,6 @@ static uint64_t baseAddr = 0;
     menuWindow.layer.shadowOpacity = 0.5;
     menuWindow.layer.shadowRadius = 20;
     
-    // Заголовок
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 30, w, 30)];
     title.text = @"⚡ AIMBOT ESP";
     title.textColor = UIColor.whiteColor;
@@ -199,7 +200,6 @@ static uint64_t baseAddr = 0;
     title.font = [UIFont boldSystemFontOfSize:24];
     [menuWindow addSubview:title];
     
-    // Подзаголовок
     UILabel *sub = [[UILabel alloc] initWithFrame:CGRectMake(0, 60, w, 20)];
     sub.text = @"Modern Strike Online";
     sub.textColor = UIColor.systemBlueColor;
@@ -207,7 +207,6 @@ static uint64_t baseAddr = 0;
     sub.font = [UIFont systemFontOfSize:14];
     [menuWindow addSubview:sub];
     
-    // Кнопки
     NSArray *btns = @[
         @{@"title":@"🔍 НАЙТИ ИГРОКОВ", @"color":UIColor.systemBlueColor, @"sel":@"scanPlayers"},
         @{@"title":@"📋 ПОКАЗАТЬ ЛОГ", @"color":UIColor.systemOrangeColor, @"sel":@"showLog"},
@@ -256,7 +255,7 @@ static uint64_t baseAddr = 0;
     mach_port_t object_name;
     
     int total = 0, found = 0;
-    int scanLimit = 100000; // Ограничение для теста
+    int scanLimit = 100000;
     
     while (vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info, &count, &object_name) == KERN_SUCCESS && total < scanLimit) {
         
@@ -267,11 +266,11 @@ static uint64_t baseAddr = 0;
             
             if (vm_read_overwrite(task, addr, size, (vm_address_t)buffer, &read) == KERN_SUCCESS) {
                 
-                for (int i = 0; i < size - STRUCT_SIZE; i += 8) { // шаг 8 для скорости
+                for (int i = 0; i < size - STRUCT_SIZE; i += 8) {
                     total++;
                     
                     float y = *(float*)(buffer + i + OFFSET_Y);
-                    if (y > 0 && y < 100) { // Похоже на высоту
+                    if (y > 0 && y < 100) {
                         
                         float health = *(float*)(buffer + i + OFFSET_HEALTH);
                         if (health > 0 && health < 200) {
@@ -289,7 +288,7 @@ static uint64_t baseAddr = 0;
                             found++;
                             
                             i += 0x80;
-                            if (found > 50) break; // Лимит игроков
+                            if (found > 50) break;
                         }
                     }
                 }
