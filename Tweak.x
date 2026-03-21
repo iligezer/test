@@ -50,7 +50,7 @@ float safeReadFloat(uintptr_t addr) {
     }
 }
 
-// ===== ПОИСК КООРДИНАТ =====
+// ===== ПОИСК КООРДИНАТ (РАБОЧИЙ СКАНЕР, ТОЛЬКО УСЛОВИЕ ПОМЕНЯЛ) =====
 void searchCoordinates() {
     if (isSearching) {
         addLog(@"⏳ Уже ищу");
@@ -58,7 +58,7 @@ void searchCoordinates() {
     }
     isSearching = YES;
     searchStartTime = [NSDate date];
-    addLog(@"🔍 ПОИСК КООРДИНАТ (X=6.42 Y=1.82 Z=2.48)");
+    addLog(@"🔍 ПОИСК КООРДИНАТ (X=6.42 Y=1.82 Z=2.48 ±5)");
     addLog(@"=================================");
     
     float targetX = 6.42;
@@ -127,7 +127,7 @@ void searchCoordinates() {
     isSearching = NO;
 }
 
-// ===== АНАЛИЗ: ИЩЕМ 3 БЛИЖАЙШИХ ID ВВЕРХ И ВНИЗ ОТ КООРДИНАТ =====
+// ===== АНАЛИЗ: ИЩЕМ 3 БЛИЖАЙШИХ ID ВВЕРХ И ВНИЗ =====
 void analyzeNearestIDs() {
     if (g_coordsCount == 0) {
         addLog(@"⚠️ Нет координат. Сначала нажмите СКАН");
