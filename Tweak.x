@@ -3,18 +3,16 @@
 #import <mach-o/dyld.h>
 #import <mach/mach.h>
 
-// ===== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ =====
 static UIWindow *g_logWindow = nil;
 static UITextView *g_logTextView = nil;
 static NSMutableString *g_logText = nil;
 static BOOL g_isSearching = NO;
 
-// ===== РАБОТА С ПАМЯТЬЮ =====
-size_t safeRead(uintptr_t address, void *buffer, size_t size) {
+size_t safeRead(uintptr_t addr, void *buf, size_t size) {
     @try {
-        vm_size_t bytesRead = 0;
-        kern_return_t kr = vm_read_overwrite(current_task(), (vm_address_t)address, size, (vm_address_t)buffer, &bytesRead);
-        return (kr == KERN_SUCCESS) ? bytesRead : 0;
+        vm_size_t read = 0;
+        kern_return_t kr = vm_read_overwrite(current_task(), (vm_address_t)addr, size, (vm_address_t)buf, &read);
+        return (kr == KERN_SUCCESS) ? read : 0;
     } @catch (NSException *e) {
         return 0;
     }
@@ -22,116 +20,100 @@ size_t safeRead(uintptr_t address, void *buffer, size_t size) {
 
 void addLog(NSString *format, ...) {
     if (!g_logText) g_logText = [[NSMutableString alloc] init];
-    
     va_list args;
     va_start(args, format);
-    NSString *message = [[NSString alloc] initWithFormat:format arguments:args];
+    NSString *msg = [[NSString alloc] initWithFormat:format arguments:args];
     va_end(args);
-    
-    [g_logText appendString:message];
+    [g_logText appendString:msg];
     [g_logText appendString:@"\n"];
-    
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (g_logTextView) {
-            g_logTextView.text = g_logText;
-            NSRange bottom = NSMakeRange(g_logTextView.text.length - 1, 1);
-            [g_logTextView scrollRangeToVisible:bottom];
-        }
+        g_logTextView.text = g_logText;
+        [g_logTextView scrollRangeToVisible:NSMakeRange(g_logTextView.text.length - 1, 1)];
     });
 }
 
-// ===== ПОИСК ИГРОКОВ В ПАМЯТИ =====
-void findPlayersAndRoomController() {
-    if (g_isSearching) {
-        addLog(@"⚠️ Поиск уже идет...");
-        return;
-    }
+void findRoomController() {
+    if (g_isSearching) { addLog(@"⏳ Жди..."); return; }
     g_isSearching = YES;
     
-    addLog(@"\n🔍 ПОИСК ИГРОКОВ В ПАМЯТИ");
-    addLog(@"=========================");
+    addLog(@"\n🔍 ПОИСК ROOMCONTROLLER");
+    addLog(@"======================");
     
-    uintptr_t startAddr = 0x100000000;
-    uintptr_t endAddr = 0x180000000;
-    uintptr_t players[50] = {0};
+    uintptr_t start = 0x100000000;
+    uintptr_t end = 0x180000000;
+    uintptr_t players[50];
     int playerCount = 0;
     
-    addLog(@"📊 Сканирую память...");
+    addLog(@"📊 Сканирую...");
     
-    // Ищем всех игроков по паттерну (ID и Team)
-    for (uintptr_t addr = startAddr; addr < endAddr && playerCount < 30; addr += 0x1000) {
-        for (int offset = 0; offset < 0x1000 && playerCount < 30; offset += 16) {
+    // Ищем игроков по ID (не нулевой, не гигантский мусор) и Team (0 или 1)
+    for (uintptr_t addr = start; addr < end && playerCount < 30; addr += 0x1000) {
+        for (int off = 0; off < 0x1000 && playerCount < 30; off += 16) {
             uintptr_t ptr = 0;
-            if (safeRead(addr + offset, &ptr, 8) != 8) continue;
-            if (ptr < startAddr || ptr > endAddr) continue;
+            if (safeRead(addr + off, &ptr, 8) != 8) continue;
+            if (ptr < start || ptr > end) continue;
             
             int team = 0, id = 0;
             if (safeRead(ptr + 0x34, &team, 4) == 4 &&
                 safeRead(ptr + 0x10, &id, 4) == 4) {
-                if ((team == 0 || team == 1) && id > 1000000 && id < 200000000) {
-                    // Проверяем уникальность
-                    BOOL exists = NO;
-                    for (int i = 0; i < playerCount; i++) {
-                        if (players[i] == ptr) { exists = YES; break; }
-                    }
-                    if (!exists) {
+                
+                // ID: не 0, не мусор (> 10 млн), но не гигантский (< 200 млн)
+                if ((team == 0 || team == 1) && id > 10000000 && id < 200000000) {
+                    BOOL dup = NO;
+                    for (int i = 0; i < playerCount; i++) if (players[i] == ptr) { dup = YES; break; }
+                    if (!dup) {
                         players[playerCount++] = ptr;
-                        addLog(@"   🎮 Игрок %d: 0x%lx (ID: %d, Team: %d)", playerCount, ptr, id, team);
+                        addLog(@"   🎮 0x%lx | ID: %d | Team: %d", ptr, id, team);
                     }
                 }
             }
         }
     }
     
-    addLog(@"\n📊 Найдено игроков: %d", playerCount);
-    
+    addLog(@"\n📊 Игроков: %d", playerCount);
     if (playerCount < 2) {
-        addLog(@"❌ Найдено мало игроков. Ты в матче?");
+        addLog(@"❌ Мало игроков. Ты в матче?");
         g_isSearching = NO;
         return;
     }
     
-    // Ищем RoomController по указателям на игроков
     addLog(@"\n🔍 Ищу RoomController...");
     
     for (int i = 0; i < playerCount && i < 5; i++) {
         uintptr_t target = players[i];
-        addLog(@"\n📌 Проверяю игрока 0x%lx", target);
+        addLog(@"\n📌 Проверяю 0x%lx", target);
         
-        for (uintptr_t addr = startAddr; addr < startAddr + 0x2000000; addr += 8) {
+        for (uintptr_t addr = start; addr < start + 0x2000000; addr += 8) {
             uintptr_t ptr = 0;
             if (safeRead(addr, &ptr, 8) != 8) continue;
             if (ptr == target) {
-                addLog(@"   🔗 Указатель найден: 0x%lx", addr);
+                addLog(@"   🔗 Указатель: 0x%lx", addr);
                 
-                // Проверяем массив по +0x140
-                uintptr_t arrayPtr = 0;
-                if (safeRead(addr + 0x140, &arrayPtr, 8) == 8 && arrayPtr > startAddr) {
-                    addLog(@"   📦 Массив по +0x140: 0x%lx", arrayPtr);
+                uintptr_t arr = 0;
+                if (safeRead(addr + 0x140, &arr, 8) == 8 && arr > start) {
+                    addLog(@"   📦 Массив +0x140: 0x%lx", arr);
                     
-                    // Считаем игроков в массиве
-                    int count = 0;
+                    int cnt = 0;
                     for (int j = 0; j < 20; j++) {
                         uintptr_t p = 0;
-                        if (safeRead(arrayPtr + j * 8, &p, 8) == 8 && p != 0) count++;
+                        if (safeRead(arr + j * 8, &p, 8) == 8 && p != 0) cnt++;
                         else break;
                     }
                     
-                    if (count >= playerCount - 2) {
-                        addLog(@"\n🎯 ROOMCONTROLLER НАЙДЕН: 0x%lx", addr);
-                        addLog(@"🎯 МАССИВ ИГРОКОВ: 0x%lx", arrayPtr);
-                        addLog(@"🎯 КОЛИЧЕСТВО: %d", count);
+                    if (cnt >= playerCount - 2) {
+                        addLog(@"\n🎯 ROOMCONTROLLER: 0x%lx", addr);
+                        addLog(@"🎯 МАССИВ: 0x%lx", arr);
+                        addLog(@"🎯 ИГРОКОВ: %d", cnt);
                         
-                        addLog(@"\n📋 ВСЕ ИГРОКИ В МАССИВЕ:");
-                        for (int j = 0; j < count; j++) {
+                        addLog(@"\n📋 ВСЕ ИГРОКИ:");
+                        for (int j = 0; j < cnt; j++) {
                             uintptr_t p = 0;
-                            safeRead(arrayPtr + j * 8, &p, 8);
+                            safeRead(arr + j * 8, &p, 8);
                             int pid = 0, pteam = 0;
                             safeRead(p + 0x10, &pid, 4);
                             safeRead(p + 0x34, &pteam, 4);
                             addLog(@"   [%d] 0x%lx | ID: %d | Team: %d", j, p, pid, pteam);
                         }
-                        
                         g_isSearching = NO;
                         return;
                     }
@@ -141,188 +123,147 @@ void findPlayersAndRoomController() {
     }
     
     addLog(@"\n❌ RoomController не найден");
-    addLog(@"💡 Убедись, что ты в активном матче");
+    addLog(@"💡 Зайди в матч и нажми снова");
     g_isSearching = NO;
 }
 
-// ===== СОЗДАНИЕ ОКНА (МАЛЕНЬКОЕ) =====
-void createLogWindow() {
-    UIWindow *keyWindow = nil;
-    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-        if ([scene isKindOfClass:[UIWindowScene class]]) {
-            UIWindowScene *ws = (UIWindowScene *)scene;
-            for (UIWindow *w in ws.windows) {
-                if (w.isKeyWindow) {
-                    keyWindow = w;
-                    break;
-                }
-            }
+void createWindow() {
+    UIWindow *key = nil;
+    for (UIScene *s in UIApplication.sharedApplication.connectedScenes) {
+        if ([s isKindOfClass:UIWindowScene.class]) {
+            UIWindowScene *ws = (UIWindowScene *)s;
+            for (UIWindow *w in ws.windows) if (w.isKeyWindow) { key = w; break; }
         }
-        if (keyWindow) break;
+        if (key) break;
     }
+    if (!key) return;
     
-    if (!keyWindow) return;
+    CGFloat w = 300, h = 380;
+    CGFloat x = (key.frame.size.width - w) / 2;
+    CGFloat y = (key.frame.size.height - h) / 2;
     
-    // МАЛЕНЬКОЕ ОКНО
-    CGFloat width = 300;
-    CGFloat height = 380;
-    CGFloat x = (keyWindow.frame.size.width - width) / 2;
-    CGFloat y = (keyWindow.frame.size.height - height) / 2;
-    
-    g_logWindow = [[UIWindow alloc] initWithFrame:CGRectMake(x, y, width, height)];
+    g_logWindow = [[UIWindow alloc] initWithFrame:CGRectMake(x, y, w, h)];
     g_logWindow.windowLevel = UIWindowLevelAlert + 2;
     g_logWindow.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.98];
     g_logWindow.layer.cornerRadius = 15;
     g_logWindow.layer.borderWidth = 2;
-    g_logWindow.layer.borderColor = [UIColor systemBlueColor].CGColor;
+    g_logWindow.layer.borderColor = UIColor.systemBlueColor.CGColor;
     g_logWindow.hidden = NO;
     
-    // Заголовок
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, width, 28)];
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, w, 28)];
     title.text = @"🎯 ESP";
-    title.textColor = [UIColor systemBlueColor];
+    title.textColor = UIColor.systemBlueColor;
     title.textAlignment = NSTextAlignmentCenter;
     title.font = [UIFont boldSystemFontOfSize:16];
     [g_logWindow addSubview:title];
     
-    // Текст
-    g_logTextView = [[UITextView alloc] initWithFrame:CGRectMake(8, 40, width - 16, 260)];
-    g_logTextView.backgroundColor = [UIColor blackColor];
-    g_logTextView.textColor = [UIColor greenColor];
+    g_logTextView = [[UITextView alloc] initWithFrame:CGRectMake(8, 40, w - 16, 260)];
+    g_logTextView.backgroundColor = UIColor.blackColor;
+    g_logTextView.textColor = UIColor.greenColor;
     g_logTextView.font = [UIFont fontWithName:@"Courier" size:10];
     g_logTextView.editable = NO;
     g_logTextView.selectable = YES;
     g_logTextView.layer.cornerRadius = 8;
     [g_logWindow addSubview:g_logTextView];
     
-    // Кнопка поиска
-    UIButton *searchBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    searchBtn.frame = CGRectMake(12, 310, (width - 35) / 2, 36);
-    [searchBtn setTitle:@"🔍 НАЙТИ" forState:UIControlStateNormal];
-    searchBtn.backgroundColor = [UIColor systemBlueColor];
-    [searchBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    searchBtn.layer.cornerRadius = 8;
-    searchBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-    [searchBtn addTarget:nil action:@selector(startSearch) forControlEvents:UIControlEventTouchUpInside];
-    [g_logWindow addSubview:searchBtn];
+    UIButton *search = [UIButton buttonWithType:UIButtonTypeSystem];
+    search.frame = CGRectMake(12, 310, (w - 35) / 2, 36);
+    [search setTitle:@"🔍 НАЙТИ" forState:UIControlStateNormal];
+    search.backgroundColor = UIColor.systemBlueColor;
+    [search setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    search.layer.cornerRadius = 8;
+    [search addTarget:nil action:@selector(startSearch) forControlEvents:UIControlEventTouchUpInside];
+    [g_logWindow addSubview:search];
     
-    // Кнопка копирования
-    UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    copyBtn.frame = CGRectMake(20 + (width - 35) / 2, 310, (width - 35) / 2, 36);
-    [copyBtn setTitle:@"📋 КОПИ" forState:UIControlStateNormal];
-    copyBtn.backgroundColor = [UIColor systemGreenColor];
-    [copyBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    copyBtn.layer.cornerRadius = 8;
-    copyBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-    [copyBtn addTarget:nil action:@selector(copyLog) forControlEvents:UIControlEventTouchUpInside];
-    [g_logWindow addSubview:copyBtn];
+    UIButton *copy = [UIButton buttonWithType:UIButtonTypeSystem];
+    copy.frame = CGRectMake(20 + (w - 35) / 2, 310, (w - 35) / 2, 36);
+    [copy setTitle:@"📋 КОПИ" forState:UIControlStateNormal];
+    copy.backgroundColor = UIColor.systemGreenColor;
+    [copy setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    copy.layer.cornerRadius = 8;
+    [copy addTarget:nil action:@selector(copyLog) forControlEvents:UIControlEventTouchUpInside];
+    [g_logWindow addSubview:copy];
     
-    // Кнопка закрытия
-    UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(width/2 - 45, 352, 90, 28);
-    [closeBtn setTitle:@"ЗАКРЫТЬ" forState:UIControlStateNormal];
-    closeBtn.backgroundColor = [UIColor systemRedColor];
-    [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    closeBtn.layer.cornerRadius = 6;
-    closeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:12];
-    [closeBtn addTarget:g_logWindow action:@selector(setHidden:) forControlEvents:UIControlEventTouchUpInside];
-    [g_logWindow addSubview:closeBtn];
+    UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
+    close.frame = CGRectMake(w/2 - 45, 352, 90, 28);
+    [close setTitle:@"ЗАКРЫТЬ" forState:UIControlStateNormal];
+    close.backgroundColor = UIColor.systemRedColor;
+    [close setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    close.layer.cornerRadius = 6;
+    [close addTarget:g_logWindow action:@selector(setHidden:) forControlEvents:UIControlEventTouchUpInside];
+    [g_logWindow addSubview:close];
     
     [g_logWindow makeKeyAndVisible];
 }
 
 void startSearch() {
-    if (g_isSearching) {
-        addLog(@"⏳ Жди...");
-        return;
-    }
+    if (g_isSearching) { addLog(@"⏳ Жди..."); return; }
     addLog(@"\n🔍 СТАРТ");
-    addLog(@"⏳ 10-15 сек");
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        findPlayersAndRoomController();
+        findRoomController();
     });
 }
 
 void copyLog() {
-    if (g_logTextView && g_logTextView.text.length > 0) {
-        UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
-        pasteboard.string = g_logTextView.text;
-        
-        dispatch_async(dispatch_get_main_queue(), ^{
-            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"✅" message:@"Скопировано" preferredStyle:UIAlertControllerStyleAlert];
-            UIWindow *keyWindow = nil;
-            for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
-                if ([scene isKindOfClass:[UIWindowScene class]]) {
-                    UIWindowScene *ws = (UIWindowScene *)scene;
-                    for (UIWindow *w in ws.windows) {
-                        if (w.isKeyWindow) {
-                            keyWindow = w;
-                            break;
-                        }
-                    }
-                }
-                if (keyWindow) break;
+    if (g_logTextView && g_logTextView.text.length) {
+        UIPasteboard.generalPasteboard.string = g_logTextView.text;
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"✅" message:@"Скопировано" preferredStyle:UIAlertControllerStyleAlert];
+        UIWindow *key = nil;
+        for (UIScene *s in UIApplication.sharedApplication.connectedScenes) {
+            if ([s isKindOfClass:UIWindowScene.class]) {
+                UIWindowScene *ws = (UIWindowScene *)s;
+                for (UIWindow *w in ws.windows) if (w.isKeyWindow) { key = w; break; }
             }
-            [keyWindow.rootViewController presentViewController:alert animated:YES completion:nil];
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-                [alert dismissViewControllerAnimated:YES completion:nil];
-            });
+            if (key) break;
+        }
+        [key.rootViewController presentViewController:alert animated:YES completion:nil];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1.2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            [alert dismissViewControllerAnimated:YES completion:nil];
         });
     }
 }
 
-// ===== ПЛАВАЮЩАЯ КНОПКА =====
 @interface FloatButton : UIImageView
-@property (nonatomic, copy) void (^actionBlock)(void);
-@property (nonatomic, assign) CGPoint lastLocation;
+@property (nonatomic, copy) void (^onTap)(void);
+@property (nonatomic, assign) CGPoint last;
 @end
 
 @implementation FloatButton
-
 - (instancetype)init {
-    CGFloat w = [UIScreen mainScreen].bounds.size.width;
-    CGFloat h = [UIScreen mainScreen].bounds.size.height;
-    
+    CGFloat w = UIScreen.mainScreen.bounds.size.width;
+    CGFloat h = UIScreen.mainScreen.bounds.size.height;
     self = [super initWithFrame:CGRectMake(w - 70, h - 90, 55, 55)];
     if (self) {
-        self.backgroundColor = [UIColor systemBlueColor];
+        self.backgroundColor = UIColor.systemBlueColor;
         self.layer.cornerRadius = 27.5;
         self.layer.borderWidth = 2;
-        self.layer.borderColor = [UIColor whiteColor].CGColor;
+        self.layer.borderColor = UIColor.whiteColor.CGColor;
         self.userInteractionEnabled = YES;
-        
-        UILabel *label = [[UILabel alloc] initWithFrame:self.bounds];
-        label.text = @"🎯";
-        label.textColor = [UIColor whiteColor];
-        label.textAlignment = NSTextAlignmentCenter;
-        label.font = [UIFont boldSystemFontOfSize:26];
-        [self addSubview:label];
-        
-        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(drag:)];
-        [self addGestureRecognizer:pan];
-        
-        UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(tap)];
-        [self addGestureRecognizer:tap];
+        UILabel *l = [[UILabel alloc] initWithFrame:self.bounds];
+        l.text = @"🎯";
+        l.textColor = UIColor.whiteColor;
+        l.textAlignment = NSTextAlignmentCenter;
+        l.font = [UIFont boldSystemFontOfSize:26];
+        [self addSubview:l];
+        UIPanGestureRecognizer *p = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(drag:)];
+        [self addGestureRecognizer:p];
+        UITapGestureRecognizer *t = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(tap)];
+        [self addGestureRecognizer:t];
     }
     return self;
 }
-
 - (void)drag:(UIPanGestureRecognizer *)g {
     CGPoint t = [g translationInView:self.superview];
-    if (g.state == UIGestureRecognizerStateBegan) self.lastLocation = self.center;
-    CGPoint newCenter = CGPointMake(self.lastLocation.x + t.x, self.lastLocation.y + t.y);
+    if (g.state == UIGestureRecognizerStateBegan) self.last = self.center;
+    CGPoint c = CGPointMake(self.last.x + t.x, self.last.y + t.y);
     CGFloat r = 27.5;
-    newCenter.x = MAX(r, MIN(self.superview.bounds.size.width - r, newCenter.x));
-    newCenter.y = MAX(r + 60, MIN(self.superview.bounds.size.height - r - 60, newCenter.y));
-    self.center = newCenter;
+    c.x = MAX(r, MIN(self.superview.bounds.size.width - r, c.x));
+    c.y = MAX(r + 60, MIN(self.superview.bounds.size.height - r - 60, c.y));
+    self.center = c;
 }
-
-- (void)tap { if (self.actionBlock) self.actionBlock(); }
-- (void)setAction:(void (^)(void))block { self.actionBlock = block; }
-
+- (void)tap { if (self.onTap) self.onTap(); }
 @end
 
-// ===== ОКНО =====
 @interface PassthroughWindow : UIWindow
 @property (nonatomic, weak) FloatButton *btn;
 @end
@@ -337,7 +278,6 @@ void copyLog() {
 }
 @end
 
-// ===== MAIN =====
 @interface App : NSObject
 @property (nonatomic, strong) PassthroughWindow *win;
 @end
@@ -346,19 +286,17 @@ void copyLog() {
 - (instancetype)init {
     self = [super init];
     if (self) {
-        self.win = [[PassthroughWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+        self.win = [[PassthroughWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
         self.win.windowLevel = UIWindowLevelAlert + 1;
-        self.win.backgroundColor = [UIColor clearColor];
+        self.win.backgroundColor = UIColor.clearColor;
         self.win.hidden = NO;
-        
         FloatButton *btn = [[FloatButton alloc] init];
         self.win.btn = btn;
         [self.win addSubview:btn];
-        
-        __weak typeof(self) weakSelf = self;
-        [btn setAction:^{
+        __weak typeof(self) weak = self;
+        [btn setOnTap:^{
             g_logText = nil;
-            createLogWindow();
+            createWindow();
         }];
     }
     return self;
