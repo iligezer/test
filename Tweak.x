@@ -69,7 +69,6 @@ BOOL isValidPlayerPosition(float x, float y, float z) {
     return YES;
 }
 
-// ===== ПРОВЕРКА СТРУКТУРЫ =====
 BOOL isValidStructure(uintptr_t structStart) {
     for (int offset = 0x20; offset <= 0x80; offset += 8) {
         uintptr_t transformPtr = safeReadPtr(structStart + offset);
@@ -87,7 +86,6 @@ BOOL isValidStructure(uintptr_t structStart) {
     return NO;
 }
 
-// ===== АВТОПОИСК =====
 void autoFindFiltered() {
     if (isSearching) {
         addLog(@"⏳ Уже ищу");
@@ -152,7 +150,6 @@ void autoFindFiltered() {
                             addLog([NSString stringWithFormat:@"\n🔹 [СВОЙ %d] СТРУКТУРА: 0x%lx", foundMy, structStart]);
                             addLog([NSString stringWithFormat:@"   ID: %d, Team: %d, Dead: %d", myID, team, dead]);
                             
-                            // Ищем Transform
                             for (int trOffset = 0x20; trOffset <= 0x80; trOffset += 8) {
                                 uintptr_t transform = safeReadPtr(structStart + trOffset);
                                 if (transform == 0) continue;
@@ -402,7 +399,6 @@ void createMenu() {
         self.w.btn = b;
         [self.w addSubview:b];
         
-        __weak typeof(self) weak = self;
         b.onTap = ^{
             logText = nil;
             createMenu();
