@@ -1,5 +1,4 @@
 #import <UIKit/UIKit.h>
-#import <mach-o/dyld.h>
 #import <mach/mach.h>
 
 // ===== ГЛОБАЛЬНЫЕ =====
@@ -7,20 +6,6 @@ static UIWindow *win = nil;
 static UITextView *logView = nil;
 static NSMutableString *logText = nil;
 static BOOL isSearching = NO;
-
-// ===== ПРОВЕРКА ДОСТУПНОСТИ СТРАНИЦЫ =====
-BOOL isPageReadable(uintptr_t addr) {
-    int test = 0;
-    vm_size_t read = 0;
-    kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 1, (vm_address_t)&test, &read);
-    return (kr == KERN_SUCCESS);
-}
-
-int safeReadInt(uintptr_t addr) {
-    int val = 0;
-    vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, NULL);
-    return val;
-}
 
 void addLog(NSString *msg) {
     if (!logText) logText = [[NSMutableString alloc] init];
@@ -31,46 +16,80 @@ void addLog(NSString *msg) {
     });
 }
 
-// ===== БЕЗОПАСНЫЙ ПОИСК =====
+// ===== БЕЗОПАСНОЕ ЧТЕНИЕ (ЧЕРЕЗ vm_region) =====
 void safeSearch() {
     if (isSearching) { addLog(@"⏳ Уже ищу"); return; }
     isSearching = YES;
-    addLog(@"🔍 ПОИСК ID");
+    addLog(@"🔍 ПОИСК ID 71068432 И 55471766");
     addLog(@"=================================");
     
     int myID = 71068432;
     int enemyID = 55471766;
     
-    uintptr_t start = 0x100000000;
-    uintptr_t end = 0x300000000;
+    task_t task = mach_task_self();
+    vm_address_t addr = 0;
+    vm_size_t size = 0;
+    struct vm_region_basic_info_64 info;
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t object_name = MACH_PORT_NULL;
     
-    addLog([NSString stringWithFormat:@"📊 Диапазон: 0x%lx - 0x%lx", start, end]);
-    addLog(@"⏳ Сканирование...");
+    int foundMy = 0, foundEnemy = 0;
     
-    // Идём по страницам (4KB)
-    for (uintptr_t page = start; page < end; page += 0x1000) {
-        // Проверяем доступность страницы
-        if (!isPageReadable(page)) continue;
-        
-        // Сканируем страницу
-        for (uintptr_t addr = page; addr < page + 0x1000 && addr < end; addr += 4) {
-            int val = safeReadInt(addr);
-            
-            if (val == myID) {
-                uintptr_t structStart = addr - 0x10;
-                int team = safeReadInt(structStart + 0x34);
-                int dead = safeReadInt(structStart + 0x7A);
-                addLog([NSString stringWithFormat:@"[СВОЙ] 0x%lx Team:%d Dead:%d", structStart, team, dead]);
-            }
-            else if (val == enemyID) {
-                uintptr_t structStart = addr - 0x10;
-                int team = safeReadInt(structStart + 0x34);
-                int dead = safeReadInt(structStart + 0x7A);
-                addLog([NSString stringWithFormat:@"[ВРАГ] 0x%lx Team:%d Dead:%d", structStart, team, dead]);
-            }
-        }
+    // Получаем первый регион
+    kern_return_t kr = mach_vm_region(task, &addr, &size, VM_REGION_BASIC_INFO_64,
+                                       (vm_region_info_t)&info, &count, &object_name);
+    if (kr != KERN_SUCCESS) {
+        addLog(@"❌ Ошибка получения регионов");
+        isSearching = NO;
+        return;
     }
     
+    addLog(@"📊 Сканирование регионов...");
+    
+    while (1) {
+        // Проверяем только регионы с правами чтения и записи (RW)
+        if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
+            
+            // Сканируем регион по 4 байта
+            for (uintptr_t a = addr; a < addr + size; a += 4) {
+                int val = 0;
+                vm_size_t read = 0;
+                // Безопасное чтение — vm_read_overwrite вернет ошибку, но не крашнет
+                kern_return_t kr2 = vm_read_overwrite(task, a, 4, (vm_address_t)&val, &read);
+                if (kr2 != KERN_SUCCESS) continue;
+                if (read != 4) continue;
+                
+                if (val == myID) {
+                    foundMy++;
+                    uintptr_t structStart = a - 0x10;
+                    int team = 0;
+                    vm_read_overwrite(task, structStart + 0x34, 4, (vm_address_t)&team, &read);
+                    int dead = 0;
+                    vm_read_overwrite(task, structStart + 0x7A, 4, (vm_address_t)&dead, &read);
+                    addLog([NSString stringWithFormat:@"[СВОЙ] 0x%lx Team:%d Dead:%d", structStart, team, dead]);
+                }
+                else if (val == enemyID) {
+                    foundEnemy++;
+                    uintptr_t structStart = a - 0x10;
+                    int team = 0;
+                    vm_read_overwrite(task, structStart + 0x34, 4, (vm_address_t)&team, &read);
+                    int dead = 0;
+                    vm_read_overwrite(task, structStart + 0x7A, 4, (vm_address_t)&dead, &read);
+                    addLog([NSString stringWithFormat:@"[ВРАГ] 0x%lx Team:%d Dead:%d", structStart, team, dead]);
+                }
+            }
+        }
+        
+        // Переход к следующему региону
+        addr += size;
+        count = VM_REGION_BASIC_INFO_COUNT_64;
+        kr = mach_vm_region(task, &addr, &size, VM_REGION_BASIC_INFO_64,
+                            (vm_region_info_t)&info, &count, &object_name);
+        if (kr != KERN_SUCCESS) break;
+        if (addr > 0x300000000) break;
+    }
+    
+    addLog([NSString stringWithFormat:@"\n✅ Найдено СВОИХ: %d, ВРАГОВ: %d", foundMy, foundEnemy]);
     addLog(@"✅ ГОТОВО");
     isSearching = NO;
 }
