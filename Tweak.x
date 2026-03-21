@@ -4,8 +4,11 @@
 #import <objc/runtime.h>
 
 // ========== НАСТРОЙКИ ==========
-#define COPY_COUNT 4               // количество копий координат
-#define COPY_OFFSET 0x108          // смещение между копиями (264 байта)
+#define MIN_COORD -50.0
+#define MAX_COORD 50.0
+#define NEARBY_OFFSET 0x50       // смещение для поиска копий (80 байт)
+#define VALUE_TOLERANCE 10.0     // погрешность значений координат ±10
+#define SCAN_LIMIT 1000000       // ограничение для теста
 
 // ========== RVA ФУНКЦИЙ ==========
 #define RVA_Camera_get_main         0x445BAF8
@@ -19,67 +22,23 @@ static t_Camera_get_main Camera_get_main = NULL;
 static t_Camera_WorldToScreen Camera_WorldToScreen = NULL;
 
 static NSMutableString *logText = nil;
-static UIWindow *overlayWindow = nil;
 static UIWindow *logWindow = nil;
 static UIWindow *menuWindow = nil;
 static UIButton *floatingButton = nil;
 static NSMutableArray *players = nil;
 static uint64_t baseAddr = 0;
-static BOOL espEnabled = YES;
 
 // ========== МОДЕЛЬ ИГРОКА ==========
-@interface Player : NSObject
-@property (assign) float x, y, z;
-@property (assign) float health;
-@property (assign) BOOL isLocal;
+@interface PlayerCandidate : NSObject
+@property (assign) uint64_t address;     // адрес X
+@property (assign) float x, y, z;        // координаты
+@property (assign) int copyCount;         // сколько копий найдено
 @end
 
-@implementation Player
+@implementation PlayerCandidate
 - (NSString *)description {
-    return [NSString stringWithFormat:@"📍(%.1f,%.1f,%.1f) ❤️%.0f%s",
-            self.x, self.y, self.z, self.health,
-            self.isLocal ? " 👑" : ""];
-}
-@end
-
-// ========== ESP VIEW ==========
-@interface ESPView : UIView
-@end
-
-@implementation ESPView
-- (void)drawRect:(CGRect)rect {
-    [super drawRect:rect];
-    if (!espEnabled || !players.count || !Camera_get_main || !Camera_WorldToScreen) return;
-    
-    void *cam = Camera_get_main();
-    if (!cam) return;
-    
-    CGContextRef ctx = UIGraphicsGetCurrentContext();
-    
-    for (Player *p in players) {
-        if (p.isLocal) continue;
-        
-        float pos[3] = {p.x, p.y, p.z};
-        void *screenPos = Camera_WorldToScreen(cam, pos);
-        if (!screenPos) continue;
-        
-        float *s = (float*)screenPos;
-        float sx = s[0] * rect.size.width;
-        float sy = s[1] * rect.size.height;
-        
-        if (sx > 0 && sx < rect.size.width && sy > 0 && sy < rect.size.height) {
-            CGContextSetFillColorWithColor(ctx, [UIColor redColor].CGColor);
-            CGContextFillEllipseInRect(ctx, CGRectMake(sx-4, sy-4, 8, 8));
-            
-            NSString *hp = [NSString stringWithFormat:@"%.0f", p.health];
-            [hp drawAtPoint:CGPointMake(sx+8, sy-12) withAttributes:@{
-                NSFontAttributeName: [UIFont boldSystemFontOfSize:11],
-                NSForegroundColorAttributeName: UIColor.whiteColor,
-                NSStrokeColorAttributeName: UIColor.blackColor,
-                NSStrokeWidthAttributeName: @-2
-            }];
-        }
-    }
+    return [NSString stringWithFormat:@"📍(%.1f,%.1f,%.1f) @0x%llx [%d копий]",
+            self.x, self.y, self.z, self.address, self.copyCount];
 }
 @end
 
@@ -97,7 +56,7 @@ static BOOL espEnabled = YES;
     self.layer.shadowColor = UIColor.blackColor.CGColor;
     self.layer.shadowOffset = CGSizeMake(0, 4);
     self.layer.shadowOpacity = 0.5;
-    [self setTitle:@"⚡" forState:UIControlStateNormal];
+    [self setTitle:@"🔍" forState:UIControlStateNormal];
     self.titleLabel.font = [UIFont boldSystemFontOfSize:28];
     [self addTarget:self action:@selector(tapped) forControlEvents:UIControlEventTouchUpInside];
     
@@ -129,14 +88,16 @@ static BOOL espEnabled = YES;
 @interface ButtonHandler : NSObject
 + (void)showMenu;
 + (void)closeMenu;
-+ (void)findPlayersByCopies;
-+ (void)toggleESP;
++ (void)findPlayers;
++ (void)showAnalytics;
 + (void)addLog:(NSString*)text;
 + (void)showLog;
 + (void)closeLog;
 + (void)copyLog;
 + (uint64_t)getBaseAddress;
 + (UIWindow*)mainWindow;
++ (BOOL)isValidFloat:(float)f;
++ (BOOL)valuesMatch:(float)a with:(float)b tolerance:(float)tol;
 @end
 
 @implementation ButtonHandler
@@ -161,6 +122,16 @@ static BOOL espEnabled = YES;
     return 0;
 }
 
++ (BOOL)isValidFloat:(float)f {
+    if (isnan(f)) return NO;
+    if (isinf(f)) return NO;
+    return YES;
+}
+
++ (BOOL)valuesMatch:(float)a with:(float)b tolerance:(float)tol {
+    return fabs(a - b) <= tol;
+}
+
 + (void)showMenu {
     if (menuWindow) {
         menuWindow.hidden = NO;
@@ -176,15 +147,15 @@ static BOOL espEnabled = YES;
     menuWindow.layer.borderColor = UIColor.systemBlueColor.CGColor;
     
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 20, w, 30)];
-    title.text = @"⚡ ESP MODERN";
+    title.text = @"🔍 PLAYER SCANNER";
     title.textColor = UIColor.whiteColor;
     title.textAlignment = NSTextAlignmentCenter;
     title.font = [UIFont boldSystemFontOfSize:22];
     [menuWindow addSubview:title];
     
     NSArray *btns = @[
-        @{@"title":@"🔍 НАЙТИ ИГРОКОВ", @"color":UIColor.systemBlueColor, @"sel":@"findPlayersByCopies"},
-        @{@"title":@"👁️ ВКЛ/ВЫКЛ ESP", @"color":UIColor.systemGreenColor, @"sel":@"toggleESP"},
+        @{@"title":@"🎯 НАЙТИ ИГРОКОВ", @"color":UIColor.systemBlueColor, @"sel":@"findPlayers"},
+        @{@"title":@"📊 АНАЛИТИКА", @"color":UIColor.systemPurpleColor, @"sel":@"showAnalytics"},
         @{@"title":@"📋 ПОКАЗАТЬ ЛОГ", @"color":UIColor.systemOrangeColor, @"sel":@"showLog"},
         @{@"title":@"✖️ ЗАКРЫТЬ", @"color":UIColor.systemRedColor, @"sel":@"closeMenu"}
     ];
@@ -210,20 +181,108 @@ static BOOL espEnabled = YES;
     menuWindow.hidden = YES;
 }
 
-+ (void)toggleESP {
-    espEnabled = !espEnabled;
-    [self addLog:espEnabled ? @"✅ ESP ВКЛЮЧЕН" : @"❌ ESP ВЫКЛЮЧЕН"];
-    [overlayWindow.subviews.firstObject setNeedsDisplay];
+// ========== АНАЛИТИКА: ЧТЕНИЕ РАЗНЫХ ТИПОВ ВОКРУГ АДРЕСА ==========
++ (void)showAnalytics {
+    if (!players || players.count == 0) {
+        [self addLog:@"❌ Сначала найди игроков"];
+        [self showLog];
+        return;
+    }
+    
+    [self addLog:@"\n📊 АНАЛИТИКА СТРУКТУРЫ"];
+    [self addLog:@"==================="];
+    
+    task_t task = mach_task_self();
+    
+    for (int pIdx = 0; pIdx < MIN(20, players.count); pIdx++) {
+        PlayerCandidate *p = players[pIdx];
+        uint64_t addr = p.address;
+        
+        [self addLog:[NSString stringWithFormat:@"\n🔹 ИГРОК %d: 0x%llx (%.1f,%.1f,%.1f)", pIdx+1, addr, p.x, p.y, p.z]];
+        [self addLog:@"────────────────────────────────────────────"];
+        
+        // Сканируем диапазон -200..+200 байт от адреса
+        for (int offset = -200; offset <= 200; offset += 4) {
+            uint64_t scanAddr = addr + offset;
+            uint8_t buffer[32];
+            vm_size_t read;
+            
+            if (vm_read_overwrite(task, scanAddr, 32, (vm_address_t)buffer, &read) != KERN_SUCCESS) continue;
+            
+            // Пропускаем нулевые значения
+            BOOL allZero = YES;
+            for (int j = 0; j < 8; j++) if (buffer[j] != 0) { allZero = NO; break; }
+            if (allZero) continue;
+            
+            NSMutableString *line = [NSMutableString stringWithFormat:@"  +0x%03X: ", offset];
+            
+            // Float
+            float *f = (float*)buffer;
+            if ([self isValidFloat:*f] && fabs(*f) < 10000 && fabs(*f) > 0.001) {
+                [line appendFormat:@"F32=%.2f ", *f];
+            }
+            
+            // Double
+            double *d = (double*)buffer;
+            if ([self isValidFloat:*d] && fabs(*d) < 10000 && fabs(*d) > 0.001) {
+                [line appendFormat:@"F64=%.2f ", *d];
+            }
+            
+            // Int32 (i4)
+            int32_t *i4 = (int32_t*)buffer;
+            if (*i4 != 0 && *i4 > -100000 && *i4 < 100000) {
+                [line appendFormat:@"I4=%d ", *i4];
+            }
+            
+            // UInt32 (u4)
+            uint32_t *u4 = (uint32_t*)buffer;
+            if (*u4 != 0 && *u4 < 100000) {
+                [line appendFormat:@"U4=%u ", *u4];
+            }
+            
+            // Int16 (i2)
+            int16_t *i2 = (int16_t*)buffer;
+            if (*i2 != 0 && *i2 > -10000 && *i2 < 10000) {
+                [line appendFormat:@"I2=%d ", *i2];
+            }
+            
+            // UInt16 (u2)
+            uint16_t *u2 = (uint16_t*)buffer;
+            if (*u2 != 0 && *u2 < 10000) {
+                [line appendFormat:@"U2=%u ", *u2];
+            }
+            
+            // Int8 (i1)
+            int8_t *i1 = (int8_t*)buffer;
+            if (*i1 != 0 && *i1 > -100 && *i1 < 100) {
+                [line appendFormat:@"I1=%d ", *i1];
+            }
+            
+            // UInt8 (u1)
+            uint8_t *u1 = (uint8_t*)buffer;
+            if (*u1 != 0 && *u1 < 100) {
+                [line appendFormat:@"U1=%u ", *u1];
+            }
+            
+            if (line.length > 10) {
+                [self addLog:line];
+            }
+        }
+    }
+    
+    [self showLog];
 }
 
-// ========== ПОИСК ИГРОКОВ ПО 4 КОПИЯМ КООРДИНАТ ==========
-+ (void)findPlayersByCopies {
+// ========== ПОИСК ИГРОКОВ ==========
++ (void)findPlayers {
     players = [NSMutableArray array];
     baseAddr = [self getBaseAddress];
     
-    [self addLog:@"\n🔍 ПОИСК ПО 4 КОПИЯМ КООРДИНАТ"];
-    [self addLog:@"==========================="];
+    [self addLog:@"\n🎯 ПОИСК ИГРОКОВ"];
+    [self addLog:@"================"];
     [self addLog:[NSString stringWithFormat:@"📌 База: 0x%llx", baseAddr]];
+    [self addLog:[NSString stringWithFormat:@"📌 Диапазон координат: %.0f..%.0f", MIN_COORD, MAX_COORD]];
+    [self addLog:[NSString stringWithFormat:@"📌 Поиск копий на смещении 0x%x (погрешность ±%.0f)", NEARBY_OFFSET, VALUE_TOLERANCE]];
     
     task_t task = mach_task_self();
     vm_address_t addr = 0;
@@ -232,64 +291,70 @@ static BOOL espEnabled = YES;
     mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
     mach_port_t object_name;
     
-    int found = 0;
     int scanned = 0;
+    int found = 0;
+    NSMutableArray *candidates = [NSMutableArray array];
     
-    while (vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info, &count, &object_name) == KERN_SUCCESS && found < 30) {
+    while (vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info, &count, &object_name) == KERN_SUCCESS && scanned < SCAN_LIMIT) {
         
-        if (size > 4096 && size < 10*1024*1024 && (info.protection & VM_PROT_READ)) {
+        if (size > 4096 && size < 5*1024*1024 && (info.protection & VM_PROT_READ)) {
             
             uint8_t *buffer = malloc(size);
             vm_size_t read;
             
             if (vm_read_overwrite(task, addr, size, (vm_address_t)buffer, &read) == KERN_SUCCESS) {
                 
-                for (int i = 0; i < size - (COPY_COUNT * COPY_OFFSET); i += 8) {
+                for (int i = 0; i < size - 0x100; i += 4) {
                     scanned++;
                     
-                    BOOL valid = YES;
-                    float coords[COPY_COUNT][3]; // X,Y,Z для каждой копии
+                    // Читаем X, Y, Z
+                    float *x = (float*)(buffer + i);
+                    float *y = (float*)(buffer + i + 4);
+                    float *z = (float*)(buffer + i + 8);
                     
-                    // Проверяем все копии координат
-                    for (int c = 0; c < COPY_COUNT; c++) {
-                        int offset = c * COPY_OFFSET;
+                    // Фильтр: валидные числа
+                    if (![self isValidFloat:*x] || ![self isValidFloat:*y] || ![self isValidFloat:*z]) continue;
+                    
+                    // Фильтр: не (0,0,0)
+                    if (fabs(*x) < 0.01 && fabs(*y) < 0.01 && fabs(*z) < 0.01) continue;
+                    
+                    // Фильтр: диапазон координат
+                    if (*x < MIN_COORD || *x > MAX_COORD) continue;
+                    if (*y < MIN_COORD || *y > MAX_COORD) continue;
+                    if (*z < MIN_COORD || *z > MAX_COORD) continue;
+                    
+                    // Ищем копии на смещении NEARBY_OFFSET
+                    int copies = 1;
+                    for (int off = NEARBY_OFFSET; off <= NEARBY_OFFSET * 2; off += NEARBY_OFFSET) {
+                        if (i + off + 12 >= size) break;
                         
-                        float *x = (float*)(buffer + i + offset);
-                        float *y = (float*)(buffer + i + offset + 4);
-                        float *z = (float*)(buffer + i + offset + 8);
+                        float *x2 = (float*)(buffer + i + off);
+                        float *y2 = (float*)(buffer + i + off + 4);
+                        float *z2 = (float*)(buffer + i + off + 8);
                         
-                        coords[c][0] = *x;
-                        coords[c][1] = *y;
-                        coords[c][2] = *z;
-                        
-                        // Проверяем, что координаты разумные
-                        if (fabs(*x) > 10000 || fabs(*y) > 10000 || fabs(*z) > 10000) {
-                            valid = NO;
-                            break;
-                        }
-                        if (fabs(*x) < 0.1 && fabs(*y) < 0.1 && fabs(*z) < 0.1) {
-                            valid = NO;
-                            break;
+                        if ([self valuesMatch:*x with:*x2 tolerance:VALUE_TOLERANCE] &&
+                            [self valuesMatch:*y with:*y2 tolerance:VALUE_TOLERANCE] &&
+                            [self valuesMatch:*z with:*z2 tolerance:VALUE_TOLERANCE]) {
+                            copies++;
                         }
                     }
                     
-                    if (valid) {
-                        // Нашли игрока! Берём первую копию координат
-                        Player *p = [[Player alloc] init];
-                        p.x = coords[0][0];
-                        p.y = coords[0][1];
-                        p.z = coords[0][2];
-                        p.health = 100;
-                        p.isLocal = (found == 0);
+                    if (copies >= 2) { // Нашли минимум 2 копии — вероятно игрок
+                        PlayerCandidate *p = [[PlayerCandidate alloc] init];
+                        p.address = addr + i;
+                        p.x = *x;
+                        p.y = *y;
+                        p.z = *z;
+                        p.copyCount = copies;
                         
-                        [players addObject:p];
+                        [candidates addObject:p];
                         found++;
                         
-                        [self addLog:[NSString stringWithFormat:@"✅ Игрок %d: (%.1f,%.1f,%.1f) [%d копий]",
-                                      found, p.x, p.y, p.z, COPY_COUNT]];
+                        [self addLog:[NSString stringWithFormat:@"✅ Кандидат %d: (%.1f,%.1f,%.1f) @0x%llx [%d копий]",
+                                      found, p.x, p.y, p.z, p.address, p.copyCount]];
                         
-                        i += COPY_OFFSET * 2; // пропускаем структуру
-                        if (found >= 20) break;
+                        i += 0x100;
+                        if (found >= 50) break;
                     }
                 }
             }
@@ -299,13 +364,40 @@ static BOOL espEnabled = YES;
         if (scanned % 100000 == 0) usleep(1000);
     }
     
-    [self addLog:[NSString stringWithFormat:@"📊 Проверено адресов: %d", scanned]];
-    [self addLog:[NSString stringWithFormat:@"🎯 Найдено игроков: %d", found]];
-    [overlayWindow.subviews.firstObject setNeedsDisplay];
+    // Фильтруем дубликаты (похожие координаты)
+    NSMutableArray *uniquePlayers = [NSMutableArray array];
+    for (PlayerCandidate *p in candidates) {
+        BOOL duplicate = NO;
+        for (PlayerCandidate *existing in uniquePlayers) {
+            if ([self valuesMatch:p.x with:existing.x tolerance:5.0] &&
+                [self valuesMatch:p.y with:existing.y tolerance:5.0] &&
+                [self valuesMatch:p.z with:existing.z tolerance:5.0]) {
+                duplicate = YES;
+                break;
+            }
+        }
+        if (!duplicate) {
+            [uniquePlayers addObject:p];
+        }
+    }
+    
+    players = uniquePlayers;
+    
+    [self addLog:@"\n📊 СТАТИСТИКА:"];
+    [self addLog:[NSString stringWithFormat:@"📁 Проверено адресов: %d", scanned]];
+    [self addLog:[NSString stringWithFormat:@"🎯 Кандидатов (с копиями): %d", found]];
+    [self addLog:[NSString stringWithFormat:@"👥 Уникальных игроков: %lu", (unsigned long)players.count]];
+    
+    // Выводим топ-20
+    [self addLog:@"\n🎯 ТОП-20 ИГРОКОВ:"];
+    for (int i = 0; i < MIN(20, players.count); i++) {
+        PlayerCandidate *p = players[i];
+        [self addLog:[NSString stringWithFormat:@"%d. %@", i+1, p]];
+    }
+    
     [self showLog];
 }
 
-// ========== ЛОГ ==========
 + (void)addLog:(NSString*)t {
     if (!logText) logText = [NSMutableString new];
     [logText appendFormat:@"%@\n", t];
@@ -314,7 +406,7 @@ static BOOL espEnabled = YES;
 
 + (void)showLog {
     if (!logWindow) {
-        CGFloat w = 300, h = 400;
+        CGFloat w = 350, h = 500;
         CGFloat x = (UIScreen.mainScreen.bounds.size.width - w) / 2;
         CGFloat y = (UIScreen.mainScreen.bounds.size.height - h) / 2;
         
@@ -328,7 +420,7 @@ static BOOL espEnabled = YES;
         UITextView *tv = [[UITextView alloc] initWithFrame:CGRectMake(5, 5, w-10, h-80)];
         tv.backgroundColor = UIColor.blackColor;
         tv.textColor = UIColor.greenColor;
-        tv.font = [UIFont fontWithName:@"Courier" size:11];
+        tv.font = [UIFont fontWithName:@"Courier" size:10];
         tv.editable = NO;
         [logWindow addSubview:tv];
         
@@ -376,18 +468,7 @@ static void init() {
             floatingButton = [[FloatingButton alloc] initWithFrame:CGRectMake(20, 150, 55, 55)];
             [w addSubview:floatingButton];
             
-            overlayWindow = [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
-            overlayWindow.windowLevel = UIWindowLevelAlert + 1;
-            overlayWindow.backgroundColor = UIColor.clearColor;
-            overlayWindow.userInteractionEnabled = NO;
-            
-            ESPView *esp = [[ESPView alloc] initWithFrame:UIScreen.mainScreen.bounds];
-            esp.backgroundColor = UIColor.clearColor;
-            [overlayWindow addSubview:esp];
-            
-            [overlayWindow makeKeyAndVisible];
-            
-            [ButtonHandler addLog:@"✅ ESP ГОТОВ"];
+            [ButtonHandler addLog:@"✅ СКАНЕР ЗАГРУЖЕН"];
             [ButtonHandler addLog:@"⚡ НАЖМИ КНОПКУ"];
         });
     }
