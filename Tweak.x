@@ -24,15 +24,47 @@ void clearLog() {
     addLog(@"🗑 Лог очищен");
 }
 
-// ===== ПРОВЕРКА ДОСТУПНОСТИ АДРЕСА =====
-BOOL isAddressReadable(uintptr_t addr) {
-    int test = 0;
-    vm_size_t read = 0;
-    kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 1, (vm_address_t)&test, &read);
-    return (kr == KERN_SUCCESS && read == 1);
+// ===== БЕЗОПАСНОЕ ЧТЕНИЕ (ВОЗВРАЩАЕТ 0 ПРИ ОШИБКЕ) =====
+int safeReadInt(uintptr_t addr) {
+    if (addr == 0) return 0;
+    @try {
+        int val = 0;
+        vm_size_t read = 0;
+        kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, &read);
+        if (kr != KERN_SUCCESS || read != 4) return 0;
+        return val;
+    } @catch (NSException *e) {
+        return 0;
+    }
 }
 
-// ===== АНАЛИЗ С БЕЗОПАСНЫМ ЧТЕНИЕМ =====
+uintptr_t safeReadPtr(uintptr_t addr) {
+    if (addr == 0) return 0;
+    @try {
+        uintptr_t val = 0;
+        vm_size_t read = 0;
+        kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 8, (vm_address_t)&val, &read);
+        if (kr != KERN_SUCCESS || read != 8) return 0;
+        return val;
+    } @catch (NSException *e) {
+        return 0;
+    }
+}
+
+float safeReadFloat(uintptr_t addr) {
+    if (addr == 0) return 0;
+    @try {
+        float val = 0;
+        vm_size_t read = 0;
+        kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, &read);
+        if (kr != KERN_SUCCESS || read != 4) return 0;
+        return val;
+    } @catch (NSException *e) {
+        return 0;
+    }
+}
+
+// ===== АНАЛИЗ СТРУКТУР (БЕЗ ВЫЛЕТОВ) =====
 void analyzeStructures() {
     if (g_structCount == 0) {
         addLog(@"⚠️ Нет структур. Сначала нажмите СКАН");
@@ -42,24 +74,21 @@ void analyzeStructures() {
     addLog(@"\n📊 АНАЛИЗ КООРДИНАТ");
     addLog(@"=================================");
     
-    task_t task = mach_task_self();
     int validCount = 0;
     
     for (int i = 0; i < g_structCount; i++) {
         uintptr_t s = g_foundStructs[i];
+        if (s == 0) continue;
         
-        // Проверяем доступность структуры
-        if (!isAddressReadable(s)) {
-            addLog([NSString stringWithFormat:@"⚠️ Структура 0x%lx недоступна", s]);
-            continue;
-        }
+        // Читаем ID, Team, Dead
+        int id = safeReadInt(s + 0x10);
+        int team = safeReadInt(s + 0x34);
+        int dead = safeReadInt(s + 0x7A);
         
-        int id = 0, team = 0, dead = 0;
-        vm_read_overwrite(task, s + 0x10, 4, (vm_address_t)&id, NULL);
-        vm_read_overwrite(task, s + 0x34, 4, (vm_address_t)&team, NULL);
-        vm_read_overwrite(task, s + 0x7A, 4, (vm_address_t)&dead, NULL);
-        
-        if ((team != 0 && team != 1) || dead < 0 || dead > 100) continue;
+        // Фильтр
+        if (id == 0) continue;
+        if (team != 0 && team != 1) continue;
+        if (dead < 0 || dead > 100) continue;
         
         validCount++;
         addLog([NSString stringWithFormat:@"\n🔹 ИГРОК %d", validCount]);
@@ -68,21 +97,18 @@ void analyzeStructures() {
         addLog([NSString stringWithFormat:@"   Team: %d %@", team, team == 0 ? @"(СВОЙ)" : @"(ВРАГ)"]);
         addLog([NSString stringWithFormat:@"   Dead: %d %@", dead, dead == 0 ? @"(ЖИВ)" : @"(МЕРТВ)"]);
         
-        // Читаем Transform с проверкой
-        uintptr_t transform = 0;
-        vm_read_overwrite(task, s + 0x38, 8, (vm_address_t)&transform, NULL);
+        // Transform
+        uintptr_t transform = safeReadPtr(s + 0x38);
         
-        if (transform != 0 && isAddressReadable(transform)) {
-            // Проверяем доступность позиции
-            if (isAddressReadable(transform + 0x20)) {
-                float pos[3] = {0};
-                vm_read_overwrite(task, transform + 0x20, 12, (vm_address_t)pos, NULL);
-                addLog([NSString stringWithFormat:@"   📍 ПОЗИЦИЯ: X=%.2f Y=%.2f Z=%.2f", pos[0], pos[1], pos[2]]);
-            } else {
-                addLog([NSString stringWithFormat:@"   ⚠️ Позиция недоступна"]);
-            }
+        if (transform != 0) {
+            float x = safeReadFloat(transform + 0x20);
+            float y = safeReadFloat(transform + 0x24);
+            float z = safeReadFloat(transform + 0x28);
+            
+            addLog([NSString stringWithFormat:@"   Transform: 0x%lx", transform]);
+            addLog([NSString stringWithFormat:@"   📍 ПОЗИЦИЯ: X=%.2f Y=%.2f Z=%.2f", x, y, z]);
         } else {
-            addLog([NSString stringWithFormat:@"   ⚠️ Transform недоступен"]);
+            addLog([NSString stringWithFormat:@"   Transform: 0 (не найден)"]);
         }
     }
     
@@ -146,9 +172,8 @@ void searchIDs() {
                     if (val == myID && foundMy < 50) {
                         foundMy++;
                         uintptr_t structStart = (page + offset) - 0x10;
-                        int team = 0, dead = 0;
-                        vm_read_overwrite(task, structStart + 0x34, 4, (vm_address_t)&team, &read);
-                        vm_read_overwrite(task, structStart + 0x7A, 4, (vm_address_t)&dead, &read);
+                        int team = safeReadInt(structStart + 0x34);
+                        int dead = safeReadInt(structStart + 0x7A);
                         if (team == 0 || team == 1) {
                             addLog([NSString stringWithFormat:@"[СВОЙ %d] 0x%lx Team:%d Dead:%d", foundMy, structStart, team, dead]);
                             g_foundStructs[g_structCount++] = structStart;
@@ -157,9 +182,8 @@ void searchIDs() {
                     else if (val == enemyID && foundEnemy < 50) {
                         foundEnemy++;
                         uintptr_t structStart = (page + offset) - 0x10;
-                        int team = 0, dead = 0;
-                        vm_read_overwrite(task, structStart + 0x34, 4, (vm_address_t)&team, &read);
-                        vm_read_overwrite(task, structStart + 0x7A, 4, (vm_address_t)&dead, &read);
+                        int team = safeReadInt(structStart + 0x34);
+                        int dead = safeReadInt(structStart + 0x7A);
                         if (team == 0 || team == 1) {
                             addLog([NSString stringWithFormat:@"[ВРАГ %d] 0x%lx Team:%d Dead:%d", foundEnemy, structStart, team, dead]);
                             g_foundStructs[g_structCount++] = structStart;
@@ -229,7 +253,7 @@ void searchIDs() {
 }
 @end
 
-// ===== МЕНЮ (УМЕНЬШЕННОЕ) =====
+// ===== МЕНЮ =====
 void createMenu() {
     UIWindow *key = nil;
     for (UIScene *s in UIApplication.sharedApplication.connectedScenes) {
@@ -271,8 +295,8 @@ void createMenu() {
     logView.layer.cornerRadius = 6;
     [win addSubview:logView];
     
-    // Кнопки в 2 ряда
     CGFloat btnW = (w - 30) / 2;
+    
     UIButton *searchBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     searchBtn.frame = CGRectMake(10, 275, btnW, 34);
     [searchBtn setTitle:@"🔍 СКАН" forState:UIControlStateNormal];
