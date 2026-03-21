@@ -406,9 +406,16 @@ static uint64_t baseAddr = 0;
 
 + (void)showLog {
     if (!logWindow) {
-        CGFloat w = 350, h = 500;
+        CGFloat w = 350;
+        CGFloat h = 500;
         CGFloat x = (UIScreen.mainScreen.bounds.size.width - w) / 2;
         CGFloat y = (UIScreen.mainScreen.bounds.size.height - h) / 2;
+        
+        // Убедимся, что окно не уходит за экран
+        if (y < 50) y = 50;
+        if (y + h > UIScreen.mainScreen.bounds.size.height - 50) {
+            y = UIScreen.mainScreen.bounds.size.height - h - 50;
+        }
         
         logWindow = [[UIWindow alloc] initWithFrame:CGRectMake(x, y, w, h)];
         logWindow.windowLevel = UIWindowLevelAlert + 2;
@@ -416,33 +423,53 @@ static uint64_t baseAddr = 0;
         logWindow.layer.cornerRadius = 15;
         logWindow.layer.borderWidth = 2;
         logWindow.layer.borderColor = UIColor.systemGreenColor.CGColor;
+        logWindow.layer.masksToBounds = YES;
         
+        // Текстовая область
         UITextView *tv = [[UITextView alloc] initWithFrame:CGRectMake(5, 5, w-10, h-80)];
         tv.backgroundColor = UIColor.blackColor;
         tv.textColor = UIColor.greenColor;
         tv.font = [UIFont fontWithName:@"Courier" size:10];
         tv.editable = NO;
+        tv.showsVerticalScrollIndicator = YES;
         [logWindow addSubview:tv];
         
+        // Кнопка копировать (левая)
         UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        copyBtn.frame = CGRectMake(20, h-65, 100, 40);
+        copyBtn.frame = CGRectMake(20, h-65, 120, 40);
         copyBtn.backgroundColor = UIColor.systemBlueColor;
         copyBtn.layer.cornerRadius = 10;
-        [copyBtn setTitle:@"📋 Копировать" forState:UIControlStateNormal];
+        [copyBtn setTitle:@"📋 КОПИРОВАТЬ" forState:UIControlStateNormal];
+        [copyBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+        copyBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
         [copyBtn addTarget:self action:@selector(copyLog) forControlEvents:UIControlEventTouchUpInside];
         [logWindow addSubview:copyBtn];
         
+        // Кнопка закрыть (правая)
         UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-        closeBtn.frame = CGRectMake(w-120, h-65, 100, 40);
+        closeBtn.frame = CGRectMake(w-140, h-65, 120, 40);
         closeBtn.backgroundColor = UIColor.systemRedColor;
         closeBtn.layer.cornerRadius = 10;
-        [closeBtn setTitle:@"✖️ Закрыть" forState:UIControlStateNormal];
+        [closeBtn setTitle:@"✖️ ЗАКРЫТЬ" forState:UIControlStateNormal];
+        [closeBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+        closeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
         [closeBtn addTarget:self action:@selector(closeLog) forControlEvents:UIControlEventTouchUpInside];
         [logWindow addSubview:closeBtn];
+        
+        // Запоминаем текстовое поле
+        objc_setAssociatedObject(logWindow, "textView", tv, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
     
-    UITextView *tv = logWindow.subviews.firstObject;
+    UITextView *tv = objc_getAssociatedObject(logWindow, "textView");
     tv.text = logText;
+    
+    // Скроллим вниз
+    if (tv.text.length > 0) {
+        NSRange bottom = NSMakeRange(tv.text.length - 1, 1);
+        [tv scrollRangeToVisible:bottom];
+    }
+    
+    logWindow.hidden = NO;
     [logWindow makeKeyAndVisible];
 }
 
