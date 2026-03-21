@@ -66,14 +66,15 @@ void searchByCoordinates() {
     mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
     mach_port_t object_name = MACH_PORT_NULL;
     
-    uint8_t *buffer = malloc(0x1000);
+    // БУФЕР 64KB (0x10000) - для скорости
+    uint8_t *buffer = malloc(0x10000);
     if (!buffer) {
         addLog(@"❌ Ошибка памяти");
         isSearching = NO;
         return;
     }
     
-    addLog(@"📊 Сканирование...");
+    addLog(@"📊 Сканирование (буфер 64KB)...");
     
     while (1) {
         kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
@@ -83,8 +84,8 @@ void searchByCoordinates() {
         if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE) &&
             addr >= 0x100000000 && addr <= 0x300000000) {
             
-            for (uintptr_t page = addr; page < addr + size; page += 0x1000) {
-                uintptr_t pageSize = (page + 0x1000 > addr + size) ? (addr + size - page) : 0x1000;
+            for (uintptr_t page = addr; page < addr + size; page += 0x10000) {
+                uintptr_t pageSize = (page + 0x10000 > addr + size) ? (addr + size - page) : 0x10000;
                 if (pageSize < 12) continue;
                 
                 vm_size_t read = 0;
@@ -104,7 +105,7 @@ void searchByCoordinates() {
                         addLog([NSString stringWithFormat:@"   Адрес X: 0x%lx", coordAddr]);
                         addLog([NSString stringWithFormat:@"   X=%.2f Y=%.2f Z=%.2f", x, y, z]);
                         
-                        // Ищем 3 ближайших ID вверх (без ограничения по расстоянию)
+                        // Ищем 3 ближайших ID вверх (без ограничения)
                         addLog(@"   🔼 3 БЛИЖАЙШИХ ID ВВЕРХ:");
                         int foundUp = 0;
                         uintptr_t step = 4;
@@ -122,7 +123,7 @@ void searchByCoordinates() {
                             step += 4;
                         }
                         
-                        // Ищем 3 ближайших ID вниз (без ограничения по расстоянию)
+                        // Ищем 3 ближайших ID вниз (без ограничения)
                         addLog(@"   🔽 3 БЛИЖАЙШИХ ID ВНИЗ:");
                         int foundDown = 0;
                         step = 4;
