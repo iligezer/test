@@ -66,7 +66,7 @@ void searchByCoordinates() {
     mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
     mach_port_t object_name = MACH_PORT_NULL;
     
-    // БУФЕР 64KB (0x10000) - для скорости
+    // БУФЕР 64KB
     uint8_t *buffer = malloc(0x10000);
     if (!buffer) {
         addLog(@"❌ Ошибка памяти");
@@ -105,7 +105,7 @@ void searchByCoordinates() {
                         addLog([NSString stringWithFormat:@"   Адрес X: 0x%lx", coordAddr]);
                         addLog([NSString stringWithFormat:@"   X=%.2f Y=%.2f Z=%.2f", x, y, z]);
                         
-                        // Ищем 3 ближайших ID вверх (без ограничения)
+                        // Ищем 3 ближайших ID вверх
                         addLog(@"   🔼 3 БЛИЖАЙШИХ ID ВВЕРХ:");
                         int foundUp = 0;
                         uintptr_t step = 4;
@@ -123,7 +123,7 @@ void searchByCoordinates() {
                             step += 4;
                         }
                         
-                        // Ищем 3 ближайших ID вниз (без ограничения)
+                        // Ищем 3 ближайших ID вниз
                         addLog(@"   🔽 3 БЛИЖАЙШИХ ID ВНИЗ:");
                         int foundDown = 0;
                         step = 4;
@@ -340,7 +340,6 @@ void createMenu() {
         self.w.btn = b;
         [self.w addSubview:b];
         
-        __weak typeof(self) weak = self;
         b.onTap = ^{
             logText = nil;
             createMenu();
