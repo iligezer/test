@@ -78,6 +78,41 @@ void searchByIDs() {
     isSearching = NO;
 }
 
+// ===== ОБРАБОТЧИКИ КНОПОК =====
+void onSearch() {
+    dispatch_async(dispatch_get_global_queue(0, 0), ^{
+        searchByIDs();
+    });
+}
+
+void onCopy() {
+    if (logView && logView.text.length > 0) {
+        UIPasteboard.generalPasteboard.string = logView.text;
+        
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"✅" message:@"Скопировано" preferredStyle:UIAlertControllerStyleAlert];
+        UIWindow *k = nil;
+        for (UIScene *s in UIApplication.sharedApplication.connectedScenes) {
+            if ([s isKindOfClass:UIWindowScene.class]) {
+                for (UIWindow *w in ((UIWindowScene *)s).windows) {
+                    if (w.isKeyWindow) { k = w; break; }
+                }
+            }
+            if (k) break;
+        }
+        [k.rootViewController presentViewController:alert animated:YES completion:nil];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+            [alert dismissViewControllerAnimated:YES completion:nil];
+        });
+    }
+}
+
+void onClose() {
+    if (win) {
+        win.hidden = YES;
+        win = nil;
+    }
+}
+
 // ===== СОЗДАНИЕ МЕНЮ =====
 void createMenu() {
     UIWindow *key = nil;
@@ -143,36 +178,10 @@ void createMenu() {
     closeBtn.backgroundColor = UIColor.systemRedColor;
     [closeBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     closeBtn.layer.cornerRadius = 6;
-    [closeBtn addTarget:win action:@selector(setHidden:) forControlEvents:UIControlEventTouchUpInside];
+    [closeBtn addTarget:nil action:@selector(onClose) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:closeBtn];
     
     [win makeKeyAndVisible];
-}
-
-void onSearch() {
-    dispatch_async(dispatch_get_global_queue(0, 0), ^{
-        searchByIDs();
-    });
-}
-
-void onCopy() {
-    if (logView.text.length > 0) {
-        UIPasteboard.generalPasteboard.string = logView.text;
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"✅" message:@"Скопировано" preferredStyle:UIAlertControllerStyleAlert];
-        UIWindow *k = nil;
-        for (UIScene *s in UIApplication.sharedApplication.connectedScenes) {
-            if ([s isKindOfClass:UIWindowScene.class]) {
-                for (UIWindow *w in ((UIWindowScene *)s).windows) {
-                    if (w.isKeyWindow) { k = w; break; }
-                }
-            }
-            if (k) break;
-        }
-        [k.rootViewController presentViewController:alert animated:YES completion:nil];
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-            [alert dismissViewControllerAnimated:YES completion:nil];
-        });
-    }
 }
 
 // ===== ПЛАВАЮЩАЯ КНОПКА =====
