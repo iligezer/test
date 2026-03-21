@@ -22,8 +22,8 @@ void clearLog() {
     addLog(@"🗑 Лог очищен");
 }
 
-// ===== БЫСТРЫЙ ПОИСК (ШАГ 8 БАЙТ + ФИЛЬТР DEAD) =====
-void fastSearch() {
+// ===== БЫСТРЫЙ ПОИСК (КАК В iGG) =====
+void fastSearchLikeIGG() {
     if (isSearching) {
         addLog(@"⏳ Поиск уже идет...");
         return;
@@ -37,7 +37,6 @@ void fastSearch() {
     int enemyID = 55471766;
     int foundMy = 0, foundEnemy = 0;
     int regionsChecked = 0;
-    uintptr_t lastAddr = 0;
     
     task_t task = mach_task_self();
     vm_address_t addr = 0;
@@ -46,63 +45,82 @@ void fastSearch() {
     mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
     mach_port_t object_name = MACH_PORT_NULL;
     
-    addLog(@"📊 Сканирование (шаг 8 байт, Dead 0-100)...");
+    // Буфер для чтения страницы (4096 байт)
+    uint8_t *buffer = malloc(0x1000);
+    if (!buffer) {
+        addLog(@"❌ Ошибка выделения памяти");
+        isSearching = NO;
+        return;
+    }
+    
+    addLog(@"📊 Сканирование (чтение страницами по 4KB)...");
     
     while (1) {
         kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
         
-        // Только RW память в нашем диапазоне
+        // Только RW память в диапазоне 0x100000000 - 0x180000000
         if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE) &&
-            addr >= 0x100000000 && addr <= 0x300000000) {
+            addr >= 0x100000000 && addr <= 0x180000000) {
             
             regionsChecked++;
-            uintptr_t startAddr = addr;
             
-            // Показываем прогресс каждые 2000 регионов
-            if (regionsChecked % 2000 == 0 && startAddr != lastAddr) {
-                lastAddr = startAddr;
+            // Показываем прогресс каждые 500 регионов
+            if (regionsChecked % 500 == 0) {
                 NSTimeInterval elapsed = [[NSDate date] timeIntervalSinceDate:searchStartTime];
-                addLog([NSString stringWithFormat:@"   ⏳ 0x%lx (%.0f сек)", startAddr, elapsed]);
+                addLog([NSString stringWithFormat:@"   ⏳ Регион %d (%.0f сек)", regionsChecked, elapsed]);
             }
             
-            // Сканируем с шагом 8 байт
-            for (uintptr_t a = startAddr; a < addr + size; a += 8) {
-                int val = 0;
-                vm_size_t read = 0;
-                kern_return_t kr2 = vm_read_overwrite(task, a, 4, (vm_address_t)&val, &read);
-                if (kr2 != KERN_SUCCESS || read != 4) continue;
+            // Читаем регион по страницам (4096 байт)
+            uintptr_t regionStart = addr;
+            uintptr_t regionEnd = addr + size;
+            
+            for (uintptr_t page = regionStart; page < regionEnd; page += 0x1000) {
+                uintptr_t pageSize = (page + 0x1000 > regionEnd) ? (regionEnd - page) : 0x1000;
+                if (pageSize < 4) continue;
                 
-                if (val == myID && foundMy < 50) {
-                    uintptr_t structStart = a - 0x10;
-                    int team = 0, dead = 0;
-                    vm_read_overwrite(task, structStart + 0x34, 4, (vm_address_t)&team, &read);
-                    vm_read_overwrite(task, structStart + 0x7A, 4, (vm_address_t)&dead, &read);
+                vm_size_t read = 0;
+                kern_return_t kr2 = vm_read_overwrite(task, page, pageSize, (vm_address_t)buffer, &read);
+                if (kr2 != KERN_SUCCESS || read < 4) continue;
+                
+                // Сканируем страницу в памяти (быстро!)
+                for (uintptr_t offset = 0; offset + 4 <= pageSize; offset += 8) {
+                    int val = *(int*)(buffer + offset);
                     
-                    // Фильтр: Team 0/1, Dead 0-100
-                    if ((team == 0 || team == 1) && dead >= 0 && dead <= 100) {
-                        foundMy++;
-                        addLog([NSString stringWithFormat:@"[СВОЙ %d] 0x%lx Team:%d Dead:%d", foundMy, structStart, team, dead]);
+                    if (val == myID && foundMy < 50) {
+                        uintptr_t absAddr = page + offset;
+                        uintptr_t structStart = absAddr - 0x10;
+                        int team = 0, dead = 0;
+                        vm_read_overwrite(task, structStart + 0x34, 4, (vm_address_t)&team, &read);
+                        vm_read_overwrite(task, structStart + 0x7A, 4, (vm_address_t)&dead, &read);
+                        
+                        if ((team == 0 || team == 1) && dead >= 0 && dead <= 100) {
+                            foundMy++;
+                            addLog([NSString stringWithFormat:@"[СВОЙ %d] 0x%lx Team:%d Dead:%d", foundMy, structStart, team, dead]);
+                        }
                     }
-                }
-                else if (val == enemyID && foundEnemy < 50) {
-                    uintptr_t structStart = a - 0x10;
-                    int team = 0, dead = 0;
-                    vm_read_overwrite(task, structStart + 0x34, 4, (vm_address_t)&team, &read);
-                    vm_read_overwrite(task, structStart + 0x7A, 4, (vm_address_t)&dead, &read);
-                    
-                    if ((team == 0 || team == 1) && dead >= 0 && dead <= 100) {
-                        foundEnemy++;
-                        addLog([NSString stringWithFormat:@"[ВРАГ %d] 0x%lx Team:%d Dead:%d", foundEnemy, structStart, team, dead]);
+                    else if (val == enemyID && foundEnemy < 50) {
+                        uintptr_t absAddr = page + offset;
+                        uintptr_t structStart = absAddr - 0x10;
+                        int team = 0, dead = 0;
+                        vm_read_overwrite(task, structStart + 0x34, 4, (vm_address_t)&team, &read);
+                        vm_read_overwrite(task, structStart + 0x7A, 4, (vm_address_t)&dead, &read);
+                        
+                        if ((team == 0 || team == 1) && dead >= 0 && dead <= 100) {
+                            foundEnemy++;
+                            addLog([NSString stringWithFormat:@"[ВРАГ %d] 0x%lx Team:%d Dead:%d", foundEnemy, structStart, team, dead]);
+                        }
                     }
                 }
             }
         }
         
         addr += size;
-        if (addr > 0x300000000) break;
+        if (addr > 0x180000000) break;
     }
+    
+    free(buffer);
     
     NSTimeInterval elapsed = [[NSDate date] timeIntervalSinceDate:searchStartTime];
     addLog([NSString stringWithFormat:@"\n✅ Регионов: %d, Время: %.0f сек", regionsChecked, elapsed]);
@@ -122,7 +140,7 @@ void fastSearch() {
 @implementation MenuHandler
 + (void)onSearch {
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
-        fastSearch();
+        fastSearchLikeIGG();
     });
 }
 + (void)onClear { clearLog(); }
