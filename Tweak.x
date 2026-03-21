@@ -1,5 +1,6 @@
 #import <UIKit/UIKit.h>
 #import <mach/mach.h>
+#import <mach/mach_vm.h>   // ← ДОБАВИЛ
 
 // ===== ГЛОБАЛЬНЫЕ =====
 static UIWindow *win = nil;
@@ -54,7 +55,6 @@ void safeSearch() {
             for (uintptr_t a = addr; a < addr + size; a += 4) {
                 int val = 0;
                 vm_size_t read = 0;
-                // Безопасное чтение — vm_read_overwrite вернет ошибку, но не крашнет
                 kern_return_t kr2 = vm_read_overwrite(task, a, 4, (vm_address_t)&val, &read);
                 if (kr2 != KERN_SUCCESS) continue;
                 if (read != 4) continue;
