@@ -26,11 +26,11 @@ void addLog(NSString *msg) {
     [logText appendString:msg];
     [logText appendString:@"\n"];
     dispatch_async(dispatch_get_main_queue(), ^{
-        logView.text = logText;
+        if (logView) logView.text = logText;
     });
 }
 
-// ===== ПОИСК ПО ID (ТВОЙ И ВРАГ) =====
+// ===== ПОИСК ПО ID =====
 void searchByIDs() {
     if (isSearching) { addLog(@"⏳ Уже ищу"); return; }
     isSearching = YES;
@@ -40,15 +40,13 @@ void searchByIDs() {
     uintptr_t start = 0x100000000;
     uintptr_t end = 0x200000000;
     
-    // ТВОЙ ID
     int myID = 71068432;
-    // ID ВРАГА (второй аккаунт)
     int enemyID = 55471766;
     
     int myCount = 0;
     int enemyCount = 0;
     
-    addLog(@"\n📋 ИЩУ ID %d (твой)...", myID);
+    addLog([NSString stringWithFormat:@"\n📋 ИЩУ ID %d (твой)...", myID]);
     for (uintptr_t addr = start; addr < end; addr += 4) {
         int val = readInt(addr);
         if (val == myID) {
@@ -56,13 +54,13 @@ void searchByIDs() {
             uintptr_t structStart = addr - 0x10;
             int team = readInt(structStart + 0x34);
             int isWasted = readInt(structStart + 0x7A);
-            addLog([NSString stringWithFormat:@"   [%d] ID:0x%lx Team:%d Dead:%d", myCount, structStart, team, isWasted]);
+            addLog([NSString stringWithFormat:@"   [%d] 0x%lx Team:%d Dead:%d", myCount, structStart, team, isWasted]);
             if (myCount >= 30) break;
         }
     }
     addLog([NSString stringWithFormat:@"✅ Найдено твоих: %d", myCount]);
     
-    addLog(@"\n📋 ИЩУ ID %d (враг)...", enemyID);
+    addLog([NSString stringWithFormat:@"\n📋 ИЩУ ID %d (враг)...", enemyID]);
     for (uintptr_t addr = start; addr < end; addr += 4) {
         int val = readInt(addr);
         if (val == enemyID) {
@@ -80,7 +78,7 @@ void searchByIDs() {
     isSearching = NO;
 }
 
-// ===== СОЗДАНИЕ МЕНЮ (МАЛЕНЬКОЕ) =====
+// ===== СОЗДАНИЕ МЕНЮ =====
 void createMenu() {
     UIWindow *key = nil;
     for (UIScene *s in UIApplication.sharedApplication.connectedScenes) {
