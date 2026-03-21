@@ -8,16 +8,15 @@ static UITextView *logView = nil;
 static NSMutableString *logText = nil;
 static BOOL isSearching = NO;
 
-// ===== ПРОВЕРКА, МОЖНО ЛИ ЧИТАТЬ =====
-BOOL isReadable(uintptr_t addr) {
+// ===== ПРОВЕРКА ДОСТУПНОСТИ СТРАНИЦЫ =====
+BOOL isPageReadable(uintptr_t addr) {
     int test = 0;
     vm_size_t read = 0;
     kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 1, (vm_address_t)&test, &read);
-    return (kr == KERN_SUCCESS && read == 1);
+    return (kr == KERN_SUCCESS);
 }
 
 int safeReadInt(uintptr_t addr) {
-    if (!isReadable(addr)) return 0;
     int val = 0;
     vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, NULL);
     return val;
@@ -32,8 +31,8 @@ void addLog(NSString *msg) {
     });
 }
 
-// ===== БЕЗОПАСНЫЙ ПОИСК ОБОИХ ID =====
-void safeSearchBoth() {
+// ===== БЕЗОПАСНЫЙ ПОИСК =====
+void safeSearch() {
     if (isSearching) { addLog(@"⏳ Уже ищу"); return; }
     isSearching = YES;
     addLog(@"🔍 ПОИСК ID");
@@ -42,39 +41,36 @@ void safeSearchBoth() {
     int myID = 71068432;
     int enemyID = 55471766;
     
-    int myCount = 0;
-    int enemyCount = 0;
-    
     uintptr_t start = 0x100000000;
     uintptr_t end = 0x300000000;
     
     addLog([NSString stringWithFormat:@"📊 Диапазон: 0x%lx - 0x%lx", start, end]);
+    addLog(@"⏳ Сканирование...");
     
+    // Идём по страницам (4KB)
     for (uintptr_t page = start; page < end; page += 0x1000) {
-        if (!isReadable(page)) continue;
+        // Проверяем доступность страницы
+        if (!isPageReadable(page)) continue;
         
+        // Сканируем страницу
         for (uintptr_t addr = page; addr < page + 0x1000 && addr < end; addr += 4) {
             int val = safeReadInt(addr);
             
-            if (val == myID && myCount < 50) {
-                myCount++;
+            if (val == myID) {
                 uintptr_t structStart = addr - 0x10;
                 int team = safeReadInt(structStart + 0x34);
-                int isWasted = safeReadInt(structStart + 0x7A);
-                addLog([NSString stringWithFormat:@"[СВОЙ %d] 0x%lx Team:%d Dead:%d", myCount, structStart, team, isWasted]);
+                int dead = safeReadInt(structStart + 0x7A);
+                addLog([NSString stringWithFormat:@"[СВОЙ] 0x%lx Team:%d Dead:%d", structStart, team, dead]);
             }
-            else if (val == enemyID && enemyCount < 50) {
-                enemyCount++;
+            else if (val == enemyID) {
                 uintptr_t structStart = addr - 0x10;
                 int team = safeReadInt(structStart + 0x34);
-                int isWasted = safeReadInt(structStart + 0x7A);
-                addLog([NSString stringWithFormat:@"[ВРАГ %d] 0x%lx Team:%d Dead:%d", enemyCount, structStart, team, isWasted]);
+                int dead = safeReadInt(structStart + 0x7A);
+                addLog([NSString stringWithFormat:@"[ВРАГ] 0x%lx Team:%d Dead:%d", structStart, team, dead]);
             }
         }
     }
     
-    addLog([NSString stringWithFormat:@"\n✅ Найдено своих: %d", myCount]);
-    addLog([NSString stringWithFormat:@"✅ Найдено врагов: %d", enemyCount]);
     addLog(@"✅ ГОТОВО");
     isSearching = NO;
 }
@@ -89,7 +85,7 @@ void safeSearchBoth() {
 @implementation MenuHandler
 + (void)onSearch {
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
-        safeSearchBoth();
+        safeSearch();
     });
 }
 + (void)onCopy {
