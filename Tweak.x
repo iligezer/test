@@ -78,17 +78,22 @@ void searchByIDs() {
     isSearching = NO;
 }
 
-// ===== ОБРАБОТЧИКИ КНОПОК =====
-void onSearch() {
+// ===== КЛАСС-ОБРАБОТЧИК КНОПОК =====
+@interface MenuHandler : NSObject
++ (void)onSearch;
++ (void)onCopy;
++ (void)onClose;
+@end
+
+@implementation MenuHandler
++ (void)onSearch {
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
         searchByIDs();
     });
 }
-
-void onCopy() {
++ (void)onCopy {
     if (logView && logView.text.length > 0) {
         UIPasteboard.generalPasteboard.string = logView.text;
-        
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"✅" message:@"Скопировано" preferredStyle:UIAlertControllerStyleAlert];
         UIWindow *k = nil;
         for (UIScene *s in UIApplication.sharedApplication.connectedScenes) {
@@ -105,13 +110,13 @@ void onCopy() {
         });
     }
 }
-
-void onClose() {
++ (void)onClose {
     if (win) {
         win.hidden = YES;
         win = nil;
     }
 }
+@end
 
 // ===== СОЗДАНИЕ МЕНЮ =====
 void createMenu() {
@@ -160,7 +165,7 @@ void createMenu() {
     searchBtn.backgroundColor = UIColor.systemBlueColor;
     [searchBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     searchBtn.layer.cornerRadius = 8;
-    [searchBtn addTarget:nil action:@selector(onSearch) forControlEvents:UIControlEventTouchUpInside];
+    [searchBtn addTarget:[MenuHandler class] action:@selector(onSearch) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:searchBtn];
     
     UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -169,7 +174,7 @@ void createMenu() {
     copyBtn.backgroundColor = UIColor.systemGreenColor;
     [copyBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     copyBtn.layer.cornerRadius = 8;
-    [copyBtn addTarget:nil action:@selector(onCopy) forControlEvents:UIControlEventTouchUpInside];
+    [copyBtn addTarget:[MenuHandler class] action:@selector(onCopy) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:copyBtn];
     
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -178,7 +183,7 @@ void createMenu() {
     closeBtn.backgroundColor = UIColor.systemRedColor;
     [closeBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     closeBtn.layer.cornerRadius = 6;
-    [closeBtn addTarget:nil action:@selector(onClose) forControlEvents:UIControlEventTouchUpInside];
+    [closeBtn addTarget:[MenuHandler class] action:@selector(onClose) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:closeBtn];
     
     [win makeKeyAndVisible];
