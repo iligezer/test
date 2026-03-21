@@ -24,7 +24,15 @@ void clearLog() {
     addLog(@"🗑 Лог очищен");
 }
 
-// ===== АНАЛИЗ НАЙДЕННЫХ СТРУКТУР =====
+// ===== ПРОВЕРКА ДОСТУПНОСТИ АДРЕСА =====
+BOOL isAddressReadable(uintptr_t addr) {
+    int test = 0;
+    vm_size_t read = 0;
+    kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 1, (vm_address_t)&test, &read);
+    return (kr == KERN_SUCCESS && read == 1);
+}
+
+// ===== АНАЛИЗ С БЕЗОПАСНЫМ ЧТЕНИЕМ =====
 void analyzeStructures() {
     if (g_structCount == 0) {
         addLog(@"⚠️ Нет структур. Сначала нажмите СКАН");
@@ -40,6 +48,12 @@ void analyzeStructures() {
     for (int i = 0; i < g_structCount; i++) {
         uintptr_t s = g_foundStructs[i];
         
+        // Проверяем доступность структуры
+        if (!isAddressReadable(s)) {
+            addLog([NSString stringWithFormat:@"⚠️ Структура 0x%lx недоступна", s]);
+            continue;
+        }
+        
         int id = 0, team = 0, dead = 0;
         vm_read_overwrite(task, s + 0x10, 4, (vm_address_t)&id, NULL);
         vm_read_overwrite(task, s + 0x34, 4, (vm_address_t)&team, NULL);
@@ -54,15 +68,21 @@ void analyzeStructures() {
         addLog([NSString stringWithFormat:@"   Team: %d %@", team, team == 0 ? @"(СВОЙ)" : @"(ВРАГ)"]);
         addLog([NSString stringWithFormat:@"   Dead: %d %@", dead, dead == 0 ? @"(ЖИВ)" : @"(МЕРТВ)"]);
         
+        // Читаем Transform с проверкой
         uintptr_t transform = 0;
         vm_read_overwrite(task, s + 0x38, 8, (vm_address_t)&transform, NULL);
         
-        if (transform != 0) {
-            float pos[3] = {0};
-            vm_read_overwrite(task, transform + 0x20, 12, (vm_address_t)pos, NULL);
-            addLog([NSString stringWithFormat:@"   📍 ПОЗИЦИЯ: X=%.2f Y=%.2f Z=%.2f", pos[0], pos[1], pos[2]]);
+        if (transform != 0 && isAddressReadable(transform)) {
+            // Проверяем доступность позиции
+            if (isAddressReadable(transform + 0x20)) {
+                float pos[3] = {0};
+                vm_read_overwrite(task, transform + 0x20, 12, (vm_address_t)pos, NULL);
+                addLog([NSString stringWithFormat:@"   📍 ПОЗИЦИЯ: X=%.2f Y=%.2f Z=%.2f", pos[0], pos[1], pos[2]]);
+            } else {
+                addLog([NSString stringWithFormat:@"   ⚠️ Позиция недоступна"]);
+            }
         } else {
-            addLog([NSString stringWithFormat:@"   Transform: 0 (не найден)"]);
+            addLog([NSString stringWithFormat:@"   ⚠️ Transform недоступен"]);
         }
     }
     
@@ -209,7 +229,7 @@ void searchIDs() {
 }
 @end
 
-// ===== СОЗДАНИЕ МЕНЮ (ДЛЯ ГОРИЗОНТАЛЬНОГО ЭКРАНА) =====
+// ===== МЕНЮ (УМЕНЬШЕННОЕ) =====
 void createMenu() {
     UIWindow *key = nil;
     for (UIScene *s in UIApplication.sharedApplication.connectedScenes) {
@@ -223,8 +243,8 @@ void createMenu() {
     }
     if (!key) return;
     
-    CGFloat w = 320;
-    CGFloat h = 420;
+    CGFloat w = 280;
+    CGFloat h = 380;
     CGFloat x = (key.bounds.size.width - w) / 2;
     CGFloat y = (key.bounds.size.height - h) / 2;
     
@@ -236,14 +256,14 @@ void createMenu() {
     win.layer.borderColor = UIColor.systemBlueColor.CGColor;
     win.hidden = NO;
     
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, w, 28)];
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 6, w, 24)];
     title.text = @"🎯 ESP SCANNER";
     title.textColor = UIColor.systemBlueColor;
     title.textAlignment = NSTextAlignmentCenter;
     title.font = [UIFont boldSystemFontOfSize:14];
     [win addSubview:title];
     
-    logView = [[UITextView alloc] initWithFrame:CGRectMake(8, 42, w-16, 270)];
+    logView = [[UITextView alloc] initWithFrame:CGRectMake(6, 36, w-12, 230)];
     logView.backgroundColor = UIColor.blackColor;
     logView.textColor = UIColor.greenColor;
     logView.font = [UIFont fontWithName:@"Courier" size:10];
@@ -252,44 +272,45 @@ void createMenu() {
     [win addSubview:logView];
     
     // Кнопки в 2 ряда
+    CGFloat btnW = (w - 30) / 2;
     UIButton *searchBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    searchBtn.frame = CGRectMake(15, 325, (w-50)/2, 38);
+    searchBtn.frame = CGRectMake(10, 275, btnW, 34);
     [searchBtn setTitle:@"🔍 СКАН" forState:UIControlStateNormal];
     searchBtn.backgroundColor = UIColor.systemBlueColor;
     [searchBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    searchBtn.layer.cornerRadius = 8;
+    searchBtn.layer.cornerRadius = 6;
     [searchBtn addTarget:[MenuHandler class] action:@selector(onSearch) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:searchBtn];
     
     UIButton *analyzeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    analyzeBtn.frame = CGRectMake(25 + (w-50)/2, 325, (w-50)/2, 38);
+    analyzeBtn.frame = CGRectMake(20 + btnW, 275, btnW, 34);
     [analyzeBtn setTitle:@"📍 АНАЛИЗ" forState:UIControlStateNormal];
     analyzeBtn.backgroundColor = UIColor.systemPurpleColor;
     [analyzeBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    analyzeBtn.layer.cornerRadius = 8;
+    analyzeBtn.layer.cornerRadius = 6;
     [analyzeBtn addTarget:[MenuHandler class] action:@selector(onAnalyze) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:analyzeBtn];
     
     UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    copyBtn.frame = CGRectMake(15, 375, (w-50)/2, 38);
+    copyBtn.frame = CGRectMake(10, 315, btnW, 34);
     [copyBtn setTitle:@"📋 КОПИ" forState:UIControlStateNormal];
     copyBtn.backgroundColor = UIColor.systemGreenColor;
     [copyBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    copyBtn.layer.cornerRadius = 8;
+    copyBtn.layer.cornerRadius = 6;
     [copyBtn addTarget:[MenuHandler class] action:@selector(onCopy) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:copyBtn];
     
     UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    clearBtn.frame = CGRectMake(25 + (w-50)/2, 375, (w-50)/2, 38);
+    clearBtn.frame = CGRectMake(20 + btnW, 315, btnW, 34);
     [clearBtn setTitle:@"🗑 ОЧИСТИТЬ" forState:UIControlStateNormal];
     clearBtn.backgroundColor = UIColor.systemOrangeColor;
     [clearBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    clearBtn.layer.cornerRadius = 8;
+    clearBtn.layer.cornerRadius = 6;
     [clearBtn addTarget:[MenuHandler class] action:@selector(onClear) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:clearBtn];
     
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(w/2-50, 425, 100, 32);
+    closeBtn.frame = CGRectMake(w/2-40, 355, 80, 28);
     [closeBtn setTitle:@"ЗАКРЫТЬ" forState:UIControlStateNormal];
     closeBtn.backgroundColor = UIColor.systemRedColor;
     [closeBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
@@ -382,6 +403,6 @@ __attribute__((constructor))
 static void init() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         app = [[App alloc] init];
-        NSLog(@"[ESP] Scanner Ready");
+        NSLog(@"[ESP] Ready");
     });
 }
