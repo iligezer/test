@@ -57,15 +57,14 @@ float safeReadFloat(uintptr_t addr) {
     }
 }
 
-// ===== ПОИСК КООРДИНАТ В ДИАПАЗОНЕ 0x20 - 0x200 =====
+// ===== АВТОПОИСК КООРДИНАТ (ДИАПАЗОН 0x20 - 0x200) =====
 void findPositionOffset(uintptr_t transform) {
     if (transform == 0) return;
     
-    addLog([NSString stringWithFormat:@"\n🔍 Поиск координат в Transform 0x%lx (0x20 - 0x200):", transform]);
+    addLog([NSString stringWithFormat:@"\n🔍 Поиск координат в Transform 0x%lx:", transform]);
     
     int found = 0;
-    
-    for (int offset = 0x20; offset <= 0x200; offset += 4) {
+    for (int offset = 0x20; offset <= 0x200 && found < 10; offset += 4) {
         float x = safeReadFloat(transform + offset);
         float y = safeReadFloat(transform + offset + 4);
         float z = safeReadFloat(transform + offset + 8);
@@ -75,10 +74,6 @@ void findPositionOffset(uintptr_t transform) {
             (fabs(x) > 0.01 || fabs(y) > 0.01 || fabs(z) > 0.01)) {
             addLog([NSString stringWithFormat:@"   ✅ 0x%02X: X=%.2f Y=%.2f Z=%.2f", offset, x, y, z]);
             found++;
-            if (found >= 10) {
-                addLog(@"   ... (ещё есть, но показаны первые 10)");
-                break;
-            }
         }
     }
     
@@ -87,7 +82,7 @@ void findPositionOffset(uintptr_t transform) {
     }
 }
 
-// ===== АНАЛИЗ СТРУКТУР =====
+// ===== АНАЛИЗ НАЙДЕННЫХ СТРУКТУР =====
 void analyzeStructures() {
     if (g_structCount == 0) {
         addLog(@"⚠️ Нет структур. Сначала нажмите СКАН");
@@ -123,18 +118,17 @@ void analyzeStructures() {
         if (transform != 0) {
             addLog([NSString stringWithFormat:@"   Transform: 0x%lx", transform]);
             
-            // Проверяем стандартное смещение 0x20
+            // Проверяем стандартное смещение
             float x = safeReadFloat(transform + 0x20);
             float y = safeReadFloat(transform + 0x24);
             float z = safeReadFloat(transform + 0x28);
             
-            // Если координаты НЕ в диапазоне -100..100 или нулевые
-            if (x < -100 || x > 100 || y < -100 || y > 100 || z < -100 || z > 100 ||
-                (fabs(x) < 0.01 && fabs(y) < 0.01 && fabs(z) < 0.01)) {
-                addLog(@"   ⚠️ Смещение 0x20: координаты некорректны, ищу в диапазоне 0x20-0x200...");
-                findPositionOffset(transform);
-            } else {
+            if (x > -100 && x < 100 && y > -100 && y < 100 && z > -100 && z < 100 &&
+                (fabs(x) > 0.01 || fabs(y) > 0.01 || fabs(z) > 0.01)) {
                 addLog([NSString stringWithFormat:@"   📍 ПОЗИЦИЯ (0x20): X=%.2f Y=%.2f Z=%.2f", x, y, z]);
+            } else {
+                addLog(@"   ⚠️ Смещение 0x20: координаты некорректны, ищу другие...");
+                findPositionOffset(transform);
             }
         } else {
             addLog([NSString stringWithFormat:@"   Transform: 0 (не найден)"]);
@@ -144,7 +138,7 @@ void analyzeStructures() {
     addLog([NSString stringWithFormat:@"\n✅ Всего игроков: %d", validCount]);
 }
 
-// ===== ПОИСК ID =====
+// ===== ПОИСК ID (РАБОЧАЯ ВЕРСИЯ) =====
 void searchIDs() {
     if (isSearching) {
         addLog(@"⏳ Уже ищу");
