@@ -41,7 +41,7 @@ float readFloat(uintptr_t addr) {
     return val;
 }
 
-// ===== АНАЛИЗ НАЙДЕННЫХ ИГРОКОВ =====
+// ===== АНАЛИЗ НАЙДЕННЫХ ИГРОКОВ (БЕЗ ИМЕНИ) =====
 void analyzePlayers(uintptr_t *playerAddrs, int playerCount) {
     addLog(@"\n📊 АНАЛИЗ СТРУКТУР ИГРОКОВ");
     addLog(@"=================================");
@@ -57,9 +57,6 @@ void analyzePlayers(uintptr_t *playerAddrs, int playerCount) {
         int team = readInt(structStart + 0x34);
         int dead = readInt(structStart + 0x7A);
         
-        // Читаем указатель на имя
-        uintptr_t namePtr = readPtr(structStart + 0x18);
-        
         // Читаем Transform
         uintptr_t transform = readPtr(structStart + 0x38);
         
@@ -68,18 +65,6 @@ void analyzePlayers(uintptr_t *playerAddrs, int playerCount) {
         addLog([NSString stringWithFormat:@"   ID: %d", id]);
         addLog([NSString stringWithFormat:@"   Team: %d %@", team, team == 0 ? @"(СВОЙ)" : @"(ВРАГ)"]);
         addLog([NSString stringWithFormat:@"   Dead: %d %@", dead, dead == 0 ? @"(ЖИВ)" : @"(МЕРТВ)"]);
-        
-        // Пытаемся прочитать имя
-        if (namePtr != 0) {
-            char nameBuf[64] = {0};
-            vm_read_overwrite(mach_task_self(), namePtr, 32, (vm_address_t)nameBuf, NULL);
-            NSString *name = [NSString stringWithUTF8String:nameBuf];
-            if (name.length > 0) {
-                addLog([NSString stringWithFormat:@"   Имя: %@", name]);
-            } else {
-                addLog([NSString stringWithFormat:@"   Имя: (не читается)"]);
-            }
-        }
         
         // Анализируем Transform и координаты
         if (transform != 0) {
@@ -92,7 +77,6 @@ void analyzePlayers(uintptr_t *playerAddrs, int playerCount) {
             
             addLog([NSString stringWithFormat:@"   📍 ПОЗИЦИЯ: X=%.2f Y=%.2f Z=%.2f", x, y, z]);
             
-            // Проверяем, что координаты похожи на игрока (не нулевые)
             if (fabs(x) > 0.1 || fabs(y) > 0.1 || fabs(z) > 0.1) {
                 validPlayers++;
             }
@@ -104,7 +88,7 @@ void analyzePlayers(uintptr_t *playerAddrs, int playerCount) {
     addLog([NSString stringWithFormat:@"\n✅ Всего игроков: %d, Активных: %d", playerCount, validPlayers]);
 }
 
-// ===== ПОЛНЫЙ СКАН + АНАЛИЗ =====
+// ===== ПОЛНЫЙ СКАН + АНАЛИЗ (БЕЗ ЧТЕНИЯ ИМЕНИ) =====
 void fullScanAndAnalyze() {
     if (isSearching) {
         addLog(@"⏳ Поиск уже идет...");
@@ -118,7 +102,6 @@ void fullScanAndAnalyze() {
     int myID = 71068432;
     int enemyID = 55471766;
     
-    // Массив для хранения найденных структур
     uintptr_t foundStructures[200];
     int foundCount = 0;
     
@@ -164,17 +147,15 @@ void fullScanAndAnalyze() {
                         uintptr_t absAddr = page + offset;
                         uintptr_t structStart = absAddr - 0x10;
                         
-                        // Проверяем, что Team в пределах 0-1
+                        // Проверяем Team
                         int team = 0;
                         vm_read_overwrite(task, structStart + 0x34, 4, (vm_address_t)&team, &read);
                         
                         if (team == 0 || team == 1) {
-                            // Проверяем, что Dead в пределах 0-100
                             int dead = 0;
                             vm_read_overwrite(task, structStart + 0x7A, 4, (vm_address_t)&dead, &read);
                             
                             if (dead >= 0 && dead <= 100) {
-                                // Добавляем в массив, если еще нет такого адреса
                                 BOOL duplicate = NO;
                                 for (int i = 0; i < foundCount; i++) {
                                     if (foundStructures[i] == structStart) {
@@ -280,7 +261,7 @@ void createMenu() {
     win.hidden = NO;
     
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, w, 28)];
-    title.text = @"🎯 ESP SCANNER + ANALYZER";
+    title.text = @"🎯 ESP SCANNER";
     title.textColor = UIColor.systemBlueColor;
     title.textAlignment = NSTextAlignmentCenter;
     title.font = [UIFont boldSystemFontOfSize:14];
