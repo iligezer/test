@@ -22,8 +22,8 @@ void clearLog() {
     addLog(@"🗑 Лог очищен");
 }
 
-// ===== ОПТИМИЗИРОВАННЫЙ ПОИСК (ШАГ 8 БАЙТ) =====
-void optimizedSearch() {
+// ===== БЫСТРЫЙ ПОИСК (ШАГ 8 БАЙТ + ФИЛЬТР DEAD) =====
+void fastSearch() {
     if (isSearching) {
         addLog(@"⏳ Поиск уже идет...");
         return;
@@ -46,7 +46,7 @@ void optimizedSearch() {
     mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
     mach_port_t object_name = MACH_PORT_NULL;
     
-    addLog(@"📊 Сканирование (шаг 8 байт)...");
+    addLog(@"📊 Сканирование (шаг 8 байт, Dead 0-100)...");
     
     while (1) {
         kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
@@ -59,17 +59,16 @@ void optimizedSearch() {
             
             regionsChecked++;
             uintptr_t startAddr = addr;
-            uintptr_t endAddr = addr + size;
             
-            // Показываем текущий адрес каждые 500 регионов
-            if (regionsChecked % 500 == 0 && startAddr != lastAddr) {
+            // Показываем прогресс каждые 2000 регионов
+            if (regionsChecked % 2000 == 0 && startAddr != lastAddr) {
                 lastAddr = startAddr;
                 NSTimeInterval elapsed = [[NSDate date] timeIntervalSinceDate:searchStartTime];
                 addLog([NSString stringWithFormat:@"   ⏳ 0x%lx (%.0f сек)", startAddr, elapsed]);
             }
             
-            // СКАНИРУЕМ С ШАГОМ 8 БАЙТ (выравнивание структур)
-            for (uintptr_t a = startAddr; a < endAddr; a += 8) {
+            // Сканируем с шагом 8 байт
+            for (uintptr_t a = startAddr; a < addr + size; a += 8) {
                 int val = 0;
                 vm_size_t read = 0;
                 kern_return_t kr2 = vm_read_overwrite(task, a, 4, (vm_address_t)&val, &read);
@@ -80,7 +79,9 @@ void optimizedSearch() {
                     int team = 0, dead = 0;
                     vm_read_overwrite(task, structStart + 0x34, 4, (vm_address_t)&team, &read);
                     vm_read_overwrite(task, structStart + 0x7A, 4, (vm_address_t)&dead, &read);
-                    if (team == 0 || team == 1) {
+                    
+                    // Фильтр: Team 0/1, Dead 0-100
+                    if ((team == 0 || team == 1) && dead >= 0 && dead <= 100) {
                         foundMy++;
                         addLog([NSString stringWithFormat:@"[СВОЙ %d] 0x%lx Team:%d Dead:%d", foundMy, structStart, team, dead]);
                     }
@@ -90,7 +91,8 @@ void optimizedSearch() {
                     int team = 0, dead = 0;
                     vm_read_overwrite(task, structStart + 0x34, 4, (vm_address_t)&team, &read);
                     vm_read_overwrite(task, structStart + 0x7A, 4, (vm_address_t)&dead, &read);
-                    if (team == 0 || team == 1) {
+                    
+                    if ((team == 0 || team == 1) && dead >= 0 && dead <= 100) {
                         foundEnemy++;
                         addLog([NSString stringWithFormat:@"[ВРАГ %d] 0x%lx Team:%d Dead:%d", foundEnemy, structStart, team, dead]);
                     }
@@ -120,7 +122,7 @@ void optimizedSearch() {
 @implementation MenuHandler
 + (void)onSearch {
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
-        optimizedSearch();
+        fastSearch();
     });
 }
 + (void)onClear { clearLog(); }
