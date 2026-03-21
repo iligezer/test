@@ -22,7 +22,7 @@ void clearLog() {
     addLog(@"🗑 Лог очищен");
 }
 
-// ===== РАБОЧИЙ СКАНЕР + АНАЛИЗ (БЕЗ ВЫЛЕТОВ) =====
+// ===== РАБОЧИЙ СКАНЕР + АНАЛИЗ =====
 void fullScanAndAnalyze() {
     if (isSearching) {
         addLog(@"⏳ Поиск уже идет...");
@@ -78,7 +78,6 @@ void fullScanAndAnalyze() {
                         uintptr_t absAddr = page + offset;
                         uintptr_t structStart = absAddr - 0x10;
                         
-                        // Проверяем дубликаты
                         BOOL dup = NO;
                         for (int i = 0; i < foundCount; i++) {
                             if (foundStructures[i] == structStart) { dup = YES; break; }
@@ -115,13 +114,11 @@ void fullScanAndAnalyze() {
     for (int i = 0; i < foundCount; i++) {
         uintptr_t s = foundStructures[i];
         
-        // Читаем данные
         int id = 0, team = 0, dead = 0;
         vm_read_overwrite(task, s + 0x10, 4, (vm_address_t)&id, NULL);
         vm_read_overwrite(task, s + 0x34, 4, (vm_address_t)&team, NULL);
         vm_read_overwrite(task, s + 0x7A, 4, (vm_address_t)&dead, NULL);
         
-        // Фильтр: Team 0/1, Dead 0-100
         if ((team != 0 && team != 1) || dead < 0 || dead > 100) continue;
         
         addLog([NSString stringWithFormat:@"\n🔹 ИГРОК %d", activePlayers + 1]);
@@ -130,7 +127,6 @@ void fullScanAndAnalyze() {
         addLog([NSString stringWithFormat:@"   Team: %d %@", team, team == 0 ? @"(СВОЙ)" : @"(ВРАГ)"]);
         addLog([NSString stringWithFormat:@"   Dead: %d %@", dead, dead == 0 ? @"(ЖИВ)" : @"(МЕРТВ)"]);
         
-        // Transform и координаты
         uintptr_t transform = 0;
         vm_read_overwrite(task, s + 0x38, 8, (vm_address_t)&transform, NULL);
         
@@ -170,7 +166,9 @@ void fullScanAndAnalyze() {
         fullScanAndAnalyze();
     });
 }
-+ (void)onClear { clearLog(); }
++ (void)onClear {
+    clearLog();
+}
 + (void)onCopy {
     if (logView && logView.text.length > 0) {
         UIPasteboard.generalPasteboard.string = logView.text;
@@ -186,7 +184,7 @@ void fullScanAndAnalyze() {
         }
         [k.rootViewController presentViewController:alert animated:YES completion:nil];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-            [alert dismissViewControllerAnimated:YES completion:nil]);
+            [alert dismissViewControllerAnimated:YES completion:nil];
         });
     }
 }
