@@ -7,6 +7,8 @@ static UITextView *logView = nil;
 static NSMutableString *logText = nil;
 static BOOL isSearching = NO;
 static NSDate *searchStartTime = nil;
+static uintptr_t g_foundStructures[200];
+static int g_foundCount = 0;
 
 void addLog(NSString *msg) {
     if (!logText) logText = [[NSMutableString alloc] init];
@@ -22,88 +24,20 @@ void clearLog() {
     addLog(@"🗑 Лог очищен");
 }
 
-// ===== БЕЗОПАСНОЕ ЧТЕНИЕ =====
-int readInt(uintptr_t addr) {
-    int val = 0;
-    vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, NULL);
-    return val;
-}
-
-uintptr_t readPtr(uintptr_t addr) {
-    uintptr_t val = 0;
-    vm_read_overwrite(mach_task_self(), addr, 8, (vm_address_t)&val, NULL);
-    return val;
-}
-
-float readFloat(uintptr_t addr) {
-    float val = 0;
-    vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, NULL);
-    return val;
-}
-
-// ===== АНАЛИЗ НАЙДЕННЫХ ИГРОКОВ (БЕЗ ИМЕНИ) =====
-void analyzePlayers(uintptr_t *playerAddrs, int playerCount) {
-    addLog(@"\n📊 АНАЛИЗ СТРУКТУР ИГРОКОВ");
-    addLog(@"=================================");
-    
-    int validPlayers = 0;
-    
-    for (int i = 0; i < playerCount; i++) {
-        uintptr_t structStart = playerAddrs[i];
-        if (structStart == 0) continue;
-        
-        // Читаем ID
-        int id = readInt(structStart + 0x10);
-        int team = readInt(structStart + 0x34);
-        int dead = readInt(structStart + 0x7A);
-        
-        // Читаем Transform
-        uintptr_t transform = readPtr(structStart + 0x38);
-        
-        addLog([NSString stringWithFormat:@"\n🔹 ИГРОК %d", i+1]);
-        addLog([NSString stringWithFormat:@"   Структура: 0x%lx", structStart]);
-        addLog([NSString stringWithFormat:@"   ID: %d", id]);
-        addLog([NSString stringWithFormat:@"   Team: %d %@", team, team == 0 ? @"(СВОЙ)" : @"(ВРАГ)"]);
-        addLog([NSString stringWithFormat:@"   Dead: %d %@", dead, dead == 0 ? @"(ЖИВ)" : @"(МЕРТВ)"]);
-        
-        // Анализируем Transform и координаты
-        if (transform != 0) {
-            addLog([NSString stringWithFormat:@"   Transform: 0x%lx", transform]);
-            
-            // Читаем позицию (смещение 0x20)
-            float x = readFloat(transform + 0x20);
-            float y = readFloat(transform + 0x24);
-            float z = readFloat(transform + 0x28);
-            
-            addLog([NSString stringWithFormat:@"   📍 ПОЗИЦИЯ: X=%.2f Y=%.2f Z=%.2f", x, y, z]);
-            
-            if (fabs(x) > 0.1 || fabs(y) > 0.1 || fabs(z) > 0.1) {
-                validPlayers++;
-            }
-        } else {
-            addLog([NSString stringWithFormat:@"   Transform: 0 (не инициализирован)"]);
-        }
-    }
-    
-    addLog([NSString stringWithFormat:@"\n✅ Всего игроков: %d, Активных: %d", playerCount, validPlayers]);
-}
-
-// ===== ПОЛНЫЙ СКАН + АНАЛИЗ (БЕЗ ЧТЕНИЯ ИМЕНИ) =====
-void fullScanAndAnalyze() {
+// ===== БЫСТРЫЙ СКАН (ТОЛЬКО ID, БЕЗ ЧТЕНИЯ ОСТАЛЬНОГО) =====
+void fastScan() {
     if (isSearching) {
         addLog(@"⏳ Поиск уже идет...");
         return;
     }
     isSearching = YES;
     searchStartTime = [NSDate date];
-    addLog(@"🔍 ПОЛНЫЙ СКАН + АНАЛИЗ");
+    addLog(@"🔍 СКАНИРОВАНИЕ ID...");
     addLog(@"=================================");
     
     int myID = 71068432;
     int enemyID = 55471766;
-    
-    uintptr_t foundStructures[200];
-    int foundCount = 0;
+    g_foundCount = 0;
     
     task_t task = mach_task_self();
     vm_address_t addr = 0;
@@ -114,12 +48,12 @@ void fullScanAndAnalyze() {
     
     uint8_t *buffer = malloc(0x1000);
     if (!buffer) {
-        addLog(@"❌ Ошибка выделения памяти");
+        addLog(@"❌ Ошибка памяти");
         isSearching = NO;
         return;
     }
     
-    addLog(@"📊 Сканирование памяти...");
+    addLog(@"📊 Диапазон: 0x100000000 - 0x300000000");
     
     while (1) {
         kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
@@ -129,44 +63,28 @@ void fullScanAndAnalyze() {
         if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE) &&
             addr >= 0x100000000 && addr <= 0x300000000) {
             
-            uintptr_t regionStart = addr;
-            uintptr_t regionEnd = addr + size;
-            
-            for (uintptr_t page = regionStart; page < regionEnd; page += 0x1000) {
-                uintptr_t pageSize = (page + 0x1000 > regionEnd) ? (regionEnd - page) : 0x1000;
+            for (uintptr_t page = addr; page < addr + size; page += 0x1000) {
+                uintptr_t pageSize = (page + 0x1000 > addr + size) ? (addr + size - page) : 0x1000;
                 if (pageSize < 4) continue;
                 
                 vm_size_t read = 0;
                 kern_return_t kr2 = vm_read_overwrite(task, page, pageSize, (vm_address_t)buffer, &read);
                 if (kr2 != KERN_SUCCESS || read < 4) continue;
                 
-                for (uintptr_t offset = 0; offset + 4 <= pageSize && foundCount < 200; offset += 8) {
+                for (uintptr_t offset = 0; offset + 4 <= pageSize && g_foundCount < 200; offset += 8) {
                     int val = *(int*)(buffer + offset);
                     
                     if (val == myID || val == enemyID) {
                         uintptr_t absAddr = page + offset;
                         uintptr_t structStart = absAddr - 0x10;
                         
-                        // Проверяем Team
-                        int team = 0;
-                        vm_read_overwrite(task, structStart + 0x34, 4, (vm_address_t)&team, &read);
-                        
-                        if (team == 0 || team == 1) {
-                            int dead = 0;
-                            vm_read_overwrite(task, structStart + 0x7A, 4, (vm_address_t)&dead, &read);
-                            
-                            if (dead >= 0 && dead <= 100) {
-                                BOOL duplicate = NO;
-                                for (int i = 0; i < foundCount; i++) {
-                                    if (foundStructures[i] == structStart) {
-                                        duplicate = YES;
-                                        break;
-                                    }
-                                }
-                                if (!duplicate) {
-                                    foundStructures[foundCount++] = structStart;
-                                }
-                            }
+                        // Проверяем дубликаты
+                        BOOL dup = NO;
+                        for (int i = 0; i < g_foundCount; i++) {
+                            if (g_foundStructures[i] == structStart) { dup = YES; break; }
+                        }
+                        if (!dup) {
+                            g_foundStructures[g_foundCount++] = structStart;
                         }
                     }
                 }
@@ -180,15 +98,41 @@ void fullScanAndAnalyze() {
     free(buffer);
     
     NSTimeInterval elapsed = [[NSDate date] timeIntervalSinceDate:searchStartTime];
-    addLog([NSString stringWithFormat:@"\n✅ Найдено структур: %d, Время: %.0f сек", foundCount, elapsed]);
+    addLog([NSString stringWithFormat:@"\n✅ Найдено структур: %d, Время: %.0f сек", g_foundCount, elapsed]);
     
-    if (foundCount > 0) {
-        analyzePlayers(foundStructures, foundCount);
-    } else {
+    if (g_foundCount == 0) {
         addLog(@"⚠️ Ничего не найдено");
+    } else {
+        addLog(@"📋 Анализ структур...");
+        
+        // Анализируем каждую структуру отдельно (без лишних вызовов)
+        for (int i = 0; i < g_foundCount; i++) {
+            uintptr_t s = g_foundStructures[i];
+            int id = 0, team = 0, dead = 0;
+            vm_read_overwrite(task, s + 0x10, 4, (vm_address_t)&id, NULL);
+            vm_read_overwrite(task, s + 0x34, 4, (vm_address_t)&team, NULL);
+            vm_read_overwrite(task, s + 0x7A, 4, (vm_address_t)&dead, NULL);
+            
+            addLog([NSString stringWithFormat:@"\n🔹 [%d] 0x%lx | ID:%d Team:%d Dead:%d", 
+                    i+1, s, id, team, dead]);
+            
+            // Читаем Transform и координаты
+            uintptr_t transform = 0;
+            vm_read_overwrite(task, s + 0x38, 8, (vm_address_t)&transform, NULL);
+            
+            if (transform != 0) {
+                float x=0, y=0, z=0;
+                vm_read_overwrite(task, transform + 0x20, 4, (vm_address_t)&x, NULL);
+                vm_read_overwrite(task, transform + 0x24, 4, (vm_address_t)&y, NULL);
+                vm_read_overwrite(task, transform + 0x28, 4, (vm_address_t)&z, NULL);
+                addLog([NSString stringWithFormat:@"   📍 POS: X=%.2f Y=%.2f Z=%.2f", x, y, z]);
+            } else {
+                addLog(@"   📍 Transform: 0");
+            }
+        }
     }
     
-    addLog(@"✅ ГОТОВО");
+    addLog(@"\n✅ ГОТОВО");
     isSearching = NO;
 }
 
@@ -203,7 +147,7 @@ void fullScanAndAnalyze() {
 @implementation MenuHandler
 + (void)onSearch {
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
-        fullScanAndAnalyze();
+        fastScan();
     });
 }
 + (void)onClear { clearLog(); }
