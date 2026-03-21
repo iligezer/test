@@ -22,8 +22,8 @@ void clearLog() {
     addLog(@"🗑 Лог очищен");
 }
 
-// ===== БЫСТРЫЙ ПОИСК (КАК В iGG) =====
-void fastSearchLikeIGG() {
+// ===== ПОЛНЫЙ ПОИСК (0x100000000 - 0x300000000) =====
+void fullRangeSearch() {
     if (isSearching) {
         addLog(@"⏳ Поиск уже идет...");
         return;
@@ -53,26 +53,27 @@ void fastSearchLikeIGG() {
         return;
     }
     
-    addLog(@"📊 Сканирование (чтение страницами по 4KB)...");
+    addLog(@"📊 Диапазон: 0x100000000 - 0x300000000 (8 ГБ)");
+    addLog(@"📊 Сканирование страницами по 4KB...");
     
     while (1) {
         kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
         
-        // Только RW память в диапазоне 0x100000000 - 0x180000000
+        // Только RW память в полном диапазоне
         if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE) &&
-            addr >= 0x100000000 && addr <= 0x180000000) {
+            addr >= 0x100000000 && addr <= 0x300000000) {
             
             regionsChecked++;
             
-            // Показываем прогресс каждые 500 регионов
-            if (regionsChecked % 500 == 0) {
+            // Показываем прогресс каждые 2000 регионов
+            if (regionsChecked % 2000 == 0) {
                 NSTimeInterval elapsed = [[NSDate date] timeIntervalSinceDate:searchStartTime];
                 addLog([NSString stringWithFormat:@"   ⏳ Регион %d (%.0f сек)", regionsChecked, elapsed]);
             }
             
-            // Читаем регион по страницам (4096 байт)
+            // Читаем регион по страницам
             uintptr_t regionStart = addr;
             uintptr_t regionEnd = addr + size;
             
@@ -84,7 +85,7 @@ void fastSearchLikeIGG() {
                 kern_return_t kr2 = vm_read_overwrite(task, page, pageSize, (vm_address_t)buffer, &read);
                 if (kr2 != KERN_SUCCESS || read < 4) continue;
                 
-                // Сканируем страницу в памяти (быстро!)
+                // Сканируем страницу в памяти
                 for (uintptr_t offset = 0; offset + 4 <= pageSize; offset += 8) {
                     int val = *(int*)(buffer + offset);
                     
@@ -117,7 +118,7 @@ void fastSearchLikeIGG() {
         }
         
         addr += size;
-        if (addr > 0x180000000) break;
+        if (addr > 0x300000000) break;
     }
     
     free(buffer);
@@ -140,7 +141,7 @@ void fastSearchLikeIGG() {
 @implementation MenuHandler
 + (void)onSearch {
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
-        fastSearchLikeIGG();
+        fullRangeSearch();
     });
 }
 + (void)onClear { clearLog(); }
