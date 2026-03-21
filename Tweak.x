@@ -22,7 +22,6 @@ void clearLog() {
     addLog(@"🗑 Лог очищен");
 }
 
-// ===== БЕЗОПАСНОЕ ЧТЕНИЕ =====
 int safeReadInt(uintptr_t addr) {
     if (addr == 0) return 0;
     @try {
@@ -62,9 +61,7 @@ float safeReadFloat(uintptr_t addr) {
     }
 }
 
-// ===== ПРОВЕРКА, ПОХОЖЕ ЛИ НА КООРДИНАТЫ ИГРОКА =====
 BOOL isValidPlayerPosition(float x, float y, float z) {
-    // Координаты в разумных пределах (-100..100) и не нулевые
     if (x < -100 || x > 100) return NO;
     if (y < -100 || y > 100) return NO;
     if (z < -100 || z > 100) return NO;
@@ -72,36 +69,33 @@ BOOL isValidPlayerPosition(float x, float y, float z) {
     return YES;
 }
 
-// ===== ПОИСК TRANSFORM В СТРУКТУРЕ =====
-uintptr_t findTransformInStruct(uintptr_t structStart, int *foundOffset) {
-    // Проверяем смещения от +0x20 до +0x80 с шагом 8
+// ===== ПРОВЕРКА СТРУКТУРЫ =====
+BOOL isValidStructure(uintptr_t structStart) {
     for (int offset = 0x20; offset <= 0x80; offset += 8) {
         uintptr_t transformPtr = safeReadPtr(structStart + offset);
         if (transformPtr == 0) continue;
         if (transformPtr < 0x100000000 || transformPtr > 0x300000000) continue;
         
-        // Проверяем координаты по адресу transformPtr + 0x20
         float x = safeReadFloat(transformPtr + 0x20);
         float y = safeReadFloat(transformPtr + 0x24);
         float z = safeReadFloat(transformPtr + 0x28);
         
         if (isValidPlayerPosition(x, y, z)) {
-            if (foundOffset) *foundOffset = offset;
-            return transformPtr;
+            return YES;
         }
     }
-    return 0;
+    return NO;
 }
 
-// ===== АВТОПОИСК ID, СТРУКТУРЫ, TRANSFORM И КООРДИНАТ =====
-void autoFindAll() {
+// ===== АВТОПОИСК =====
+void autoFindFiltered() {
     if (isSearching) {
         addLog(@"⏳ Уже ищу");
         return;
     }
     isSearching = YES;
     searchStartTime = [NSDate date];
-    addLog(@"🔍 АВТОПОИСК ID, TRANSFORM И КООРДИНАТ");
+    addLog(@"🔍 АВТОПОИСК (С ФИЛЬТРАЦИЕЙ)");
     addLog(@"=================================");
     
     int myID = 71068432;
@@ -147,53 +141,59 @@ void autoFindAll() {
                     int val = *(int*)(buffer + offset);
                     
                     if (val == myID && foundMy < 20) {
-                        foundMy++;
-                        uintptr_t structStart = (page + offset) - 0x10;
-                        int team = safeReadInt(structStart + 0x34);
-                        int dead = safeReadInt(structStart + 0x7A);
+                        uintptr_t idAddr = page + offset;
+                        uintptr_t structStart = idAddr - 0x10;
                         
-                        if (team == 0 || team == 1) {
-                            addLog([NSString stringWithFormat:@"\n🔹 [СВОЙ %d] Структура: 0x%lx", foundMy, structStart]);
+                        if (isValidStructure(structStart)) {
+                            foundMy++;
+                            int team = safeReadInt(structStart + 0x34);
+                            int dead = safeReadInt(structStart + 0x7A);
+                            
+                            addLog([NSString stringWithFormat:@"\n🔹 [СВОЙ %d] СТРУКТУРА: 0x%lx", foundMy, structStart]);
                             addLog([NSString stringWithFormat:@"   ID: %d, Team: %d, Dead: %d", myID, team, dead]);
                             
                             // Ищем Transform
-                            int transformOffset = 0;
-                            uintptr_t transform = findTransformInStruct(structStart, &transformOffset);
-                            
-                            if (transform != 0) {
-                                addLog([NSString stringWithFormat:@"   ✅ Transform найден по смещению +0x%02X: 0x%lx", transformOffset, transform]);
+                            for (int trOffset = 0x20; trOffset <= 0x80; trOffset += 8) {
+                                uintptr_t transform = safeReadPtr(structStart + trOffset);
+                                if (transform == 0) continue;
                                 
                                 float x = safeReadFloat(transform + 0x20);
                                 float y = safeReadFloat(transform + 0x24);
                                 float z = safeReadFloat(transform + 0x28);
-                                addLog([NSString stringWithFormat:@"   📍 КООРДИНАТЫ: X=%.2f Y=%.2f Z=%.2f", x, y, z]);
-                            } else {
-                                addLog([NSString stringWithFormat:@"   ❌ Transform не найден в структуре"]);
+                                
+                                if (isValidPlayerPosition(x, y, z)) {
+                                    addLog([NSString stringWithFormat:@"   ✅ Transform: 0x%lx (смещение +0x%02X)", transform, trOffset]);
+                                    addLog([NSString stringWithFormat:@"   📍 КООРДИНАТЫ: X=%.2f Y=%.2f Z=%.2f", x, y, z]);
+                                    break;
+                                }
                             }
                         }
                     }
                     else if (val == enemyID && foundEnemy < 20) {
-                        foundEnemy++;
-                        uintptr_t structStart = (page + offset) - 0x10;
-                        int team = safeReadInt(structStart + 0x34);
-                        int dead = safeReadInt(structStart + 0x7A);
+                        uintptr_t idAddr = page + offset;
+                        uintptr_t structStart = idAddr - 0x10;
                         
-                        if (team == 0 || team == 1) {
-                            addLog([NSString stringWithFormat:@"\n🔹 [ВРАГ %d] Структура: 0x%lx", foundEnemy, structStart]);
+                        if (isValidStructure(structStart)) {
+                            foundEnemy++;
+                            int team = safeReadInt(structStart + 0x34);
+                            int dead = safeReadInt(structStart + 0x7A);
+                            
+                            addLog([NSString stringWithFormat:@"\n🔹 [ВРАГ %d] СТРУКТУРА: 0x%lx", foundEnemy, structStart]);
                             addLog([NSString stringWithFormat:@"   ID: %d, Team: %d, Dead: %d", enemyID, team, dead]);
                             
-                            int transformOffset = 0;
-                            uintptr_t transform = findTransformInStruct(structStart, &transformOffset);
-                            
-                            if (transform != 0) {
-                                addLog([NSString stringWithFormat:@"   ✅ Transform найден по смещению +0x%02X: 0x%lx", transformOffset, transform]);
+                            for (int trOffset = 0x20; trOffset <= 0x80; trOffset += 8) {
+                                uintptr_t transform = safeReadPtr(structStart + trOffset);
+                                if (transform == 0) continue;
                                 
                                 float x = safeReadFloat(transform + 0x20);
                                 float y = safeReadFloat(transform + 0x24);
                                 float z = safeReadFloat(transform + 0x28);
-                                addLog([NSString stringWithFormat:@"   📍 КООРДИНАТЫ: X=%.2f Y=%.2f Z=%.2f", x, y, z]);
-                            } else {
-                                addLog([NSString stringWithFormat:@"   ❌ Transform не найден в структуре"]);
+                                
+                                if (isValidPlayerPosition(x, y, z)) {
+                                    addLog([NSString stringWithFormat:@"   ✅ Transform: 0x%lx (смещение +0x%02X)", transform, trOffset]);
+                                    addLog([NSString stringWithFormat:@"   📍 КООРДИНАТЫ: X=%.2f Y=%.2f Z=%.2f", x, y, z]);
+                                    break;
+                                }
                             }
                         }
                     }
@@ -225,12 +225,10 @@ void autoFindAll() {
 @implementation MenuHandler
 + (void)onSearch {
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
-        autoFindAll();
+        autoFindFiltered();
     });
 }
-+ (void)onClear {
-    clearLog();
-}
++ (void)onClear { clearLog(); }
 + (void)onCopy {
     if (logView && logView.text.length > 0) {
         UIPasteboard.generalPasteboard.string = logView.text;
