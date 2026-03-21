@@ -6,79 +6,97 @@ static UIWindow *win = nil;
 static UITextView *logView = nil;
 static NSMutableString *logText = nil;
 static BOOL isSearching = NO;
-static BOOL shouldStop = NO;
+static NSDate *searchStartTime = nil;
 
 void addLog(NSString *msg) {
     if (!logText) logText = [[NSMutableString alloc] init];
-    [logText appendString:msg];
+    
+    // Добавляем время к каждому сообщению
+    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+    [formatter setDateFormat:@"HH:mm:ss"];
+    NSString *timestamp = [formatter stringFromDate:[NSDate date]];
+    NSString *msgWithTime = [NSString stringWithFormat:@"[%@] %@", timestamp, msg];
+    
+    [logText appendString:msgWithTime];
     [logText appendString:@"\n"];
     dispatch_async(dispatch_get_main_queue(), ^{
         if (logView) logView.text = logText;
     });
 }
 
-// ===== БЫСТРЫЙ ПОИСК КАК В iGG =====
-void fastSearch() {
-    if (isSearching) { addLog(@"⏳ Уже ищу"); return; }
+void clearLog() {
+    logText = nil;
+    addLog(@"🗑 Лог очищен");
+}
+
+// ===== ПОИСК КАК В iGG (ОДИН ПРОХОД) =====
+void searchLikeIGG() {
+    if (isSearching) {
+        addLog(@"⏳ Поиск уже идет...");
+        return;
+    }
     isSearching = YES;
-    shouldStop = NO;
+    searchStartTime = [NSDate date];
     addLog(@"🔍 ПОИСК ID 71068432 И 55471766");
     addLog(@"=================================");
     
     int myID = 71068432;
     int enemyID = 55471766;
     int foundMy = 0, foundEnemy = 0;
+    int regionsChecked = 0;
     
     task_t task = mach_task_self();
-    vm_address_t addr = 0x100000000;
+    vm_address_t addr = 0;
     vm_size_t size = 0;
     struct vm_region_basic_info_64 info;
     mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
     mach_port_t object_name = MACH_PORT_NULL;
-    int regionNum = 0;
     
-    addLog(@"📊 Сканирование регионов...");
+    addLog(@"📊 Сканирование регионов (только RW память)...");
     
     while (1) {
         kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
         
-        // Только читаемые регионы в нашем диапазоне
-        if ((info.protection & VM_PROT_READ) && addr >= 0x100000000 && addr <= 0x300000000) {
-            regionNum++;
-            if (regionNum % 100 == 0) {
-                addLog([NSString stringWithFormat:@"   ⏳ Регион %d: 0x%lx (размер 0x%lx)", regionNum, addr, size]);
+        // Только регионы с правами ЧТЕНИЕ+ЗАПИСЬ (как в iGG) и в нужном диапазоне
+        if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE) &&
+            addr >= 0x100000000 && addr <= 0x300000000) {
+            
+            regionsChecked++;
+            
+            // Показываем прогресс каждые 50 регионов
+            if (regionsChecked % 50 == 0) {
+                NSTimeInterval elapsed = [[NSDate date] timeIntervalSinceDate:searchStartTime];
+                addLog([NSString stringWithFormat:@"   ⏳ Регион %d (%.0f сек)", regionsChecked, elapsed]);
             }
             
-            // Сканируем страницами по 4KB для скорости
-            for (uintptr_t page = addr; page < addr + size; page += 0x1000) {
-                // Сканируем страницу
-                for (uintptr_t a = page; a < page + 0x1000 && a < addr + size; a += 4) {
-                    int val = 0;
-                    vm_size_t read = 0;
-                    kern_return_t kr2 = vm_read_overwrite(task, a, 4, (vm_address_t)&val, &read);
-                    if (kr2 != KERN_SUCCESS || read != 4) continue;
-                    
-                    if (val == myID && foundMy < 20) {
-                        uintptr_t structStart = a - 0x10;
-                        int team = 0, dead = 0;
-                        vm_read_overwrite(task, structStart + 0x34, 4, (vm_address_t)&team, &read);
-                        vm_read_overwrite(task, structStart + 0x7A, 4, (vm_address_t)&dead, &read);
-                        if (team == 0 || team == 1) {
-                            foundMy++;
-                            addLog([NSString stringWithFormat:@"[СВОЙ %d] 0x%lx Team:%d Dead:%d", foundMy, structStart, team, dead]);
-                        }
+            // Сканируем регион по 4 байта
+            uintptr_t endAddr = addr + size;
+            for (uintptr_t a = addr; a < endAddr; a += 4) {
+                int val = 0;
+                vm_size_t read = 0;
+                kern_return_t kr2 = vm_read_overwrite(task, a, 4, (vm_address_t)&val, &read);
+                if (kr2 != KERN_SUCCESS || read != 4) continue;
+                
+                if (val == myID && foundMy < 30) {
+                    uintptr_t structStart = a - 0x10;
+                    int team = 0, dead = 0;
+                    vm_read_overwrite(task, structStart + 0x34, 4, (vm_address_t)&team, &read);
+                    vm_read_overwrite(task, structStart + 0x7A, 4, (vm_address_t)&dead, &read);
+                    if (team == 0 || team == 1) {
+                        foundMy++;
+                        addLog([NSString stringWithFormat:@"[СВОЙ %d] 0x%lx Team:%d Dead:%d", foundMy, structStart, team, dead]);
                     }
-                    else if (val == enemyID && foundEnemy < 20) {
-                        uintptr_t structStart = a - 0x10;
-                        int team = 0, dead = 0;
-                        vm_read_overwrite(task, structStart + 0x34, 4, (vm_address_t)&team, &read);
-                        vm_read_overwrite(task, structStart + 0x7A, 4, (vm_address_t)&dead, &read);
-                        if (team == 0 || team == 1) {
-                            foundEnemy++;
-                            addLog([NSString stringWithFormat:@"[ВРАГ %d] 0x%lx Team:%d Dead:%d", foundEnemy, structStart, team, dead]);
-                        }
+                }
+                else if (val == enemyID && foundEnemy < 30) {
+                    uintptr_t structStart = a - 0x10;
+                    int team = 0, dead = 0;
+                    vm_read_overwrite(task, structStart + 0x34, 4, (vm_address_t)&team, &read);
+                    vm_read_overwrite(task, structStart + 0x7A, 4, (vm_address_t)&dead, &read);
+                    if (team == 0 || team == 1) {
+                        foundEnemy++;
+                        addLog([NSString stringWithFormat:@"[ВРАГ %d] 0x%lx Team:%d Dead:%d", foundEnemy, structStart, team, dead]);
                     }
                 }
             }
@@ -86,10 +104,11 @@ void fastSearch() {
         
         addr += size;
         if (addr > 0x300000000) break;
-        if (shouldStop) break;
     }
     
-    addLog([NSString stringWithFormat:@"\n✅ Регионов проверено: %d", regionNum]);
+    NSTimeInterval elapsed = [[NSDate date] timeIntervalSinceDate:searchStartTime];
+    addLog([NSString stringWithFormat:@"\n✅ Регионов проверено: %d", regionsChecked]);
+    addLog([NSString stringWithFormat:@"✅ Время: %.1f секунд", elapsed]);
     addLog([NSString stringWithFormat:@"✅ Найдено СВОИХ: %d, ВРАГОВ: %d", foundMy, foundEnemy]);
     if (foundMy == 0 && foundEnemy == 0) {
         addLog(@"⚠️ Ничего не найдено. Убедись, что ты в матче!");
@@ -101,20 +120,19 @@ void fastSearch() {
 // ===== КЛАСС-ОБРАБОТЧИК =====
 @interface MenuHandler : NSObject
 + (void)onSearch;
++ (void)onClear;
 + (void)onCopy;
 + (void)onClose;
 @end
 
 @implementation MenuHandler
 + (void)onSearch {
-    if (isSearching) {
-        shouldStop = YES;
-        addLog(@"⏹ Останавливаю поиск...");
-        return;
-    }
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
-        fastSearch();
+        searchLikeIGG();
     });
+}
++ (void)onClear {
+    clearLog();
 }
 + (void)onCopy {
     if (logView && logView.text.length > 0) {
@@ -157,7 +175,7 @@ void createMenu() {
     }
     if (!key) return;
     
-    CGFloat w = 280, h = 380;
+    CGFloat w = 280, h = 400;
     CGFloat x = (key.bounds.size.width - w) / 2;
     CGFloat y = (key.bounds.size.height - h) / 2;
     
@@ -176,7 +194,7 @@ void createMenu() {
     title.font = [UIFont boldSystemFontOfSize:16];
     [win addSubview:title];
     
-    logView = [[UITextView alloc] initWithFrame:CGRectMake(8, 42, w-16, 240)];
+    logView = [[UITextView alloc] initWithFrame:CGRectMake(8, 42, w-16, 250)];
     logView.backgroundColor = UIColor.blackColor;
     logView.textColor = UIColor.greenColor;
     logView.font = [UIFont fontWithName:@"Courier" size:11];
@@ -184,8 +202,9 @@ void createMenu() {
     logView.layer.cornerRadius = 6;
     [win addSubview:logView];
     
+    // Кнопка поиска
     UIButton *searchBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    searchBtn.frame = CGRectMake(15, 295, (w-45)/2, 38);
+    searchBtn.frame = CGRectMake(8, 305, (w-30)/3, 38);
     [searchBtn setTitle:@"🔍 НАЙТИ" forState:UIControlStateNormal];
     searchBtn.backgroundColor = UIColor.systemBlueColor;
     [searchBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
@@ -193,8 +212,19 @@ void createMenu() {
     [searchBtn addTarget:[MenuHandler class] action:@selector(onSearch) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:searchBtn];
     
+    // Кнопка очистки лога
+    UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    clearBtn.frame = CGRectMake(15 + (w-30)/3, 305, (w-30)/3, 38);
+    [clearBtn setTitle:@"🗑 ОЧИСТИТЬ" forState:UIControlStateNormal];
+    clearBtn.backgroundColor = UIColor.systemOrangeColor;
+    [clearBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    clearBtn.layer.cornerRadius = 8;
+    [clearBtn addTarget:[MenuHandler class] action:@selector(onClear) forControlEvents:UIControlEventTouchUpInside];
+    [win addSubview:clearBtn];
+    
+    // Кнопка копирования
     UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    copyBtn.frame = CGRectMake(25 + (w-45)/2, 295, (w-45)/2, 38);
+    copyBtn.frame = CGRectMake(22 + (w-30)/3*2, 305, (w-30)/3, 38);
     [copyBtn setTitle:@"📋 КОПИ" forState:UIControlStateNormal];
     copyBtn.backgroundColor = UIColor.systemGreenColor;
     [copyBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
@@ -202,8 +232,9 @@ void createMenu() {
     [copyBtn addTarget:[MenuHandler class] action:@selector(onCopy) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:copyBtn];
     
+    // Кнопка закрытия
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(w/2-40, 345, 80, 28);
+    closeBtn.frame = CGRectMake(w/2-40, 355, 80, 32);
     [closeBtn setTitle:@"ЗАКРЫТЬ" forState:UIControlStateNormal];
     closeBtn.backgroundColor = UIColor.systemRedColor;
     [closeBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
