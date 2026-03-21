@@ -38,7 +38,7 @@ void searchByIDs() {
     addLog(@"=================================");
     
     uintptr_t start = 0x100000000;
-    uintptr_t end = 0x200000000;
+    uintptr_t end = 0x300000000;
     
     int myID = 71068432;
     int enemyID = 55471766;
