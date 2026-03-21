@@ -22,22 +22,23 @@ void clearLog() {
     addLog(@"🗑 Лог очищен");
 }
 
-// ===== РАБОЧИЙ СКАНЕР + АНАЛИЗ =====
-void fullScanAndAnalyze() {
+// ===== ПОИСК ID + АНАЛИЗ КООРДИНАТ =====
+void scanAndAnalyze() {
     if (isSearching) {
-        addLog(@"⏳ Поиск уже идет...");
+        addLog(@"⏳ Уже ищу");
         return;
     }
     isSearching = YES;
     searchStartTime = [NSDate date];
-    addLog(@"🔍 СКАН + АНАЛИЗ");
+    addLog(@"🔍 ПОИСК ID 71068432 И 55471766");
     addLog(@"=================================");
     
     int myID = 71068432;
     int enemyID = 55471766;
     
-    uintptr_t foundStructures[200];
-    int foundCount = 0;
+    // Массив для хранения найденных структур
+    uintptr_t foundStructs[200];
+    int structCount = 0;
     
     task_t task = mach_task_self();
     vm_address_t addr = 0;
@@ -55,6 +56,7 @@ void fullScanAndAnalyze() {
     
     addLog(@"📊 Сканирование...");
     
+    // ===== ЭТАП 1: НАХОДИМ ВСЕ СТРУКТУРЫ ПО ID =====
     while (1) {
         kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
                                          (vm_region_info_t)&info, &count, &object_name);
@@ -71,19 +73,17 @@ void fullScanAndAnalyze() {
                 kern_return_t kr2 = vm_read_overwrite(task, page, pageSize, (vm_address_t)buffer, &read);
                 if (kr2 != KERN_SUCCESS || read < 4) continue;
                 
-                for (uintptr_t offset = 0; offset + 4 <= pageSize && foundCount < 200; offset += 8) {
+                for (uintptr_t offset = 0; offset + 4 <= pageSize && structCount < 200; offset += 8) {
                     int val = *(int*)(buffer + offset);
                     
                     if (val == myID || val == enemyID) {
-                        uintptr_t absAddr = page + offset;
-                        uintptr_t structStart = absAddr - 0x10;
-                        
+                        uintptr_t structStart = page + offset - 0x10;
                         BOOL dup = NO;
-                        for (int i = 0; i < foundCount; i++) {
-                            if (foundStructures[i] == structStart) { dup = YES; break; }
+                        for (int i = 0; i < structCount; i++) {
+                            if (foundStructs[i] == structStart) { dup = YES; break; }
                         }
                         if (!dup) {
-                            foundStructures[foundCount++] = structStart;
+                            foundStructs[structCount++] = structStart;
                         }
                     }
                 }
@@ -97,36 +97,41 @@ void fullScanAndAnalyze() {
     free(buffer);
     
     NSTimeInterval elapsed = [[NSDate date] timeIntervalSinceDate:searchStartTime];
-    addLog([NSString stringWithFormat:@"✅ Найдено структур: %d, Время: %.0f сек", foundCount, elapsed]);
+    addLog([NSString stringWithFormat:@"✅ Найдено структур: %d, Время: %.0f сек", structCount, elapsed]);
     
-    if (foundCount == 0) {
+    if (structCount == 0) {
         addLog(@"⚠️ Ничего не найдено");
         addLog(@"✅ ГОТОВО");
         isSearching = NO;
         return;
     }
     
+    // ===== ЭТАП 2: АНАЛИЗИРУЕМ КАЖДУЮ НАЙДЕННУЮ СТРУКТУРУ =====
     addLog(@"\n📊 АНАЛИЗ СТРУКТУР");
     addLog(@"=================================");
     
-    int activePlayers = 0;
+    int validCount = 0;
     
-    for (int i = 0; i < foundCount; i++) {
-        uintptr_t s = foundStructures[i];
+    for (int i = 0; i < structCount; i++) {
+        uintptr_t s = foundStructs[i];
         
+        // Читаем ID, Team, Dead
         int id = 0, team = 0, dead = 0;
         vm_read_overwrite(task, s + 0x10, 4, (vm_address_t)&id, NULL);
         vm_read_overwrite(task, s + 0x34, 4, (vm_address_t)&team, NULL);
         vm_read_overwrite(task, s + 0x7A, 4, (vm_address_t)&dead, NULL);
         
+        // Фильтр: Team 0/1, Dead 0-100
         if ((team != 0 && team != 1) || dead < 0 || dead > 100) continue;
         
-        addLog([NSString stringWithFormat:@"\n🔹 ИГРОК %d", activePlayers + 1]);
+        validCount++;
+        addLog([NSString stringWithFormat:@"\n🔹 ИГРОК %d", validCount]);
         addLog([NSString stringWithFormat:@"   Структура: 0x%lx", s]);
         addLog([NSString stringWithFormat:@"   ID: %d", id]);
         addLog([NSString stringWithFormat:@"   Team: %d %@", team, team == 0 ? @"(СВОЙ)" : @"(ВРАГ)"]);
         addLog([NSString stringWithFormat:@"   Dead: %d %@", dead, dead == 0 ? @"(ЖИВ)" : @"(МЕРТВ)"]);
         
+        // Читаем Transform и координаты
         uintptr_t transform = 0;
         vm_read_overwrite(task, s + 0x38, 8, (vm_address_t)&transform, NULL);
         
@@ -138,16 +143,12 @@ void fullScanAndAnalyze() {
             
             addLog([NSString stringWithFormat:@"   Transform: 0x%lx", transform]);
             addLog([NSString stringWithFormat:@"   📍 ПОЗИЦИЯ: X=%.2f Y=%.2f Z=%.2f", x, y, z]);
-            
-            if (fabs(x) > 0.1 || fabs(y) > 0.1 || fabs(z) > 0.1) {
-                activePlayers++;
-            }
         } else {
-            addLog([NSString stringWithFormat:@"   Transform: 0"]);
+            addLog([NSString stringWithFormat:@"   Transform: 0 (не найден)"]);
         }
     }
     
-    addLog([NSString stringWithFormat:@"\n✅ Активных игроков: %d", activePlayers]);
+    addLog([NSString stringWithFormat:@"\n✅ Всего игроков: %d", validCount]);
     addLog(@"✅ ГОТОВО");
     isSearching = NO;
 }
@@ -163,12 +164,10 @@ void fullScanAndAnalyze() {
 @implementation MenuHandler
 + (void)onSearch {
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
-        fullScanAndAnalyze();
+        scanAndAnalyze();
     });
 }
-+ (void)onClear {
-    clearLog();
-}
++ (void)onClear { clearLog(); }
 + (void)onCopy {
     if (logView && logView.text.length > 0) {
         UIPasteboard.generalPasteboard.string = logView.text;
@@ -210,7 +209,7 @@ void createMenu() {
     }
     if (!key) return;
     
-    CGFloat w = 300, h = 420;
+    CGFloat w = 300, h = 440;
     CGFloat x = (key.bounds.size.width - w) / 2;
     CGFloat y = (key.bounds.size.height - h) / 2;
     
@@ -229,7 +228,7 @@ void createMenu() {
     title.font = [UIFont boldSystemFontOfSize:14];
     [win addSubview:title];
     
-    logView = [[UITextView alloc] initWithFrame:CGRectMake(8, 42, w-16, 270)];
+    logView = [[UITextView alloc] initWithFrame:CGRectMake(8, 42, w-16, 290)];
     logView.backgroundColor = UIColor.blackColor;
     logView.textColor = UIColor.greenColor;
     logView.font = [UIFont fontWithName:@"Courier" size:10];
@@ -238,7 +237,7 @@ void createMenu() {
     [win addSubview:logView];
     
     UIButton *searchBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    searchBtn.frame = CGRectMake(8, 325, (w-30)/3, 38);
+    searchBtn.frame = CGRectMake(8, 345, (w-30)/3, 38);
     [searchBtn setTitle:@"🔍 СКАН" forState:UIControlStateNormal];
     searchBtn.backgroundColor = UIColor.systemBlueColor;
     [searchBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
@@ -247,7 +246,7 @@ void createMenu() {
     [win addSubview:searchBtn];
     
     UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    clearBtn.frame = CGRectMake(15 + (w-30)/3, 325, (w-30)/3, 38);
+    clearBtn.frame = CGRectMake(15 + (w-30)/3, 345, (w-30)/3, 38);
     [clearBtn setTitle:@"🗑 ОЧИСТИТЬ" forState:UIControlStateNormal];
     clearBtn.backgroundColor = UIColor.systemOrangeColor;
     [clearBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
@@ -256,7 +255,7 @@ void createMenu() {
     [win addSubview:clearBtn];
     
     UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    copyBtn.frame = CGRectMake(22 + (w-30)/3*2, 325, (w-30)/3, 38);
+    copyBtn.frame = CGRectMake(22 + (w-30)/3*2, 345, (w-30)/3, 38);
     [copyBtn setTitle:@"📋 КОПИ" forState:UIControlStateNormal];
     copyBtn.backgroundColor = UIColor.systemGreenColor;
     [copyBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
@@ -265,7 +264,7 @@ void createMenu() {
     [win addSubview:copyBtn];
     
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(w/2-40, 375, 80, 32);
+    closeBtn.frame = CGRectMake(w/2-40, 395, 80, 32);
     [closeBtn setTitle:@"ЗАКРЫТЬ" forState:UIControlStateNormal];
     closeBtn.backgroundColor = UIColor.systemRedColor;
     [closeBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
