@@ -24,7 +24,6 @@ void clearLog() {
     addLog(@"🗑 Лог очищен");
 }
 
-// ===== БЕЗОПАСНОЕ ЧТЕНИЕ =====
 int safeReadInt(uintptr_t addr) {
     if (addr == 0) return 0;
     @try {
@@ -58,35 +57,37 @@ float safeReadFloat(uintptr_t addr) {
     }
 }
 
-// ===== АВТОПОИСК ПРАВИЛЬНОГО СМЕЩЕНИЯ ПОЗИЦИИ =====
+// ===== ПОИСК КООРДИНАТ В ДИАПАЗОНЕ 0x20 - 0x200 =====
 void findPositionOffset(uintptr_t transform) {
     if (transform == 0) return;
     
-    addLog([NSString stringWithFormat:@"\n🔍 Анализ Transform 0x%lx:", transform]);
+    addLog([NSString stringWithFormat:@"\n🔍 Поиск координат в Transform 0x%lx (0x20 - 0x200):", transform]);
     
-    // Проверяем разные возможные смещения для позиции
-    int offsets[] = {0x20, 0x24, 0x28, 0x2C, 0x30, 0x34, 0x38, 0x3C, 0x40, 0x44, 0x48, 0x4C, 0x50, 0x54, 0x58, 0x5C, 0x60, 0x64, 0x68, 0x6C, 0x70};
     int found = 0;
     
-    for (int i = 0; i < sizeof(offsets)/sizeof(int) && found < 3; i++) {
-        int offset = offsets[i];
+    for (int offset = 0x20; offset <= 0x200; offset += 4) {
         float x = safeReadFloat(transform + offset);
         float y = safeReadFloat(transform + offset + 4);
         float z = safeReadFloat(transform + offset + 8);
         
-        // Координаты в разумных пределах (не 0, не огромные)
-        if (fabs(x) > 0.1 && fabs(x) < 1000 && fabs(y) > 0.1 && fabs(y) < 100 && fabs(z) > 0.1 && fabs(z) < 1000) {
-            addLog([NSString stringWithFormat:@"   ✅ Смещение 0x%02X: X=%.2f Y=%.2f Z=%.2f", offset, x, y, z]);
+        // Координаты в диапазоне -100..100 и не нулевые
+        if (x > -100 && x < 100 && y > -100 && y < 100 && z > -100 && z < 100 &&
+            (fabs(x) > 0.01 || fabs(y) > 0.01 || fabs(z) > 0.01)) {
+            addLog([NSString stringWithFormat:@"   ✅ 0x%02X: X=%.2f Y=%.2f Z=%.2f", offset, x, y, z]);
             found++;
+            if (found >= 10) {
+                addLog(@"   ... (ещё есть, но показаны первые 10)");
+                break;
+            }
         }
     }
     
     if (found == 0) {
-        addLog(@"   ⚠️ Не найдено разумных координат в проверенных смещениях");
+        addLog(@"   ⚠️ Не найдено координат в диапазоне -100..100");
     }
 }
 
-// ===== АНАЛИЗ СТРУКТУР С АВТОПОИСКОМ ПОЗИЦИИ =====
+// ===== АНАЛИЗ СТРУКТУР =====
 void analyzeStructures() {
     if (g_structCount == 0) {
         addLog(@"⚠️ Нет структур. Сначала нажмите СКАН");
@@ -122,17 +123,18 @@ void analyzeStructures() {
         if (transform != 0) {
             addLog([NSString stringWithFormat:@"   Transform: 0x%lx", transform]);
             
-            // Пытаемся найти правильную позицию
+            // Проверяем стандартное смещение 0x20
             float x = safeReadFloat(transform + 0x20);
             float y = safeReadFloat(transform + 0x24);
             float z = safeReadFloat(transform + 0x28);
             
-            // Если координаты нулевые или огромные — ищем в других смещениях
-            if ((fabs(x) < 0.01 && fabs(y) < 0.01 && fabs(z) < 0.01) || fabs(x) > 10000 || fabs(z) > 10000) {
-                addLog(@"   ⚠️ Стандартное смещение (0x20) даёт нулевые/мусорные координаты");
+            // Если координаты НЕ в диапазоне -100..100 или нулевые
+            if (x < -100 || x > 100 || y < -100 || y > 100 || z < -100 || z > 100 ||
+                (fabs(x) < 0.01 && fabs(y) < 0.01 && fabs(z) < 0.01)) {
+                addLog(@"   ⚠️ Смещение 0x20: координаты некорректны, ищу в диапазоне 0x20-0x200...");
                 findPositionOffset(transform);
             } else {
-                addLog([NSString stringWithFormat:@"   📍 ПОЗИЦИЯ: X=%.2f Y=%.2f Z=%.2f", x, y, z]);
+                addLog([NSString stringWithFormat:@"   📍 ПОЗИЦИЯ (0x20): X=%.2f Y=%.2f Z=%.2f", x, y, z]);
             }
         } else {
             addLog([NSString stringWithFormat:@"   Transform: 0 (не найден)"]);
