@@ -13,6 +13,9 @@ static UIWindow *logWindow = nil;
 static UIWindow *menuWindow = nil;
 static UIButton *floatingButton = nil;
 
+// ========== ОБЪЯВЛЕНИЕ КЛАССА ВПЕРЕДИ ==========
+@class ButtonHandler;
+
 // ========== ПЛАВАЮЩАЯ КНОПКА ==========
 @interface FloatingButton : UIButton
 @end
