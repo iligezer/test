@@ -8,8 +8,16 @@ static UITextView *logView = nil;
 static NSMutableString *logText = nil;
 static BOOL isSearching = NO;
 
-// ===== БЕЗОПАСНОЕ ЧТЕНИЕ =====
-int readInt(uintptr_t addr) {
+// ===== ПРОВЕРКА, МОЖНО ЛИ ЧИТАТЬ =====
+BOOL isReadable(uintptr_t addr) {
+    int test = 0;
+    vm_size_t read = 0;
+    kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 1, (vm_address_t)&test, &read);
+    return (kr == KERN_SUCCESS && read == 1);
+}
+
+int safeReadInt(uintptr_t addr) {
+    if (!isReadable(addr)) return 0;
     int val = 0;
     vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, NULL);
     return val;
@@ -24,8 +32,8 @@ void addLog(NSString *msg) {
     });
 }
 
-// ===== ПОИСК ПО ДВУМ ID =====
-void searchBothIDs() {
+// ===== БЕЗОПАСНЫЙ ПОИСК ОБОИХ ID =====
+void safeSearchBoth() {
     if (isSearching) { addLog(@"⏳ Уже ищу"); return; }
     isSearching = YES;
     addLog(@"🔍 ПОИСК ID");
@@ -37,42 +45,32 @@ void searchBothIDs() {
     int myCount = 0;
     int enemyCount = 0;
     
-    task_t task = mach_task_self();
-    vm_address_t addr = 0x100000000;
-    vm_size_t size = 0;
-    mach_msg_type_number_t depth = 0;
+    uintptr_t start = 0x100000000;
+    uintptr_t end = 0x300000000;
     
-    while (1) {
-        struct vm_region_submap_info_64 info;
-        mach_msg_type_number_t count = VM_REGION_SUBMAP_INFO_COUNT_64;
-        kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
-                                         (vm_region_info_t)&info, &count, &depth);
-        if (kr != KERN_SUCCESS) break;
+    addLog([NSString stringWithFormat:@"📊 Диапазон: 0x%lx - 0x%lx", start, end]);
+    
+    for (uintptr_t page = start; page < end; page += 0x1000) {
+        if (!isReadable(page)) continue;
         
-        if (info.protection & VM_PROT_READ) {
-            uintptr_t end = addr + size;
-            for (uintptr_t a = addr; a < end && (myCount < 50 || enemyCount < 50); a += 4) {
-                int val = readInt(a);
-                
-                if (val == myID && myCount < 50) {
-                    myCount++;
-                    uintptr_t structStart = a - 0x10;
-                    int team = readInt(structStart + 0x34);
-                    int isWasted = readInt(structStart + 0x7A);
-                    addLog([NSString stringWithFormat:@"[СВОЙ %d] 0x%lx Team:%d Dead:%d", myCount, structStart, team, isWasted]);
-                }
-                else if (val == enemyID && enemyCount < 50) {
-                    enemyCount++;
-                    uintptr_t structStart = a - 0x10;
-                    int team = readInt(structStart + 0x34);
-                    int isWasted = readInt(structStart + 0x7A);
-                    addLog([NSString stringWithFormat:@"[ВРАГ %d] 0x%lx Team:%d Dead:%d", enemyCount, structStart, team, isWasted]);
-                }
+        for (uintptr_t addr = page; addr < page + 0x1000 && addr < end; addr += 4) {
+            int val = safeReadInt(addr);
+            
+            if (val == myID && myCount < 50) {
+                myCount++;
+                uintptr_t structStart = addr - 0x10;
+                int team = safeReadInt(structStart + 0x34);
+                int isWasted = safeReadInt(structStart + 0x7A);
+                addLog([NSString stringWithFormat:@"[СВОЙ %d] 0x%lx Team:%d Dead:%d", myCount, structStart, team, isWasted]);
+            }
+            else if (val == enemyID && enemyCount < 50) {
+                enemyCount++;
+                uintptr_t structStart = addr - 0x10;
+                int team = safeReadInt(structStart + 0x34);
+                int isWasted = safeReadInt(structStart + 0x7A);
+                addLog([NSString stringWithFormat:@"[ВРАГ %d] 0x%lx Team:%d Dead:%d", enemyCount, structStart, team, isWasted]);
             }
         }
-        
-        addr += size;
-        if (addr > 0x200000000) break;
     }
     
     addLog([NSString stringWithFormat:@"\n✅ Найдено своих: %d", myCount]);
@@ -91,7 +89,7 @@ void searchBothIDs() {
 @implementation MenuHandler
 + (void)onSearch {
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
-        searchBothIDs();
+        safeSearchBoth();
     });
 }
 + (void)onCopy {
