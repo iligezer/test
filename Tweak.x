@@ -142,7 +142,7 @@ void analyzeStructures() {
     addLog([NSString stringWithFormat:@"\n✅ Всего игроков: %d", validCount]);
 }
 
-// ===== ПОИСК ID (НЕ ТРОГАЛ, ВОЗВРАЩАЮ КАК БЫЛО) =====
+// ===== ПОИСК ID =====
 void searchIDs() {
     if (isSearching) {
         addLog(@"⏳ Уже ищу");
@@ -252,7 +252,9 @@ void searchIDs() {
 + (void)onAnalyze {
     analyzeStructures();
 }
-+ (void)onClear { clearLog(); }
++ (void)onClear {
+    clearLog();
+}
 + (void)onCopy {
     if (logView && logView.text.length > 0) {
         UIPasteboard.generalPasteboard.string = logView.text;
@@ -268,7 +270,7 @@ void searchIDs() {
         }
         [k.rootViewController presentViewController:alert animated:YES completion:nil];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-            [alert dismissViewControllerAnimated:YES completion:nil]);
+            [alert dismissViewControllerAnimated:YES completion:nil];
         });
     }
 }
