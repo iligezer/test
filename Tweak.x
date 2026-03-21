@@ -3,11 +3,15 @@
 #import <mach/mach.h>
 
 // ===== ГЛОБАЛЬНЫЕ =====
-static UIWindow *overlay = nil;
-static UITextView *logView = nil;
-static NSMutableString *logText = nil;
-static UIButton *floatButton = nil;
-static BOOL isSearching = NO;
+static UIWindow *g_win = nil;
+static UITextView *g_txt = nil;
+static NSMutableString *g_log = nil;
+static UIButton *g_floatBtn = nil;
+static BOOL g_searching = NO;
+
+// ID игроков (твои данные)
+#define MY_ID 71068432
+#define ENEMY_ID 55471766
 
 // ===== БЕЗОПАСНОЕ ЧТЕНИЕ =====
 uintptr_t readPtr(uintptr_t addr) {
@@ -25,73 +29,74 @@ int readInt(uintptr_t addr) {
 }
 
 void addLog(NSString *msg) {
-    if (!logText) logText = [[NSMutableString alloc] init];
-    [logText appendString:msg];
-    [logText appendString:@"\n"];
+    if (!g_log) g_log = [[NSMutableString alloc] init];
+    [g_log appendString:msg];
+    [g_log appendString:@"\n"];
     dispatch_async(dispatch_get_main_queue(), ^{
-        logView.text = logText;
-        [logView scrollRangeToVisible:NSMakeRange(logView.text.length - 1, 1)];
+        g_txt.text = g_log;
+        [g_txt scrollRangeToVisible:NSMakeRange(g_txt.text.length - 1, 1)];
     });
 }
 
-// ===== ПОИСК =====
-void startSearch() {
-    if (isSearching) {
+// ===== ПОИСК ПО ID =====
+uintptr_t findIdAddress(int targetId, uintptr_t start, uintptr_t end) {
+    for (uintptr_t addr = start; addr < end; addr += 4) {
+        int val = readInt(addr);
+        if (val == targetId) {
+            return addr;
+        }
+    }
+    return 0;
+}
+
+// ===== ГЛАВНЫЙ ПОИСК =====
+void findRoomController() {
+    if (g_searching) {
         addLog(@"⚠️ Уже ищу...");
         return;
     }
-    isSearching = YES;
-    addLog(@"\n🔍 ПОИСК...");
+    g_searching = YES;
+    addLog(@"\n🔍 ПОИСК ПО ID...");
     
     uintptr_t start = 0x100000000;
-    uintptr_t end = 0x180000000;
-    uintptr_t nameAddr = 0;
+    uintptr_t end = 0x200000000;
     
-    // 1. Ищем строку с именем
-    for (uintptr_t addr = start; addr < end; addr += 0x1000) {
-        char buf[256] = {0};
-        vm_size_t read = 0;
-        vm_read_overwrite(mach_task_self(), addr, 128, (vm_address_t)buf, &read);
-        if (strstr(buf, "ЯНалимБауров")) {
-            nameAddr = addr;
-            addLog([NSString stringWithFormat:@"✅ Имя: 0x%lx", addr]);
-            break;
-        }
-    }
-    
-    if (!nameAddr) {
-        addLog(@"❌ Имя не найдено. Зайди в матч!");
-        isSearching = NO;
+    // 1. Находим свой ID
+    uintptr_t myIdAddr = findIdAddress(MY_ID, start, end);
+    if (!myIdAddr) {
+        addLog(@"❌ Свой ID не найден!");
+        g_searching = NO;
         return;
     }
+    addLog([NSString stringWithFormat:@"✅ Свой ID: 0x%lx", myIdAddr]);
     
-    // 2. Ищем указатель на имя (структура +0x18)
-    uintptr_t structStart = 0;
-    for (uintptr_t addr = start; addr < end; addr += 8) {
-        if (readPtr(addr) == nameAddr) {
-            structStart = addr - 0x18;
-            addLog([NSString stringWithFormat:@"✅ Структура: 0x%lx", structStart]);
-            break;
-        }
-    }
-    
-    if (!structStart) {
-        addLog(@"❌ Структура не найдена");
-        isSearching = NO;
+    // 2. Находим ID врага
+    uintptr_t enemyIdAddr = findIdAddress(ENEMY_ID, start, end);
+    if (!enemyIdAddr) {
+        addLog(@"❌ ID врага не найден!");
+        g_searching = NO;
         return;
     }
+    addLog([NSString stringWithFormat:@"✅ Враг ID: 0x%lx", enemyIdAddr]);
     
-    // 3. Читаем ID и Team
-    int playerId = readInt(structStart + 0x10);
-    int team = readInt(structStart + 0x34);
-    addLog([NSString stringWithFormat:@"   ID: %d  Team: %d", playerId, team]);
+    // 3. Начало структур
+    uintptr_t myStruct = myIdAddr - 0x10;
+    uintptr_t enemyStruct = enemyIdAddr - 0x10;
+    addLog([NSString stringWithFormat:@"📦 Структура игрока: 0x%lx", myStruct]);
+    addLog([NSString stringWithFormat:@"📦 Структура врага: 0x%lx", enemyStruct]);
     
-    // 4. Ищем RoomController (указатель на структуру)
+    // 4. Читаем Team
+    int myTeam = readInt(myStruct + 0x34);
+    int enemyTeam = readInt(enemyStruct + 0x34);
+    addLog([NSString stringWithFormat:@"   Team игрока: %d", myTeam]);
+    addLog([NSString stringWithFormat:@"   Team врага: %d", enemyTeam]);
+    
+    // 5. Ищем RoomController (указатель на структуру игрока)
     uintptr_t roomCtrl = 0;
     uintptr_t playersArray = 0;
     
     for (uintptr_t addr = start; addr < start + 0x2000000; addr += 8) {
-        if (readPtr(addr) == structStart) {
+        if (readPtr(addr) == myStruct) {
             uintptr_t arr = readPtr(addr + 0x140);
             if (arr > start && arr < end) {
                 roomCtrl = addr;
@@ -105,22 +110,54 @@ void startSearch() {
     
     if (!roomCtrl) {
         addLog(@"❌ RoomController не найден");
-        isSearching = NO;
+        g_searching = NO;
         return;
     }
     
-    // 5. Выводим всех игроков
-    addLog(@"\n📋 ВСЕ ИГРОКИ:");
+    // 6. Выводим всех игроков
+    addLog(@"\n📋 ВСЕ ИГРОКИ В МАТЧЕ:");
     for (int i = 0; i < 32; i++) {
         uintptr_t p = readPtr(playersArray + i * 8);
         if (p == 0) break;
         int pid = readInt(p + 0x10);
         int pteam = readInt(p + 0x34);
-        addLog([NSString stringWithFormat:@"   [%d] 0x%lx | ID: %d | Team: %d", i, p, pid, pteam]);
+        int pdead = readInt(p + 0x7A);
+        NSString *marker = @"";
+        if (pid == MY_ID) marker = @" ★ СВОЙ";
+        if (pid == ENEMY_ID) marker = @" 👿 ВРАГ";
+        addLog([NSString stringWithFormat:@"   [%d] 0x%lx | ID: %d | Team: %d | Dead: %d%@", i, p, pid, pteam, pdead, marker]);
+    }
+    
+    // 7. Координаты (если найдем Transform)
+    addLog(@"\n🔍 ИЩУ ПОЗИЦИИ...");
+    
+    // Ищем Transform через NetworkPlayer
+    // NetworkPlayer находится по указателю из RoomController или из Players
+    // Обычно NetworkPlayer + 0x38 = Transform, Transform + 0x20 = Vector3
+    
+    for (int i = 0; i < 32; i++) {
+        uintptr_t p = readPtr(playersArray + i * 8);
+        if (p == 0) break;
+        
+        // Пробуем найти NetworkPlayer для этого игрока
+        // Поиск указателя на структуру игрока (QuarkRoomPlayer) в NetworkPlayer
+        for (uintptr_t addr = start; addr < start + 0x2000000; addr += 8) {
+            if (readPtr(addr + 0x1A8) == p) { // NetworkPlayer._quarkPlayer
+                uintptr_t transform = readPtr(addr + 0x38); // NetworkPlayer._thisTransform
+                if (transform > start && transform < end) {
+                    float x = 0, y = 0, z = 0;
+                    vm_size_t out = 0;
+                    vm_read_overwrite(mach_task_self(), transform + 0x20, 12, (vm_address_t)&x, &out);
+                    int pid = readInt(p + 0x10);
+                    addLog([NSString stringWithFormat:@"   Игрок %d | X:%.1f Y:%.1f Z:%.1f", pid, x, y, z]);
+                    break;
+                }
+            }
+        }
     }
     
     addLog(@"\n✅ ГОТОВО!");
-    isSearching = NO;
+    g_searching = NO;
 }
 
 // ===== СОЗДАНИЕ ОКНА =====
@@ -137,69 +174,70 @@ void createWindow() {
     }
     if (!key) return;
     
-    CGFloat w = 300, h = 400;
-    overlay = [[UIWindow alloc] initWithFrame:CGRectMake((key.bounds.size.width - w)/2, (key.bounds.size.height - h)/2, w, h)];
-    overlay.windowLevel = UIWindowLevelAlert + 2;
-    overlay.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.95];
-    overlay.layer.cornerRadius = 15;
-    overlay.layer.borderWidth = 1;
-    overlay.layer.borderColor = UIColor.systemBlueColor.CGColor;
-    overlay.hidden = NO;
+    CGFloat w = 340, h = 520;
+    g_win = [[UIWindow alloc] initWithFrame:CGRectMake((key.bounds.size.width-w)/2, (key.bounds.size.height-h)/2, w, h)];
+    g_win.windowLevel = UIWindowLevelAlert + 2;
+    g_win.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.95];
+    g_win.layer.cornerRadius = 20;
+    g_win.layer.borderWidth = 2;
+    g_win.layer.borderColor = UIColor.systemBlueColor.CGColor;
+    g_win.hidden = NO;
     
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, w, 30)];
-    title.text = @"ESP FINDER";
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 12, w, 30)];
+    title.text = @"🎯 ESP FINDER";
     title.textColor = UIColor.systemBlueColor;
     title.textAlignment = NSTextAlignmentCenter;
-    title.font = [UIFont boldSystemFontOfSize:16];
-    [overlay addSubview:title];
+    title.font = [UIFont boldSystemFontOfSize:18];
+    [g_win addSubview:title];
     
-    logView = [[UITextView alloc] initWithFrame:CGRectMake(10, 45, w-20, 260)];
-    logView.backgroundColor = UIColor.blackColor;
-    logView.textColor = UIColor.greenColor;
-    logView.font = [UIFont fontWithName:@"Courier" size:11];
-    logView.editable = NO;
-    logView.layer.cornerRadius = 8;
-    [overlay addSubview:logView];
+    g_txt = [[UITextView alloc] initWithFrame:CGRectMake(12, 50, w-24, 360)];
+    g_txt.backgroundColor = UIColor.blackColor;
+    g_txt.textColor = UIColor.greenColor;
+    g_txt.font = [UIFont fontWithName:@"Courier" size:11];
+    g_txt.editable = NO;
+    g_txt.selectable = YES;
+    g_txt.layer.cornerRadius = 10;
+    [g_win addSubview:g_txt];
     
     UIButton *searchBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    searchBtn.frame = CGRectMake(15, 315, (w-40)/2, 40);
+    searchBtn.frame = CGRectMake(15, 420, (w-45)/2, 42);
     [searchBtn setTitle:@"🔍 НАЙТИ" forState:UIControlStateNormal];
     searchBtn.backgroundColor = UIColor.systemBlueColor;
     [searchBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    searchBtn.layer.cornerRadius = 10;
+    searchBtn.layer.cornerRadius = 12;
     [searchBtn addTarget:nil action:@selector(onSearch) forControlEvents:UIControlEventTouchUpInside];
-    [overlay addSubview:searchBtn];
+    [g_win addSubview:searchBtn];
     
     UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    copyBtn.frame = CGRectMake(25 + (w-40)/2, 315, (w-40)/2, 40);
+    copyBtn.frame = CGRectMake(25 + (w-45)/2, 420, (w-45)/2, 42);
     [copyBtn setTitle:@"📋 КОПИ" forState:UIControlStateNormal];
     copyBtn.backgroundColor = UIColor.systemGreenColor;
     [copyBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    copyBtn.layer.cornerRadius = 10;
+    copyBtn.layer.cornerRadius = 12;
     [copyBtn addTarget:nil action:@selector(onCopy) forControlEvents:UIControlEventTouchUpInside];
-    [overlay addSubview:copyBtn];
+    [g_win addSubview:copyBtn];
     
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(w/2-40, 365, 80, 30);
+    closeBtn.frame = CGRectMake(w/2-50, 472, 100, 32);
     [closeBtn setTitle:@"ЗАКРЫТЬ" forState:UIControlStateNormal];
     closeBtn.backgroundColor = UIColor.systemRedColor;
     [closeBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     closeBtn.layer.cornerRadius = 8;
-    [closeBtn addTarget:overlay action:@selector(setHidden:) forControlEvents:UIControlEventTouchUpInside];
-    [overlay addSubview:closeBtn];
+    [closeBtn addTarget:g_win action:@selector(setHidden:) forControlEvents:UIControlEventTouchUpInside];
+    [g_win addSubview:closeBtn];
     
-    [overlay makeKeyAndVisible];
+    [g_win makeKeyAndVisible];
 }
 
 void onSearch() {
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
-        startSearch();
+        findRoomController();
     });
 }
 
 void onCopy() {
-    if (logView.text.length > 0) {
-        UIPasteboard.generalPasteboard.string = logView.text;
+    if (g_txt.text.length) {
+        UIPasteboard.generalPasteboard.string = g_txt.text;
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"✅" message:@"Скопировано" preferredStyle:UIAlertControllerStyleAlert];
         UIWindow *k = nil;
         for (UIScene *s in UIApplication.sharedApplication.connectedScenes) {
@@ -227,10 +265,10 @@ void onCopy() {
 - (instancetype)init {
     CGFloat sw = UIScreen.mainScreen.bounds.size.width;
     CGFloat sh = UIScreen.mainScreen.bounds.size.height;
-    self = [super initWithFrame:CGRectMake(sw-70, sh-90, 55, 55)];
+    self = [super initWithFrame:CGRectMake(sw-75, sh-95, 60, 60)];
     if (self) {
         self.backgroundColor = UIColor.systemBlueColor;
-        self.layer.cornerRadius = 27.5;
+        self.layer.cornerRadius = 30;
         self.layer.borderWidth = 2;
         self.layer.borderColor = UIColor.whiteColor.CGColor;
         self.userInteractionEnabled = YES;
@@ -239,7 +277,7 @@ void onCopy() {
         l.text = @"🎯";
         l.textColor = UIColor.whiteColor;
         l.textAlignment = NSTextAlignmentCenter;
-        l.font = [UIFont boldSystemFontOfSize:26];
+        l.font = [UIFont boldSystemFontOfSize:28];
         [self addSubview:l];
         
         UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(drag:)];
@@ -286,7 +324,7 @@ void onCopy() {
         
         __weak typeof(self) weak = self;
         btn.onTap = ^{
-            logText = nil;
+            g_log = nil;
             createWindow();
         };
     }
@@ -294,12 +332,12 @@ void onCopy() {
 }
 @end
 
-static App *app = nil;
+static App *g_app = nil;
 
 __attribute__((constructor))
 static void init() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        app = [[App alloc] init];
+        g_app = [[App alloc] init];
         NSLog(@"[ESP] Загружен");
     });
 }
