@@ -10,14 +10,7 @@ static NSDate *searchStartTime = nil;
 
 void addLog(NSString *msg) {
     if (!logText) logText = [[NSMutableString alloc] init];
-    
-    // Добавляем время к каждому сообщению
-    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
-    [formatter setDateFormat:@"HH:mm:ss"];
-    NSString *timestamp = [formatter stringFromDate:[NSDate date]];
-    NSString *msgWithTime = [NSString stringWithFormat:@"[%@] %@", timestamp, msg];
-    
-    [logText appendString:msgWithTime];
+    [logText appendString:msg];
     [logText appendString:@"\n"];
     dispatch_async(dispatch_get_main_queue(), ^{
         if (logView) logView.text = logText;
@@ -29,8 +22,8 @@ void clearLog() {
     addLog(@"🗑 Лог очищен");
 }
 
-// ===== ПОИСК КАК В iGG (ОДИН ПРОХОД) =====
-void searchLikeIGG() {
+// ===== ОПТИМИЗИРОВАННЫЙ ПОИСК (ШАГ 8 БАЙТ) =====
+void optimizedSearch() {
     if (isSearching) {
         addLog(@"⏳ Поиск уже идет...");
         return;
@@ -44,6 +37,7 @@ void searchLikeIGG() {
     int enemyID = 55471766;
     int foundMy = 0, foundEnemy = 0;
     int regionsChecked = 0;
+    uintptr_t lastAddr = 0;
     
     task_t task = mach_task_self();
     vm_address_t addr = 0;
@@ -52,34 +46,36 @@ void searchLikeIGG() {
     mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
     mach_port_t object_name = MACH_PORT_NULL;
     
-    addLog(@"📊 Сканирование регионов (только RW память)...");
+    addLog(@"📊 Сканирование (шаг 8 байт)...");
     
     while (1) {
         kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
         
-        // Только регионы с правами ЧТЕНИЕ+ЗАПИСЬ (как в iGG) и в нужном диапазоне
+        // Только RW память в нашем диапазоне
         if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE) &&
             addr >= 0x100000000 && addr <= 0x300000000) {
             
             regionsChecked++;
+            uintptr_t startAddr = addr;
+            uintptr_t endAddr = addr + size;
             
-            // Показываем прогресс каждые 50 регионов
-            if (regionsChecked % 50 == 0) {
+            // Показываем текущий адрес каждые 500 регионов
+            if (regionsChecked % 500 == 0 && startAddr != lastAddr) {
+                lastAddr = startAddr;
                 NSTimeInterval elapsed = [[NSDate date] timeIntervalSinceDate:searchStartTime];
-                addLog([NSString stringWithFormat:@"   ⏳ Регион %d (%.0f сек)", regionsChecked, elapsed]);
+                addLog([NSString stringWithFormat:@"   ⏳ 0x%lx (%.0f сек)", startAddr, elapsed]);
             }
             
-            // Сканируем регион по 4 байта
-            uintptr_t endAddr = addr + size;
-            for (uintptr_t a = addr; a < endAddr; a += 4) {
+            // СКАНИРУЕМ С ШАГОМ 8 БАЙТ (выравнивание структур)
+            for (uintptr_t a = startAddr; a < endAddr; a += 8) {
                 int val = 0;
                 vm_size_t read = 0;
                 kern_return_t kr2 = vm_read_overwrite(task, a, 4, (vm_address_t)&val, &read);
                 if (kr2 != KERN_SUCCESS || read != 4) continue;
                 
-                if (val == myID && foundMy < 30) {
+                if (val == myID && foundMy < 50) {
                     uintptr_t structStart = a - 0x10;
                     int team = 0, dead = 0;
                     vm_read_overwrite(task, structStart + 0x34, 4, (vm_address_t)&team, &read);
@@ -89,7 +85,7 @@ void searchLikeIGG() {
                         addLog([NSString stringWithFormat:@"[СВОЙ %d] 0x%lx Team:%d Dead:%d", foundMy, structStart, team, dead]);
                     }
                 }
-                else if (val == enemyID && foundEnemy < 30) {
+                else if (val == enemyID && foundEnemy < 50) {
                     uintptr_t structStart = a - 0x10;
                     int team = 0, dead = 0;
                     vm_read_overwrite(task, structStart + 0x34, 4, (vm_address_t)&team, &read);
@@ -107,12 +103,8 @@ void searchLikeIGG() {
     }
     
     NSTimeInterval elapsed = [[NSDate date] timeIntervalSinceDate:searchStartTime];
-    addLog([NSString stringWithFormat:@"\n✅ Регионов проверено: %d", regionsChecked]);
-    addLog([NSString stringWithFormat:@"✅ Время: %.1f секунд", elapsed]);
-    addLog([NSString stringWithFormat:@"✅ Найдено СВОИХ: %d, ВРАГОВ: %d", foundMy, foundEnemy]);
-    if (foundMy == 0 && foundEnemy == 0) {
-        addLog(@"⚠️ Ничего не найдено. Убедись, что ты в матче!");
-    }
+    addLog([NSString stringWithFormat:@"\n✅ Регионов: %d, Время: %.0f сек", regionsChecked, elapsed]);
+    addLog([NSString stringWithFormat:@"✅ СВОИХ: %d, ВРАГОВ: %d", foundMy, foundEnemy]);
     addLog(@"✅ ГОТОВО");
     isSearching = NO;
 }
@@ -128,12 +120,10 @@ void searchLikeIGG() {
 @implementation MenuHandler
 + (void)onSearch {
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
-        searchLikeIGG();
+        optimizedSearch();
     });
 }
-+ (void)onClear {
-    clearLog();
-}
++ (void)onClear { clearLog(); }
 + (void)onCopy {
     if (logView && logView.text.length > 0) {
         UIPasteboard.generalPasteboard.string = logView.text;
@@ -202,7 +192,6 @@ void createMenu() {
     logView.layer.cornerRadius = 6;
     [win addSubview:logView];
     
-    // Кнопка поиска
     UIButton *searchBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     searchBtn.frame = CGRectMake(8, 305, (w-30)/3, 38);
     [searchBtn setTitle:@"🔍 НАЙТИ" forState:UIControlStateNormal];
@@ -212,7 +201,6 @@ void createMenu() {
     [searchBtn addTarget:[MenuHandler class] action:@selector(onSearch) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:searchBtn];
     
-    // Кнопка очистки лога
     UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     clearBtn.frame = CGRectMake(15 + (w-30)/3, 305, (w-30)/3, 38);
     [clearBtn setTitle:@"🗑 ОЧИСТИТЬ" forState:UIControlStateNormal];
@@ -222,7 +210,6 @@ void createMenu() {
     [clearBtn addTarget:[MenuHandler class] action:@selector(onClear) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:clearBtn];
     
-    // Кнопка копирования
     UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     copyBtn.frame = CGRectMake(22 + (w-30)/3*2, 305, (w-30)/3, 38);
     [copyBtn setTitle:@"📋 КОПИ" forState:UIControlStateNormal];
@@ -232,7 +219,6 @@ void createMenu() {
     [copyBtn addTarget:[MenuHandler class] action:@selector(onCopy) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:copyBtn];
     
-    // Кнопка закрытия
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     closeBtn.frame = CGRectMake(w/2-40, 355, 80, 32);
     [closeBtn setTitle:@"ЗАКРЫТЬ" forState:UIControlStateNormal];
