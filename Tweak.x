@@ -13,8 +13,17 @@ static UIWindow *logWindow = nil;
 static UIWindow *menuWindow = nil;
 static UIButton *floatingButton = nil;
 
-// ========== ОБЪЯВЛЕНИЕ КЛАССА ВПЕРЕДИ ==========
-@class ButtonHandler;
+// ========== ОБЪЯВЛЕНИЕ КЛАССА ButtonHandler (ПОЛНОСТЬЮ В НАЧАЛЕ) ==========
+@interface ButtonHandler : NSObject
++ (void)showMenu;
++ (void)closeMenu;
++ (void)findKeyAddresses;
++ (void)showLog;
++ (void)closeLog;
++ (void)copyLog;
++ (void)addLog:(NSString*)text;
++ (UIWindow*)mainWindow;
+@end
 
 // ========== ПЛАВАЮЩАЯ КНОПКА ==========
 @interface FloatingButton : UIButton
@@ -53,18 +62,7 @@ static UIButton *floatingButton = nil;
 }
 @end
 
-// ========== ОСНОВНАЯ ЛОГИКА ==========
-@interface ButtonHandler : NSObject
-+ (void)showMenu;
-+ (void)closeMenu;
-+ (void)findKeyAddresses;
-+ (void)showLog;
-+ (void)closeLog;
-+ (void)copyLog;
-+ (void)addLog:(NSString*)text;
-+ (UIWindow*)mainWindow;
-@end
-
+// ========== РЕАЛИЗАЦИЯ ButtonHandler ==========
 @implementation ButtonHandler
 
 + (UIWindow*)mainWindow {
