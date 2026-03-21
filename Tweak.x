@@ -1,6 +1,5 @@
 #import <UIKit/UIKit.h>
 #import <mach/mach.h>
-#import <mach/mach_vm.h>   // ← ДОБАВИЛ
 
 // ===== ГЛОБАЛЬНЫЕ =====
 static UIWindow *win = nil;
@@ -17,7 +16,7 @@ void addLog(NSString *msg) {
     });
 }
 
-// ===== БЕЗОПАСНОЕ ЧТЕНИЕ (ЧЕРЕЗ vm_region) =====
+// ===== БЕЗОПАСНОЕ ЧТЕНИЕ =====
 void safeSearch() {
     if (isSearching) { addLog(@"⏳ Уже ищу"); return; }
     isSearching = YES;
@@ -32,13 +31,13 @@ void safeSearch() {
     vm_size_t size = 0;
     struct vm_region_basic_info_64 info;
     mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-    mach_port_t object_name = MACH_PORT_NULL;
     
     int foundMy = 0, foundEnemy = 0;
+    int regionsChecked = 0;
     
     // Получаем первый регион
-    kern_return_t kr = mach_vm_region(task, &addr, &size, VM_REGION_BASIC_INFO_64,
-                                       (vm_region_info_t)&info, &count, &object_name);
+    kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
+                                     (vm_region_info_t)&info, &count, (mach_port_t*)&addr);
     if (kr != KERN_SUCCESS) {
         addLog(@"❌ Ошибка получения регионов");
         isSearching = NO;
@@ -48,9 +47,9 @@ void safeSearch() {
     addLog(@"📊 Сканирование регионов...");
     
     while (1) {
-        // Проверяем только регионы с правами чтения и записи (RW)
-        if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
-            
+        regionsChecked++;
+        // Проверяем только регионы с правами чтения
+        if (info.protection & VM_PROT_READ) {
             // Сканируем регион по 4 байта
             for (uintptr_t a = addr; a < addr + size; a += 4) {
                 int val = 0;
@@ -83,13 +82,14 @@ void safeSearch() {
         // Переход к следующему региону
         addr += size;
         count = VM_REGION_BASIC_INFO_COUNT_64;
-        kr = mach_vm_region(task, &addr, &size, VM_REGION_BASIC_INFO_64,
-                            (vm_region_info_t)&info, &count, &object_name);
+        kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
+                          (vm_region_info_t)&info, &count, (mach_port_t*)&addr);
         if (kr != KERN_SUCCESS) break;
         if (addr > 0x300000000) break;
     }
     
-    addLog([NSString stringWithFormat:@"\n✅ Найдено СВОИХ: %d, ВРАГОВ: %d", foundMy, foundEnemy]);
+    addLog([NSString stringWithFormat:@"\n✅ Проверено регионов: %d", regionsChecked]);
+    addLog([NSString stringWithFormat:@"✅ Найдено СВОИХ: %d, ВРАГОВ: %d", foundMy, foundEnemy]);
     addLog(@"✅ ГОТОВО");
     isSearching = NO;
 }
