@@ -50,17 +50,14 @@ void searchByCoordinates() {
         return;
     }
     isSearching = YES;
-    addLog(@"🔍 ПОИСК ПО КООРДИНАТАМ");
+    addLog(@"🔍 ПОИСК ПО КООРДИНАТАМ (X=6.42 Y=1.82 Z=2.48)");
     addLog(@"=================================");
     
-    // Координаты из скрина: X=6.42 Y=1.82 Z=2.48
-    float coords[][3] = {
-        {6.42, 1.82, 2.48}
-    };
-    int coordCount = 1;
+    float targetX = 6.42;
+    float targetY = 1.82;
+    float targetZ = 2.48;
     int myID = 71068432;
-    
-    int foundCoordSets = 0;
+    int foundCount = 0;
     
     task_t task = mach_task_self();
     vm_address_t addr = 0;
@@ -78,88 +75,78 @@ void searchByCoordinates() {
     
     addLog(@"📊 Сканирование...");
     
-    for (int c = 0; c < coordCount; c++) {
-        float targetX = coords[c][0];
-        float targetY = coords[c][1];
-        float targetZ = coords[c][2];
+    while (1) {
+        kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
+                                         (vm_region_info_t)&info, &count, &object_name);
+        if (kr != KERN_SUCCESS) break;
         
-        addLog([NSString stringWithFormat:@"\n🔍 ИЩУ КООРДИНАТЫ: X=%.2f Y=%.2f Z=%.2f (погрешность ±5)", targetX, targetY, targetZ]);
-        
-        int foundInThisSet = 0;
-        
-        while (1) {
-            kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
-                                             (vm_region_info_t)&info, &count, &object_name);
-            if (kr != KERN_SUCCESS) break;
+        if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE) &&
+            addr >= 0x100000000 && addr <= 0x300000000) {
             
-            if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE) &&
-                addr >= 0x100000000 && addr <= 0x300000000) {
+            for (uintptr_t page = addr; page < addr + size; page += 0x1000) {
+                uintptr_t pageSize = (page + 0x1000 > addr + size) ? (addr + size - page) : 0x1000;
+                if (pageSize < 12) continue;
                 
-                for (uintptr_t page = addr; page < addr + size; page += 0x1000) {
-                    uintptr_t pageSize = (page + 0x1000 > addr + size) ? (addr + size - page) : 0x1000;
-                    if (pageSize < 12) continue;
+                vm_size_t read = 0;
+                kern_return_t kr2 = vm_read_overwrite(task, page, pageSize, (vm_address_t)buffer, &read);
+                if (kr2 != KERN_SUCCESS || read < 12) continue;
+                
+                for (uintptr_t offset = 0; offset + 12 <= pageSize; offset += 4) {
+                    float x = *(float*)(buffer + offset);
+                    float y = *(float*)(buffer + offset + 4);
+                    float z = *(float*)(buffer + offset + 8);
                     
-                    vm_size_t read = 0;
-                    kern_return_t kr2 = vm_read_overwrite(task, page, pageSize, (vm_address_t)buffer, &read);
-                    if (kr2 != KERN_SUCCESS || read < 12) continue;
-                    
-                    for (uintptr_t offset = 0; offset + 12 <= pageSize; offset += 4) {
-                        float x = *(float*)(buffer + offset);
-                        float y = *(float*)(buffer + offset + 4);
-                        float z = *(float*)(buffer + offset + 8);
+                    if (fabs(x - targetX) <= 5 && fabs(y - targetY) <= 5 && fabs(z - targetZ) <= 5) {
+                        uintptr_t coordAddr = page + offset;
+                        foundCount++;
                         
-                        if (fabs(x - targetX) <= 5 && fabs(y - targetY) <= 5 && fabs(z - targetZ) <= 5) {
-                            uintptr_t coordAddr = page + offset;
-                            foundCoordSets++;
-                            foundInThisSet++;
-                            
-                            addLog([NSString stringWithFormat:@"\n📍 НАЙДЕНЫ КООРДИНАТЫ #%d", foundCoordSets]);
-                            addLog([NSString stringWithFormat:@"   Адрес X: 0x%lx", coordAddr]);
-                            addLog([NSString stringWithFormat:@"   X=%.2f Y=%.2f Z=%.2f", x, y, z]);
-                            
-                            // Ищем ID вверх (3 ближайших)
-                            addLog(@"   🔼 3 БЛИЖАЙШИХ ID ВВЕРХ:");
-                            int foundUp = 0;
-                            for (int up = 0x4; up <= 0x100 && foundUp < 3; up += 4) {
-                                uintptr_t checkAddr = coordAddr - up;
-                                if (checkAddr < 0x100000000) continue;
-                                int val = safeReadInt(checkAddr);
-                                if (val == myID) {
-                                    foundUp++;
-                                    addLog([NSString stringWithFormat:@"      [%d] Смещение -0x%02X: ID=0x%lx", foundUp, up, checkAddr]);
-                                }
+                        addLog([NSString stringWithFormat:@"\n📍 НАЙДЕНЫ КООРДИНАТЫ #%d", foundCount]);
+                        addLog([NSString stringWithFormat:@"   Адрес X: 0x%lx", coordAddr]);
+                        addLog([NSString stringWithFormat:@"   X=%.2f Y=%.2f Z=%.2f", x, y, z]);
+                        
+                        // Ищем 3 ближайших ID вверх (без ограничения по расстоянию)
+                        addLog(@"   🔼 3 БЛИЖАЙШИХ ID ВВЕРХ:");
+                        int foundUp = 0;
+                        uintptr_t step = 4;
+                        while (foundUp < 3) {
+                            uintptr_t checkAddr = coordAddr - step;
+                            if (checkAddr < 0x100000000) {
+                                step += 4;
+                                continue;
                             }
-                            if (foundUp == 0) addLog(@"      ❌ ID не найден");
-                            
-                            // Ищем ID вниз (3 ближайших)
-                            addLog(@"   🔽 3 БЛИЖАЙШИХ ID ВНИЗ:");
-                            int foundDown = 0;
-                            for (int down = 0x4; down <= 0x100 && foundDown < 3; down += 4) {
-                                uintptr_t checkAddr = coordAddr + down;
-                                int val = safeReadInt(checkAddr);
-                                if (val == myID) {
-                                    foundDown++;
-                                    addLog([NSString stringWithFormat:@"      [%d] Смещение +0x%02X: ID=0x%lx", foundDown, down, checkAddr]);
-                                }
+                            int val = safeReadInt(checkAddr);
+                            if (val == myID) {
+                                foundUp++;
+                                addLog([NSString stringWithFormat:@"      %d. Адрес: 0x%lx (смещение -0x%02lX)", foundUp, checkAddr, step]);
                             }
-                            if (foundDown == 0) addLog(@"      ❌ ID не найден");
+                            step += 4;
+                        }
+                        
+                        // Ищем 3 ближайших ID вниз (без ограничения по расстоянию)
+                        addLog(@"   🔽 3 БЛИЖАЙШИХ ID ВНИЗ:");
+                        int foundDown = 0;
+                        step = 4;
+                        while (foundDown < 3) {
+                            uintptr_t checkAddr = coordAddr + step;
+                            int val = safeReadInt(checkAddr);
+                            if (val == myID) {
+                                foundDown++;
+                                addLog([NSString stringWithFormat:@"      %d. Адрес: 0x%lx (смещение +0x%02lX)", foundDown, checkAddr, step]);
+                            }
+                            step += 4;
                         }
                     }
                 }
             }
-            
-            addr += size;
-            if (addr > 0x300000000) break;
         }
         
-        if (foundInThisSet == 0) {
-            addLog(@"   ⚠️ Координаты не найдены");
-        }
+        addr += size;
+        if (addr > 0x300000000) break;
     }
     
     free(buffer);
     
-    addLog([NSString stringWithFormat:@"\n✅ Всего найдено совпадений координат: %d", foundCoordSets]);
+    addLog([NSString stringWithFormat:@"\n✅ Всего найдено совпадений координат: %d", foundCount]);
     addLog(@"✅ ГОТОВО");
     isSearching = NO;
 }
