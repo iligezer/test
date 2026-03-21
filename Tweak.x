@@ -22,8 +22,8 @@ void clearLog() {
     addLog(@"🗑 Лог очищен");
 }
 
-// ===== ПОИСК ID + АНАЛИЗ КООРДИНАТ =====
-void scanAndAnalyze() {
+// ===== РАБОЧИЙ СКАНЕР (ТОТ, ЧТО РАБОТАЛ) =====
+void workingScan() {
     if (isSearching) {
         addLog(@"⏳ Уже ищу");
         return;
@@ -35,10 +35,8 @@ void scanAndAnalyze() {
     
     int myID = 71068432;
     int enemyID = 55471766;
-    
-    // Массив для хранения найденных структур
-    uintptr_t foundStructs[200];
-    int structCount = 0;
+    int foundMy = 0, foundEnemy = 0;
+    int regionsChecked = 0;
     
     task_t task = mach_task_self();
     vm_address_t addr = 0;
@@ -54,9 +52,8 @@ void scanAndAnalyze() {
         return;
     }
     
-    addLog(@"📊 Сканирование...");
+    addLog(@"📊 Диапазон: 0x100000000 - 0x300000000");
     
-    // ===== ЭТАП 1: НАХОДИМ ВСЕ СТРУКТУРЫ ПО ID =====
     while (1) {
         kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
                                          (vm_region_info_t)&info, &count, &object_name);
@@ -64,6 +61,8 @@ void scanAndAnalyze() {
         
         if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE) &&
             addr >= 0x100000000 && addr <= 0x300000000) {
+            
+            regionsChecked++;
             
             for (uintptr_t page = addr; page < addr + size; page += 0x1000) {
                 uintptr_t pageSize = (page + 0x1000 > addr + size) ? (addr + size - page) : 0x1000;
@@ -73,17 +72,27 @@ void scanAndAnalyze() {
                 kern_return_t kr2 = vm_read_overwrite(task, page, pageSize, (vm_address_t)buffer, &read);
                 if (kr2 != KERN_SUCCESS || read < 4) continue;
                 
-                for (uintptr_t offset = 0; offset + 4 <= pageSize && structCount < 200; offset += 8) {
+                for (uintptr_t offset = 0; offset + 4 <= pageSize; offset += 8) {
                     int val = *(int*)(buffer + offset);
                     
-                    if (val == myID || val == enemyID) {
-                        uintptr_t structStart = page + offset - 0x10;
-                        BOOL dup = NO;
-                        for (int i = 0; i < structCount; i++) {
-                            if (foundStructs[i] == structStart) { dup = YES; break; }
+                    if (val == myID && foundMy < 50) {
+                        foundMy++;
+                        uintptr_t structStart = (page + offset) - 0x10;
+                        int team = 0, dead = 0;
+                        vm_read_overwrite(task, structStart + 0x34, 4, (vm_address_t)&team, &read);
+                        vm_read_overwrite(task, structStart + 0x7A, 4, (vm_address_t)&dead, &read);
+                        if (team == 0 || team == 1) {
+                            addLog([NSString stringWithFormat:@"[СВОЙ %d] 0x%lx Team:%d Dead:%d", foundMy, structStart, team, dead]);
                         }
-                        if (!dup) {
-                            foundStructs[structCount++] = structStart;
+                    }
+                    else if (val == enemyID && foundEnemy < 50) {
+                        foundEnemy++;
+                        uintptr_t structStart = (page + offset) - 0x10;
+                        int team = 0, dead = 0;
+                        vm_read_overwrite(task, structStart + 0x34, 4, (vm_address_t)&team, &read);
+                        vm_read_overwrite(task, structStart + 0x7A, 4, (vm_address_t)&dead, &read);
+                        if (team == 0 || team == 1) {
+                            addLog([NSString stringWithFormat:@"[ВРАГ %d] 0x%lx Team:%d Dead:%d", foundEnemy, structStart, team, dead]);
                         }
                     }
                 }
@@ -97,58 +106,8 @@ void scanAndAnalyze() {
     free(buffer);
     
     NSTimeInterval elapsed = [[NSDate date] timeIntervalSinceDate:searchStartTime];
-    addLog([NSString stringWithFormat:@"✅ Найдено структур: %d, Время: %.0f сек", structCount, elapsed]);
-    
-    if (structCount == 0) {
-        addLog(@"⚠️ Ничего не найдено");
-        addLog(@"✅ ГОТОВО");
-        isSearching = NO;
-        return;
-    }
-    
-    // ===== ЭТАП 2: АНАЛИЗИРУЕМ КАЖДУЮ НАЙДЕННУЮ СТРУКТУРУ =====
-    addLog(@"\n📊 АНАЛИЗ СТРУКТУР");
-    addLog(@"=================================");
-    
-    int validCount = 0;
-    
-    for (int i = 0; i < structCount; i++) {
-        uintptr_t s = foundStructs[i];
-        
-        // Читаем ID, Team, Dead
-        int id = 0, team = 0, dead = 0;
-        vm_read_overwrite(task, s + 0x10, 4, (vm_address_t)&id, NULL);
-        vm_read_overwrite(task, s + 0x34, 4, (vm_address_t)&team, NULL);
-        vm_read_overwrite(task, s + 0x7A, 4, (vm_address_t)&dead, NULL);
-        
-        // Фильтр: Team 0/1, Dead 0-100
-        if ((team != 0 && team != 1) || dead < 0 || dead > 100) continue;
-        
-        validCount++;
-        addLog([NSString stringWithFormat:@"\n🔹 ИГРОК %d", validCount]);
-        addLog([NSString stringWithFormat:@"   Структура: 0x%lx", s]);
-        addLog([NSString stringWithFormat:@"   ID: %d", id]);
-        addLog([NSString stringWithFormat:@"   Team: %d %@", team, team == 0 ? @"(СВОЙ)" : @"(ВРАГ)"]);
-        addLog([NSString stringWithFormat:@"   Dead: %d %@", dead, dead == 0 ? @"(ЖИВ)" : @"(МЕРТВ)"]);
-        
-        // Читаем Transform и координаты
-        uintptr_t transform = 0;
-        vm_read_overwrite(task, s + 0x38, 8, (vm_address_t)&transform, NULL);
-        
-        if (transform != 0) {
-            float x = 0, y = 0, z = 0;
-            vm_read_overwrite(task, transform + 0x20, 4, (vm_address_t)&x, NULL);
-            vm_read_overwrite(task, transform + 0x24, 4, (vm_address_t)&y, NULL);
-            vm_read_overwrite(task, transform + 0x28, 4, (vm_address_t)&z, NULL);
-            
-            addLog([NSString stringWithFormat:@"   Transform: 0x%lx", transform]);
-            addLog([NSString stringWithFormat:@"   📍 ПОЗИЦИЯ: X=%.2f Y=%.2f Z=%.2f", x, y, z]);
-        } else {
-            addLog([NSString stringWithFormat:@"   Transform: 0 (не найден)"]);
-        }
-    }
-    
-    addLog([NSString stringWithFormat:@"\n✅ Всего игроков: %d", validCount]);
+    addLog([NSString stringWithFormat:@"\n✅ Регионов: %d, Время: %.0f сек", regionsChecked, elapsed]);
+    addLog([NSString stringWithFormat:@"✅ СВОИХ: %d, ВРАГОВ: %d", foundMy, foundEnemy]);
     addLog(@"✅ ГОТОВО");
     isSearching = NO;
 }
@@ -164,10 +123,12 @@ void scanAndAnalyze() {
 @implementation MenuHandler
 + (void)onSearch {
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
-        scanAndAnalyze();
+        workingScan();
     });
 }
-+ (void)onClear { clearLog(); }
++ (void)onClear {
+    clearLog();
+}
 + (void)onCopy {
     if (logView && logView.text.length > 0) {
         UIPasteboard.generalPasteboard.string = logView.text;
@@ -209,7 +170,7 @@ void createMenu() {
     }
     if (!key) return;
     
-    CGFloat w = 300, h = 440;
+    CGFloat w = 280, h = 360;
     CGFloat x = (key.bounds.size.width - w) / 2;
     CGFloat y = (key.bounds.size.height - h) / 2;
     
@@ -222,40 +183,31 @@ void createMenu() {
     win.hidden = NO;
     
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, w, 28)];
-    title.text = @"🎯 ESP SCANNER";
+    title.text = @"🎯 ID SCANNER";
     title.textColor = UIColor.systemBlueColor;
     title.textAlignment = NSTextAlignmentCenter;
-    title.font = [UIFont boldSystemFontOfSize:14];
+    title.font = [UIFont boldSystemFontOfSize:16];
     [win addSubview:title];
     
-    logView = [[UITextView alloc] initWithFrame:CGRectMake(8, 42, w-16, 290)];
+    logView = [[UITextView alloc] initWithFrame:CGRectMake(8, 42, w-16, 230)];
     logView.backgroundColor = UIColor.blackColor;
     logView.textColor = UIColor.greenColor;
-    logView.font = [UIFont fontWithName:@"Courier" size:10];
+    logView.font = [UIFont fontWithName:@"Courier" size:11];
     logView.editable = NO;
     logView.layer.cornerRadius = 6;
     [win addSubview:logView];
     
     UIButton *searchBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    searchBtn.frame = CGRectMake(8, 345, (w-30)/3, 38);
-    [searchBtn setTitle:@"🔍 СКАН" forState:UIControlStateNormal];
+    searchBtn.frame = CGRectMake(15, 282, (w-45)/2, 38);
+    [searchBtn setTitle:@"🔍 НАЙТИ" forState:UIControlStateNormal];
     searchBtn.backgroundColor = UIColor.systemBlueColor;
     [searchBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     searchBtn.layer.cornerRadius = 8;
     [searchBtn addTarget:[MenuHandler class] action:@selector(onSearch) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:searchBtn];
     
-    UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    clearBtn.frame = CGRectMake(15 + (w-30)/3, 345, (w-30)/3, 38);
-    [clearBtn setTitle:@"🗑 ОЧИСТИТЬ" forState:UIControlStateNormal];
-    clearBtn.backgroundColor = UIColor.systemOrangeColor;
-    [clearBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    clearBtn.layer.cornerRadius = 8;
-    [clearBtn addTarget:[MenuHandler class] action:@selector(onClear) forControlEvents:UIControlEventTouchUpInside];
-    [win addSubview:clearBtn];
-    
     UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    copyBtn.frame = CGRectMake(22 + (w-30)/3*2, 345, (w-30)/3, 38);
+    copyBtn.frame = CGRectMake(25 + (w-45)/2, 282, (w-45)/2, 38);
     [copyBtn setTitle:@"📋 КОПИ" forState:UIControlStateNormal];
     copyBtn.backgroundColor = UIColor.systemGreenColor;
     [copyBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
@@ -264,7 +216,7 @@ void createMenu() {
     [win addSubview:copyBtn];
     
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(w/2-40, 395, 80, 32);
+    closeBtn.frame = CGRectMake(w/2-40, 330, 80, 28);
     [closeBtn setTitle:@"ЗАКРЫТЬ" forState:UIControlStateNormal];
     closeBtn.backgroundColor = UIColor.systemRedColor;
     [closeBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
@@ -357,6 +309,6 @@ __attribute__((constructor))
 static void init() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         app = [[App alloc] init];
-        NSLog(@"[ESP] Scanner Ready");
+        NSLog(@"[SCAN] Ready");
     });
 }
