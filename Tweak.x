@@ -26,26 +26,68 @@ void clearLog() {
 
 int safeReadInt(uintptr_t addr) {
     if (addr == 0) return 0;
-    int val = 0;
-    vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, NULL);
-    return val;
+    @try {
+        int val = 0;
+        vm_size_t read = 0;
+        kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, &read);
+        if (kr != KERN_SUCCESS || read != 4) return 0;
+        return val;
+    } @catch (NSException *e) {
+        return 0;
+    }
 }
 
 uintptr_t safeReadPtr(uintptr_t addr) {
     if (addr == 0) return 0;
-    uintptr_t val = 0;
-    vm_read_overwrite(mach_task_self(), addr, 8, (vm_address_t)&val, NULL);
-    return val;
+    @try {
+        uintptr_t val = 0;
+        vm_size_t read = 0;
+        kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 8, (vm_address_t)&val, &read);
+        if (kr != KERN_SUCCESS || read != 8) return 0;
+        return val;
+    } @catch (NSException *e) {
+        return 0;
+    }
 }
 
 float safeReadFloat(uintptr_t addr) {
     if (addr == 0) return 0;
-    float val = 0;
-    vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, NULL);
-    return val;
+    @try {
+        float val = 0;
+        vm_size_t read = 0;
+        kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, &read);
+        if (kr != KERN_SUCCESS || read != 4) return 0;
+        return val;
+    } @catch (NSException *e) {
+        return 0;
+    }
 }
 
-// ===== АНАЛИЗ СТРУКТУР =====
+// ===== АВТОПОИСК СМЕЩЕНИЯ КООРДИНАТ =====
+void findPositionOffset(uintptr_t transform) {
+    if (transform == 0) return;
+    
+    addLog([NSString stringWithFormat:@"\n🔍 Поиск координат в Transform 0x%lx (диапазон 0x20-0x200):", transform]);
+    
+    int found = 0;
+    for (int offset = 0x20; offset <= 0x200 && found < 10; offset += 4) {
+        float x = safeReadFloat(transform + offset);
+        float y = safeReadFloat(transform + offset + 4);
+        float z = safeReadFloat(transform + offset + 8);
+        
+        if (x > -100 && x < 100 && y > -100 && y < 100 && z > -100 && z < 100 &&
+            (fabs(x) > 0.01 || fabs(y) > 0.01 || fabs(z) > 0.01)) {
+            addLog([NSString stringWithFormat:@"   ✅ 0x%02X: X=%.2f Y=%.2f Z=%.2f", offset, x, y, z]);
+            found++;
+        }
+    }
+    
+    if (found == 0) {
+        addLog(@"   ⚠️ Не найдено координат в диапазоне -100..100");
+    }
+}
+
+// ===== АНАЛИЗ СТРУКТУР (С АВТОПОИСКОМ) =====
 void analyzeStructures() {
     if (g_structCount == 0) {
         addLog(@"⚠️ Нет структур. Сначала нажмите СКАН");
@@ -87,9 +129,10 @@ void analyzeStructures() {
             
             if (x > -100 && x < 100 && y > -100 && y < 100 && z > -100 && z < 100 &&
                 (fabs(x) > 0.01 || fabs(y) > 0.01 || fabs(z) > 0.01)) {
-                addLog([NSString stringWithFormat:@"   📍 ПОЗИЦИЯ: X=%.2f Y=%.2f Z=%.2f", x, y, z]);
+                addLog([NSString stringWithFormat:@"   📍 ПОЗИЦИЯ (0x20): X=%.2f Y=%.2f Z=%.2f", x, y, z]);
             } else {
-                addLog(@"   ⚠️ Координаты некорректны (скорее всего не в Transform)");
+                addLog(@"   ⚠️ Смещение 0x20: координаты некорректны, ищу другие...");
+                findPositionOffset(transform);
             }
         } else {
             addLog([NSString stringWithFormat:@"   Transform: 0 (не найден)"]);
@@ -99,8 +142,8 @@ void analyzeStructures() {
     addLog([NSString stringWithFormat:@"\n✅ Всего игроков: %d", validCount]);
 }
 
-// ===== СТАРЫЙ РАБОЧИЙ СКАН =====
-void oldWorkingScan() {
+// ===== ПОИСК ID (НЕ ТРОГАЛ) =====
+void searchIDs() {
     if (isSearching) {
         addLog(@"⏳ Уже ищу");
         return;
@@ -113,7 +156,7 @@ void oldWorkingScan() {
     int myID = 71068432;
     int enemyID = 55471766;
     int foundMy = 0, foundEnemy = 0;
-    int regionsChecked = 0;
+    int regionCount = 0;
     g_structCount = 0;
     
     task_t task = mach_task_self();
@@ -130,7 +173,7 @@ void oldWorkingScan() {
         return;
     }
     
-    addLog(@"📊 Диапазон: 0x100000000 - 0x300000000");
+    addLog(@"📊 Сканирование...");
     
     while (1) {
         kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
@@ -140,7 +183,7 @@ void oldWorkingScan() {
         if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE) &&
             addr >= 0x100000000 && addr <= 0x300000000) {
             
-            regionsChecked++;
+            regionCount++;
             
             for (uintptr_t page = addr; page < addr + size; page += 0x1000) {
                 uintptr_t pageSize = (page + 0x1000 > addr + size) ? (addr + size - page) : 0x1000;
@@ -184,7 +227,7 @@ void oldWorkingScan() {
     free(buffer);
     
     NSTimeInterval elapsed = [[NSDate date] timeIntervalSinceDate:searchStartTime];
-    addLog([NSString stringWithFormat:@"\n✅ Регионов: %d, Время: %.0f сек", regionsChecked, elapsed]);
+    addLog([NSString stringWithFormat:@"\n✅ Регионов: %d, Время: %.0f сек", regionCount, elapsed]);
     addLog([NSString stringWithFormat:@"✅ СВОИХ: %d, ВРАГОВ: %d", foundMy, foundEnemy]);
     addLog([NSString stringWithFormat:@"✅ Сохранено структур: %d", g_structCount]);
     addLog(@"✅ ГОТОВО");
@@ -203,7 +246,7 @@ void oldWorkingScan() {
 @implementation MenuHandler
 + (void)onSearch {
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
-        oldWorkingScan();
+        searchIDs();
     });
 }
 + (void)onAnalyze {
