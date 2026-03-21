@@ -7,8 +7,8 @@ static UITextView *logView = nil;
 static NSMutableString *logText = nil;
 static BOOL isSearching = NO;
 static NSDate *searchStartTime = nil;
-static uintptr_t g_foundStructs[200];
-static int g_structCount = 0;
+static uintptr_t g_foundCoords[200];
+static int g_coordsCount = 0;
 
 void addLog(NSString *msg) {
     if (!logText) logText = [[NSMutableString alloc] init];
@@ -37,19 +37,6 @@ int safeReadInt(uintptr_t addr) {
     }
 }
 
-uintptr_t safeReadPtr(uintptr_t addr) {
-    if (addr == 0) return 0;
-    @try {
-        uintptr_t val = 0;
-        vm_size_t read = 0;
-        kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 8, (vm_address_t)&val, &read);
-        if (kr != KERN_SUCCESS || read != 8) return 0;
-        return val;
-    } @catch (NSException *e) {
-        return 0;
-    }
-}
-
 float safeReadFloat(uintptr_t addr) {
     if (addr == 0) return 0;
     @try {
@@ -63,193 +50,21 @@ float safeReadFloat(uintptr_t addr) {
     }
 }
 
-// ===== АВТОПОИСК СМЕЩЕНИЯ КООРДИНАТ =====
-void findPositionOffset(uintptr_t transform) {
-    if (transform == 0) return;
-    
-    addLog([NSString stringWithFormat:@"\n🔍 Поиск координат в Transform 0x%lx (0x20-0x200):", transform]);
-    
-    int found = 0;
-    for (int offset = 0x20; offset <= 0x200 && found < 10; offset += 4) {
-        float x = safeReadFloat(transform + offset);
-        float y = safeReadFloat(transform + offset + 4);
-        float z = safeReadFloat(transform + offset + 8);
-        
-        if (x > -100 && x < 100 && y > -100 && y < 100 && z > -100 && z < 100 &&
-            (fabs(x) > 0.01 || fabs(y) > 0.01 || fabs(z) > 0.01)) {
-            addLog([NSString stringWithFormat:@"   ✅ 0x%02X: X=%.2f Y=%.2f Z=%.2f", offset, x, y, z]);
-            found++;
-        }
-    }
-    
-    if (found == 0) {
-        addLog(@"   ⚠️ Не найдено координат в диапазоне -100..100");
-    }
-}
-
-// ===== АНАЛИЗ СТРУКТУР =====
-void analyzeStructures() {
-    if (g_structCount == 0) {
-        addLog(@"⚠️ Нет структур. Сначала нажмите СКАН");
-        return;
-    }
-    
-    addLog(@"\n📊 АНАЛИЗ КООРДИНАТ");
-    addLog(@"=================================");
-    
-    int validCount = 0;
-    
-    for (int i = 0; i < g_structCount; i++) {
-        uintptr_t s = g_foundStructs[i];
-        if (s == 0) continue;
-        
-        int id = safeReadInt(s + 0x10);
-        int team = safeReadInt(s + 0x34);
-        int dead = safeReadInt(s + 0x7A);
-        
-        if (id == 0) continue;
-        if (team != 0 && team != 1) continue;
-        if (dead < 0 || dead > 100) continue;
-        
-        validCount++;
-        addLog([NSString stringWithFormat:@"\n🔹 ИГРОК %d", validCount]);
-        addLog([NSString stringWithFormat:@"   Структура: 0x%lx", s]);
-        addLog([NSString stringWithFormat:@"   ID: %d", id]);
-        addLog([NSString stringWithFormat:@"   Team: %d %@", team, team == 0 ? @"(СВОЙ)" : @"(ВРАГ)"]);
-        addLog([NSString stringWithFormat:@"   Dead: %d %@", dead, dead == 0 ? @"(ЖИВ)" : @"(МЕРТВ)"]);
-        
-        uintptr_t transform = safeReadPtr(s + 0x38);
-        
-        if (transform != 0) {
-            addLog([NSString stringWithFormat:@"   Transform: 0x%lx", transform]);
-            
-            float x = safeReadFloat(transform + 0x20);
-            float y = safeReadFloat(transform + 0x24);
-            float z = safeReadFloat(transform + 0x28);
-            
-            if (x > -100 && x < 100 && y > -100 && y < 100 && z > -100 && z < 100 &&
-                (fabs(x) > 0.01 || fabs(y) > 0.01 || fabs(z) > 0.01)) {
-                addLog([NSString stringWithFormat:@"   📍 ПОЗИЦИЯ (0x20): X=%.2f Y=%.2f Z=%.2f", x, y, z]);
-            } else {
-                addLog(@"   ⚠️ Смещение 0x20: координаты некорректны, ищу другие...");
-                findPositionOffset(transform);
-            }
-        } else {
-            addLog([NSString stringWithFormat:@"   Transform: 0 (не найден)"]);
-        }
-    }
-    
-    addLog([NSString stringWithFormat:@"\n✅ Всего игроков: %d", validCount]);
-}
-
-// ===== ПОИСК ID =====
-void searchIDs() {
+// ===== ПОИСК КООРДИНАТ =====
+void searchCoordinates() {
     if (isSearching) {
         addLog(@"⏳ Уже ищу");
         return;
     }
     isSearching = YES;
     searchStartTime = [NSDate date];
-    addLog(@"🔍 ПОИСК ID 71068432 И 55471766");
-    addLog(@"=================================");
-    
-    int myID = 71068432;
-    int enemyID = 55471766;
-    int foundMy = 0, foundEnemy = 0;
-    int regionCount = 0;
-    g_structCount = 0;
-    
-    task_t task = mach_task_self();
-    vm_address_t addr = 0;
-    vm_size_t size = 0;
-    struct vm_region_basic_info_64 info;
-    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-    mach_port_t object_name = MACH_PORT_NULL;
-    
-    uint8_t *buffer = malloc(0x1000);
-    if (!buffer) {
-        addLog(@"❌ Ошибка памяти");
-        isSearching = NO;
-        return;
-    }
-    
-    addLog(@"📊 Сканирование...");
-    
-    while (1) {
-        kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
-                                         (vm_region_info_t)&info, &count, &object_name);
-        if (kr != KERN_SUCCESS) break;
-        
-        if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE) &&
-            addr >= 0x100000000 && addr <= 0x280000000) {
-            
-            regionCount++;
-            
-            for (uintptr_t page = addr; page < addr + size; page += 0x1000) {
-                uintptr_t pageSize = (page + 0x1000 > addr + size) ? (addr + size - page) : 0x1000;
-                if (pageSize < 4) continue;
-                
-                vm_size_t read = 0;
-                kern_return_t kr2 = vm_read_overwrite(task, page, pageSize, (vm_address_t)buffer, &read);
-                if (kr2 != KERN_SUCCESS || read < 4) continue;
-                
-                for (uintptr_t offset = 0; offset + 4 <= pageSize; offset += 8) {
-                    int val = *(int*)(buffer + offset);
-                    
-                    if (val == myID && foundMy < 50) {
-                        foundMy++;
-                        uintptr_t structStart = (page + offset) - 0x10;
-                        int team = safeReadInt(structStart + 0x34);
-                        int dead = safeReadInt(structStart + 0x7A);
-                        if (team == 0 || team == 1) {
-                            addLog([NSString stringWithFormat:@"[СВОЙ %d] 0x%lx Team:%d Dead:%d", foundMy, structStart, team, dead]);
-                            g_foundStructs[g_structCount++] = structStart;
-                        }
-                    }
-                    else if (val == enemyID && foundEnemy < 50) {
-                        foundEnemy++;
-                        uintptr_t structStart = (page + offset) - 0x10;
-                        int team = safeReadInt(structStart + 0x34);
-                        int dead = safeReadInt(structStart + 0x7A);
-                        if (team == 0 || team == 1) {
-                            addLog([NSString stringWithFormat:@"[ВРАГ %d] 0x%lx Team:%d Dead:%d", foundEnemy, structStart, team, dead]);
-                            g_foundStructs[g_structCount++] = structStart;
-                        }
-                    }
-                }
-            }
-        }
-        
-        addr += size;
-        if (addr > 0x280000000) break;
-    }
-    
-    free(buffer);
-    
-    NSTimeInterval elapsed = [[NSDate date] timeIntervalSinceDate:searchStartTime];
-    addLog([NSString stringWithFormat:@"\n✅ Регионов: %d, Время: %.0f сек", regionCount, elapsed]);
-    addLog([NSString stringWithFormat:@"✅ СВОИХ: %d, ВРАГОВ: %d", foundMy, foundEnemy]);
-    addLog([NSString stringWithFormat:@"✅ Сохранено структур: %d", g_structCount]);
-    addLog(@"✅ ГОТОВО");
-    isSearching = NO;
-}
-
-// ===== ПОИСК ПО КООРДИНАТАМ =====
-void searchByCoordinates() {
-    if (isSearching) {
-        addLog(@"⏳ Уже ищу");
-        return;
-    }
-    isSearching = YES;
-    searchStartTime = [NSDate date];
-    addLog(@"🔍 ПОИСК ПО КООРДИНАТАМ (X=6.42 Y=1.82 Z=2.48)");
+    addLog(@"🔍 ПОИСК КООРДИНАТ (X=6.42 Y=1.82 Z=2.48)");
     addLog(@"=================================");
     
     float targetX = 6.42;
     float targetY = 1.82;
     float targetZ = 2.48;
-    int myID = 71068432;
-    int foundCoords = 0;
+    g_coordsCount = 0;
     
     task_t task = mach_task_self();
     vm_address_t addr = 0;
@@ -265,7 +80,7 @@ void searchByCoordinates() {
         return;
     }
     
-    addLog(@"📊 Сканирование...");
+    addLog(@"📊 Диапазон: 0x100000000 - 0x280000000");
     
     while (1) {
         kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
@@ -290,43 +105,11 @@ void searchByCoordinates() {
                     
                     if (fabs(x - targetX) <= 5 && fabs(y - targetY) <= 5 && fabs(z - targetZ) <= 5) {
                         uintptr_t coordAddr = page + offset;
-                        foundCoords++;
+                        g_foundCoords[g_coordsCount++] = coordAddr;
                         
-                        addLog([NSString stringWithFormat:@"\n📍 КООРДИНАТЫ #%d", foundCoords]);
+                        addLog([NSString stringWithFormat:@"\n📍 КООРДИНАТЫ #%d", g_coordsCount]);
                         addLog([NSString stringWithFormat:@"   Адрес X: 0x%lx", coordAddr]);
                         addLog([NSString stringWithFormat:@"   X=%.2f Y=%.2f Z=%.2f", x, y, z]);
-                        
-                        // Ищем 3 ближайших ID вверх
-                        addLog(@"   🔼 3 БЛИЖАЙШИХ ID ВВЕРХ:");
-                        int foundUp = 0;
-                        uintptr_t step = 4;
-                        while (foundUp < 3) {
-                            uintptr_t checkAddr = coordAddr - step;
-                            if (checkAddr < 0x100000000) {
-                                step += 4;
-                                continue;
-                            }
-                            int val = safeReadInt(checkAddr);
-                            if (val == myID) {
-                                foundUp++;
-                                addLog([NSString stringWithFormat:@"      %d. Адрес: 0x%lx (смещение -0x%02lX)", foundUp, checkAddr, step]);
-                            }
-                            step += 4;
-                        }
-                        
-                        // Ищем 3 ближайших ID вниз
-                        addLog(@"   🔽 3 БЛИЖАЙШИХ ID ВНИЗ:");
-                        int foundDown = 0;
-                        step = 4;
-                        while (foundDown < 3) {
-                            uintptr_t checkAddr = coordAddr + step;
-                            int val = safeReadInt(checkAddr);
-                            if (val == myID) {
-                                foundDown++;
-                                addLog([NSString stringWithFormat:@"      %d. Адрес: 0x%lx (смещение +0x%02lX)", foundDown, checkAddr, step]);
-                            }
-                            step += 4;
-                        }
                     }
                 }
             }
@@ -339,15 +122,69 @@ void searchByCoordinates() {
     free(buffer);
     
     NSTimeInterval elapsed = [[NSDate date] timeIntervalSinceDate:searchStartTime];
-    addLog([NSString stringWithFormat:@"\n✅ Найдено координат: %d, Время: %.0f сек", foundCoords, elapsed]);
+    addLog([NSString stringWithFormat:@"\n✅ Найдено координат: %d, Время: %.0f сек", g_coordsCount, elapsed]);
     addLog(@"✅ ГОТОВО");
     isSearching = NO;
+}
+
+// ===== АНАЛИЗ: ИЩЕМ 3 БЛИЖАЙШИХ ID ВВЕРХ И ВНИЗ ОТ КООРДИНАТ =====
+void analyzeNearestIDs() {
+    if (g_coordsCount == 0) {
+        addLog(@"⚠️ Нет координат. Сначала нажмите СКАН");
+        return;
+    }
+    
+    addLog(@"\n📊 ПОИСК 3 БЛИЖАЙШИХ ID ВВЕРХ И ВНИЗ");
+    addLog(@"=================================");
+    
+    int myID = 71068432;
+    
+    for (int i = 0; i < g_coordsCount; i++) {
+        uintptr_t coordAddr = g_foundCoords[i];
+        
+        addLog([NSString stringWithFormat:@"\n📍 КООРДИНАТЫ #%d (0x%lx)", i+1, coordAddr]);
+        
+        // Ищем 3 ближайших ID вверх
+        addLog(@"   🔼 3 БЛИЖАЙШИХ ID ВВЕРХ:");
+        int foundUp = 0;
+        uintptr_t step = 4;
+        while (foundUp < 3 && step < 0x10000) {
+            uintptr_t checkAddr = coordAddr - step;
+            if (checkAddr < 0x100000000) {
+                step += 4;
+                continue;
+            }
+            int val = safeReadInt(checkAddr);
+            if (val == myID) {
+                foundUp++;
+                addLog([NSString stringWithFormat:@"      %d. Адрес: 0x%lx (смещение -0x%02lX)", foundUp, checkAddr, step]);
+            }
+            step += 4;
+        }
+        if (foundUp == 0) addLog(@"      ❌ Не найдено");
+        
+        // Ищем 3 ближайших ID вниз
+        addLog(@"   🔽 3 БЛИЖАЙШИХ ID ВНИЗ:");
+        int foundDown = 0;
+        step = 4;
+        while (foundDown < 3 && step < 0x10000) {
+            uintptr_t checkAddr = coordAddr + step;
+            int val = safeReadInt(checkAddr);
+            if (val == myID) {
+                foundDown++;
+                addLog([NSString stringWithFormat:@"      %d. Адрес: 0x%lx (смещение +0x%02lX)", foundDown, checkAddr, step]);
+            }
+            step += 4;
+        }
+        if (foundDown == 0) addLog(@"      ❌ Не найдено");
+    }
+    
+    addLog(@"\n✅ ГОТОВО");
 }
 
 // ===== КЛАСС-ОБРАБОТЧИК =====
 @interface MenuHandler : NSObject
 + (void)onSearch;
-+ (void)onSearchCoords;
 + (void)onAnalyze;
 + (void)onClear;
 + (void)onCopy;
@@ -357,16 +194,11 @@ void searchByCoordinates() {
 @implementation MenuHandler
 + (void)onSearch {
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
-        searchIDs();
-    });
-}
-+ (void)onSearchCoords {
-    dispatch_async(dispatch_get_global_queue(0, 0), ^{
-        searchByCoordinates();
+        searchCoordinates();
     });
 }
 + (void)onAnalyze {
-    analyzeStructures();
+    analyzeNearestIDs();
 }
 + (void)onClear {
     clearLog();
@@ -412,8 +244,7 @@ void createMenu() {
     }
     if (!key) return;
     
-    CGFloat w = 300;
-    CGFloat h = 460;
+    CGFloat w = 260, h = 280;
     CGFloat x = (key.bounds.size.width - w) / 2;
     CGFloat y = (key.bounds.size.height - h) / 2;
     
@@ -426,13 +257,13 @@ void createMenu() {
     win.hidden = NO;
     
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, w, 28)];
-    title.text = @"🎯 ESP SCANNER";
+    title.text = @"🎯 КООРДИНАТЫ";
     title.textColor = UIColor.systemBlueColor;
     title.textAlignment = NSTextAlignmentCenter;
     title.font = [UIFont boldSystemFontOfSize:14];
     [win addSubview:title];
     
-    logView = [[UITextView alloc] initWithFrame:CGRectMake(8, 42, w-16, 280)];
+    logView = [[UITextView alloc] initWithFrame:CGRectMake(8, 42, w-16, 150)];
     logView.backgroundColor = UIColor.blackColor;
     logView.textColor = UIColor.greenColor;
     logView.font = [UIFont fontWithName:@"Courier" size:10];
@@ -440,37 +271,26 @@ void createMenu() {
     logView.layer.cornerRadius = 6;
     [win addSubview:logView];
     
-    CGFloat btnW = (w - 35) / 2;
-    
     UIButton *searchBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    searchBtn.frame = CGRectMake(10, 335, btnW, 34);
-    [searchBtn setTitle:@"🔍 СКАН ID" forState:UIControlStateNormal];
+    searchBtn.frame = CGRectMake(15, 200, (w-45)/2, 34);
+    [searchBtn setTitle:@"🔍 СКАН" forState:UIControlStateNormal];
     searchBtn.backgroundColor = UIColor.systemBlueColor;
     [searchBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     searchBtn.layer.cornerRadius = 6;
     [searchBtn addTarget:[MenuHandler class] action:@selector(onSearch) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:searchBtn];
     
-    UIButton *coordsBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    coordsBtn.frame = CGRectMake(20 + btnW, 335, btnW, 34);
-    [coordsBtn setTitle:@"📍 КООРДИНАТЫ" forState:UIControlStateNormal];
-    coordsBtn.backgroundColor = UIColor.systemPurpleColor;
-    [coordsBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    coordsBtn.layer.cornerRadius = 6;
-    [coordsBtn addTarget:[MenuHandler class] action:@selector(onSearchCoords) forControlEvents:UIControlEventTouchUpInside];
-    [win addSubview:coordsBtn];
-    
     UIButton *analyzeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    analyzeBtn.frame = CGRectMake(10, 375, btnW, 34);
-    [analyzeBtn setTitle:@"📊 АНАЛИЗ" forState:UIControlStateNormal];
-    analyzeBtn.backgroundColor = UIColor.systemOrangeColor;
+    analyzeBtn.frame = CGRectMake(25 + (w-45)/2, 200, (w-45)/2, 34);
+    [analyzeBtn setTitle:@"📍 АНАЛИЗ" forState:UIControlStateNormal];
+    analyzeBtn.backgroundColor = UIColor.systemPurpleColor;
     [analyzeBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     analyzeBtn.layer.cornerRadius = 6;
     [analyzeBtn addTarget:[MenuHandler class] action:@selector(onAnalyze) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:analyzeBtn];
     
     UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    copyBtn.frame = CGRectMake(20 + btnW, 375, btnW, 34);
+    copyBtn.frame = CGRectMake(15, 240, (w-45)/2, 30);
     [copyBtn setTitle:@"📋 КОПИ" forState:UIControlStateNormal];
     copyBtn.backgroundColor = UIColor.systemGreenColor;
     [copyBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
@@ -478,17 +298,8 @@ void createMenu() {
     [copyBtn addTarget:[MenuHandler class] action:@selector(onCopy) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:copyBtn];
     
-    UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    clearBtn.frame = CGRectMake(10, 415, (w-30)/2, 32);
-    [clearBtn setTitle:@"🗑 ОЧИСТИТЬ" forState:UIControlStateNormal];
-    clearBtn.backgroundColor = UIColor.systemGrayColor;
-    [clearBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    clearBtn.layer.cornerRadius = 6;
-    [clearBtn addTarget:[MenuHandler class] action:@selector(onClear) forControlEvents:UIControlEventTouchUpInside];
-    [win addSubview:clearBtn];
-    
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(20 + (w-30)/2, 415, (w-30)/2, 32);
+    closeBtn.frame = CGRectMake(25 + (w-45)/2, 240, (w-45)/2, 30);
     [closeBtn setTitle:@"❌ ЗАКРЫТЬ" forState:UIControlStateNormal];
     closeBtn.backgroundColor = UIColor.systemRedColor;
     [closeBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
@@ -565,7 +376,6 @@ void createMenu() {
         self.w.btn = b;
         [self.w addSubview:b];
         
-        __weak typeof(self) weak = self;
         b.onTap = ^{
             logText = nil;
             createMenu();
