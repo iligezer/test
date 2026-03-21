@@ -67,7 +67,7 @@ float safeReadFloat(uintptr_t addr) {
 void findPositionOffset(uintptr_t transform) {
     if (transform == 0) return;
     
-    addLog([NSString stringWithFormat:@"\n🔍 Поиск координат в Transform 0x%lx (диапазон 0x20-0x200):", transform]);
+    addLog([NSString stringWithFormat:@"\n🔍 Поиск координат в Transform 0x%lx (0x20-0x200):", transform]);
     
     int found = 0;
     for (int offset = 0x20; offset <= 0x200 && found < 10; offset += 4) {
@@ -87,7 +87,7 @@ void findPositionOffset(uintptr_t transform) {
     }
 }
 
-// ===== АНАЛИЗ СТРУКТУР (С АВТОПОИСКОМ) =====
+// ===== АНАЛИЗ СТРУКТУР =====
 void analyzeStructures() {
     if (g_structCount == 0) {
         addLog(@"⚠️ Нет структур. Сначала нажмите СКАН");
@@ -142,7 +142,7 @@ void analyzeStructures() {
     addLog([NSString stringWithFormat:@"\n✅ Всего игроков: %d", validCount]);
 }
 
-// ===== ПОИСК ID (НЕ ТРОГАЛ) =====
+// ===== ПОИСК ID (НЕ ТРОГАЛ, ВОЗВРАЩАЮ КАК БЫЛО) =====
 void searchIDs() {
     if (isSearching) {
         addLog(@"⏳ Уже ищу");
@@ -268,7 +268,7 @@ void searchIDs() {
         }
         [k.rootViewController presentViewController:alert animated:YES completion:nil];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-            [alert dismissViewControllerAnimated:YES completion:nil];
+            [alert dismissViewControllerAnimated:YES completion:nil]);
         });
     }
 }
