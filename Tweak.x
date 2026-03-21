@@ -69,7 +69,7 @@ void findPositionOffset(uintptr_t transform) {
     }
 }
 
-// ===== АНАЛИЗ НАЙДЕННЫХ СТРУКТУР =====
+// ===== АНАЛИЗ СТРУКТУР =====
 void analyzeStructures() {
     if (g_structCount == 0) {
         addLog(@"⚠️ Нет структур. Сначала нажмите СКАН");
@@ -124,7 +124,7 @@ void analyzeStructures() {
     addLog([NSString stringWithFormat:@"\n✅ Всего игроков: %d", validCount]);
 }
 
-// ===== РАБОЧИЙ СКАН (ТОТ, ЧТО НЕ ВЫЛЕТАЛ) =====
+// ===== РАБОЧИЙ СКАН =====
 void workingScan() {
     if (isSearching) {
         addLog(@"⏳ Уже ищу");
