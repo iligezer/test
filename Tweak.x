@@ -7,9 +7,8 @@
 static UIWindow *g_logWindow = nil;
 static UITextView *g_logTextView = nil;
 static NSMutableString *g_logText = nil;
-static uintptr_t g_foundRoomController = 0;
-static uintptr_t g_foundPlayersArray = 0;
-static int g_playerCount = 0;
+static BOOL g_isSearching = NO;
+static FloatButton *g_floatButton = nil;
 
 // ===== РАБОТА С ПАМЯТЬЮ =====
 uintptr_t getBaseAddress() {
@@ -33,163 +32,145 @@ size_t safeRead(uintptr_t address, void *buffer, size_t size) {
     }
 }
 
-// ===== ДОБАВЛЕНИЕ ЛОГА =====
 void addLog(NSString *format, ...) {
-    if (!g_logText) {
-        g_logText = [[NSMutableString alloc] init];
-    }
+    if (!g_logText) g_logText = [[NSMutableString alloc] init];
     
     va_list args;
     va_start(args, format);
     NSString *message = [[NSString alloc] initWithFormat:format arguments:args];
     va_end(args);
     
-    NSLog(@"[ESP] %@", message);
     [g_logText appendString:message];
     [g_logText appendString:@"\n"];
     
     dispatch_async(dispatch_get_main_queue(), ^{
         if (g_logTextView) {
             g_logTextView.text = g_logText;
-            if (g_logTextView.text.length > 0) {
-                NSRange bottom = NSMakeRange(g_logTextView.text.length - 1, 1);
-                [g_logTextView scrollRangeToVisible:bottom];
-            }
+            NSRange bottom = NSMakeRange(g_logTextView.text.length - 1, 1);
+            [g_logTextView scrollRangeToVisible:bottom];
         }
     });
 }
 
-// ===== АВТОМАТИЧЕСКИЙ ПОИСК ROOMCONTROLLER =====
-void autoFindRoomController() {
-    addLog(@"\n🔍 АВТОПОИСК ROOMCONTROLLER");
+// ===== БЫСТРЫЙ ПОИСК (БЕЗ ЗАВИСАНИЙ) =====
+void quickSearch() {
+    if (g_isSearching) {
+        addLog(@"⚠️ Поиск уже идет...");
+        return;
+    }
+    g_isSearching = YES;
+    
+    addLog(@"\n🔍 ПОИСК ROOMCONTROLLER");
     addLog(@"=================================");
     
     uintptr_t base = getBaseAddress();
     if (base == 0) {
         addLog(@"❌ UnityFramework не найден");
+        g_isSearching = NO;
         return;
     }
     
+    addLog(@"📍 Базовый адрес: 0x%lx", base);
+    addLog(@"💡 Должен быть активный матч!");
+    
+    // ТОЛЬКО ДИАПАЗОН 0x100000000 - 0x180000000
     uintptr_t startAddr = 0x100000000;
-    uintptr_t endAddr = 0x200000000;
-    int foundControllers = 0;
+    uintptr_t endAddr = 0x180000000;
+    int foundPlayers = 0;
+    uintptr_t playerAddrs[50] = {0};
     
-    addLog(@"📊 Сканирую диапазон: 0x%lx - 0x%lx", startAddr, endAddr);
-    addLog(@"⏳ Ищу QuarkRoomPlayer...");
+    addLog(@"📊 Сканирую диапазон...");
     
-    // Сначала находим ВСЕ структуры QuarkRoomPlayer
-    NSMutableArray *players = [NSMutableArray array];
-    
-    for (uintptr_t addr = startAddr; addr < endAddr; addr += 16) {
-        int team = 0;
-        if (safeRead(addr + 0x34, &team, sizeof(int)) == sizeof(int)) {
-            if (team == 0 || team == 1) {
-                int id = 0;
-                if (safeRead(addr + 0x10, &id, sizeof(int)) == sizeof(int)) {
-                    if (id > 1000000 && id < 200000000) {
-                        [players addObject:@(addr)];
-                        addLog(@"   Найден QuarkRoomPlayer: 0x%lx (ID: %d, Team: %d)", addr, id, team);
+    // Сканируем с шагом 0x1000 (быстро)
+    for (uintptr_t addr = startAddr; addr < endAddr && foundPlayers < 30; addr += 0x1000) {
+        for (int offset = 0; offset < 0x1000 && foundPlayers < 30; offset += 16) {
+            uintptr_t ptr = 0;
+            if (safeRead(addr + offset, &ptr, 8) != 8) continue;
+            if (ptr < startAddr || ptr > endAddr) continue;
+            
+            int team = 0, id = 0;
+            if (safeRead(ptr + 0x34, &team, 4) == 4 &&
+                safeRead(ptr + 0x10, &id, 4) == 4) {
+                if ((team == 0 || team == 1) && id > 1000000 && id < 200000000) {
+                    // Проверяем, не дубликат
+                    BOOL duplicate = NO;
+                    for (int i = 0; i < foundPlayers; i++) {
+                        if (playerAddrs[i] == ptr) { duplicate = YES; break; }
+                    }
+                    if (!duplicate) {
+                        playerAddrs[foundPlayers++] = ptr;
+                        addLog(@"   🎮 Игрок %d: 0x%lx (ID: %d, Team: %d)", foundPlayers, ptr, id, team);
                     }
                 }
             }
         }
     }
     
-    addLog(@"\n📊 Найдено QuarkRoomPlayer: %lu", (unsigned long)players.count);
+    addLog(@"\n📊 Найдено игроков: %d", foundPlayers);
     
-    if (players.count == 0) {
-        addLog(@"❌ Не найдено ни одного QuarkRoomPlayer");
+    if (foundPlayers == 0) {
+        addLog(@"❌ Игроки не найдены!");
+        addLog(@"💡 Зайди в матч и нажми снова");
+        g_isSearching = NO;
         return;
     }
     
-    // Берем первый адрес для поиска RoomController
-    uintptr_t firstPlayer = [players[0] unsignedLongValue];
-    addLog(@"\n🔍 Ищу указатели на 0x%lx", firstPlayer);
+    // Ищем указатель на первого игрока (RoomController)
+    addLog(@"\n🔍 Ищу RoomController...");
     
-    // Ищем указатели на первого игрока
-    for (uintptr_t addr = startAddr; addr < endAddr; addr += 8) {
-        uintptr_t ptr = 0;
-        if (safeRead(addr, &ptr, sizeof(uintptr_t)) == sizeof(uintptr_t)) {
-            if (ptr == firstPlayer) {
-                addLog(@"   → Указатель найден: 0x%lx", addr);
+    for (int i = 0; i < foundPlayers && i < 5; i++) {
+        uintptr_t targetPlayer = playerAddrs[i];
+        addLog(@"\n📌 Проверяю игрока 0x%lx", targetPlayer);
+        
+        int ptrFound = 0;
+        for (uintptr_t addr = startAddr; addr < startAddr + 0x2000000 && ptrFound < 5; addr += 8) {
+            uintptr_t ptr = 0;
+            if (safeRead(addr, &ptr, 8) != 8) continue;
+            if (ptr == targetPlayer) {
+                ptrFound++;
+                addLog(@"   🔗 Указатель найден: 0x%lx", addr);
                 
-                // Проверяем, есть ли массив по +0x140
+                // Проверяем массив по +0x140
                 uintptr_t arrayPtr = 0;
-                if (safeRead(addr + 0x140, &arrayPtr, sizeof(uintptr_t)) == sizeof(uintptr_t)) {
-                    if (arrayPtr >= startAddr && arrayPtr < endAddr) {
-                        addLog(@"   → Массив игроков по +0x140: 0x%lx", arrayPtr);
-                        
-                        // Проверяем содержимое массива
-                        int count = 0;
-                        for (int i = 0; i < 20; i++) {
-                            uintptr_t player = 0;
-                            if (safeRead(arrayPtr + i * 8, &player, sizeof(uintptr_t)) == sizeof(uintptr_t)) {
-                                if (player == 0) break;
-                                if ([players containsObject:@(player)]) {
-                                    count++;
-                                }
-                            }
-                        }
-                        
-                        if (count > 0) {
-                            addLog(@"   ✅ В массиве %d игроков", count);
-                            g_foundRoomController = addr;
-                            g_foundPlayersArray = arrayPtr;
-                            foundControllers++;
-                            break;
-                        }
+                if (safeRead(addr + 0x140, &arrayPtr, 8) == 8 && arrayPtr > startAddr) {
+                    addLog(@"   📦 Массив игроков по +0x140: 0x%lx", arrayPtr);
+                    
+                    // Считаем игроков в массиве
+                    int count = 0;
+                    for (int j = 0; j < 32; j++) {
+                        uintptr_t p = 0;
+                        if (safeRead(arrayPtr + j * 8, &p, 8) == 8 && p != 0) {
+                            count++;
+                        } else break;
                     }
+                    addLog(@"   👥 Игроков в массиве: %d", count);
+                    addLog(@"\n🎯 ROOMCONTROLLER: 0x%lx", addr);
+                    addLog(@"🎯 МАССИВ ИГРОКОВ: 0x%lx", arrayPtr);
+                    
+                    // Выводим всех игроков
+                    addLog(@"\n📋 ВСЕ ИГРОКИ:");
+                    for (int j = 0; j < count; j++) {
+                        uintptr_t p = 0;
+                        safeRead(arrayPtr + j * 8, &p, 8);
+                        int pid = 0, pteam = 0;
+                        safeRead(p + 0x10, &pid, 4);
+                        safeRead(p + 0x34, &pteam, 4);
+                        addLog(@"   [%d] 0x%lx | ID: %d | Team: %d", j, p, pid, pteam);
+                    }
+                    
+                    g_isSearching = NO;
+                    return;
                 }
             }
         }
     }
     
-    if (foundControllers > 0) {
-        addLog(@"\n✅ ROOMCONTROLLER НАЙДЕН: 0x%lx", g_foundRoomController);
-        addLog(@"✅ МАССИВ ИГРОКОВ: 0x%lx", g_foundPlayersArray);
-        
-        // Получаем всех игроков из массива
-        int playerCount = 0;
-        addLog(@"\n📋 СПИСОК ИГРОКОВ:");
-        for (int i = 0; i < 30; i++) {
-            uintptr_t player = 0;
-            if (safeRead(g_foundPlayersArray + i * 8, &player, sizeof(uintptr_t)) == sizeof(uintptr_t)) {
-                if (player == 0) break;
-                
-                int id = 0;
-                int team = 0;
-                char isWasted = 0;
-                safeRead(player + 0x10, &id, sizeof(int));
-                safeRead(player + 0x34, &team, sizeof(int));
-                safeRead(player + 0x7A, &isWasted, sizeof(char));
-                
-                addLog(@"   [%d] ID: %d, Team: %d, Dead: %d, Addr: 0x%lx", i, id, team, isWasted, player);
-                playerCount++;
-            }
-        }
-        addLog(@"\n✅ ВСЕГО ИГРОКОВ: %d", playerCount);
-        
-    } else {
-        addLog(@"❌ ROOMCONTROLLER НЕ НАЙДЕН");
-        addLog(@"💡 Попробуй найти вручную через iGG");
-    }
+    addLog(@"\n❌ RoomController не найден");
+    addLog(@"💡 Попробуй еще раз в активном матче");
+    g_isSearching = NO;
 }
 
-void startAutoSearch() {
-    addLog(@"🔍 ИЩУ...");
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        autoFindRoomController();
-    });
-}
-
-void copyLog() {
-    if (g_logTextView) {
-        UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
-        pasteboard.string = g_logTextView.text;
-    }
-}
-
-// ===== СОЗДАНИЕ МАЛЕНЬКОГО ОКНА ЛОГА =====
+// ===== СОЗДАНИЕ ОКНА (ФИКСИРОВАННОЕ ПОЛОЖЕНИЕ) =====
 void createLogWindow() {
     UIWindow *keyWindow = nil;
     for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
@@ -207,73 +188,120 @@ void createLogWindow() {
     
     if (!keyWindow) return;
     
-    // Маленькое окно 280x350
-    CGFloat width = 280;
-    CGFloat height = 350;
+    // ФИКСИРОВАННОЕ ПОЛОЖЕНИЕ — не зависит от ориентации
+    CGFloat width = 320;
+    CGFloat height = 460;
     CGFloat x = (keyWindow.frame.size.width - width) / 2;
     CGFloat y = (keyWindow.frame.size.height - height) / 2;
     
+    if (g_logWindow) {
+        g_logWindow.hidden = YES;
+        g_logWindow = nil;
+    }
+    
     g_logWindow = [[UIWindow alloc] initWithFrame:CGRectMake(x, y, width, height)];
     g_logWindow.windowLevel = UIWindowLevelAlert + 2;
-    g_logWindow.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.95];
-    g_logWindow.layer.cornerRadius = 15;
-    g_logWindow.layer.borderWidth = 1;
+    g_logWindow.backgroundColor = [UIColor colorWithWhite:0.1 alpha:0.98];
+    g_logWindow.layer.cornerRadius = 20;
+    g_logWindow.layer.borderWidth = 2;
     g_logWindow.layer.borderColor = [UIColor systemBlueColor].CGColor;
     g_logWindow.hidden = NO;
     
     // Заголовок
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, width, 25)];
-    title.text = @"🎯 SCAN";
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 12, width, 30)];
+    title.text = @"🎯 ESP SCANNER";
     title.textColor = [UIColor systemBlueColor];
     title.textAlignment = NSTextAlignmentCenter;
-    title.font = [UIFont boldSystemFontOfSize:16];
+    title.font = [UIFont boldSystemFontOfSize:18];
     [g_logWindow addSubview:title];
     
-    // Текстовое поле
-    g_logTextView = [[UITextView alloc] initWithFrame:CGRectMake(10, 45, width - 20, 230)];
+    // Текст
+    g_logTextView = [[UITextView alloc] initWithFrame:CGRectMake(10, 50, width - 20, 320)];
     g_logTextView.backgroundColor = [UIColor blackColor];
     g_logTextView.textColor = [UIColor greenColor];
-    g_logTextView.font = [UIFont fontWithName:@"Courier" size:10];
+    g_logTextView.font = [UIFont fontWithName:@"Courier" size:11];
     g_logTextView.editable = NO;
     g_logTextView.selectable = YES;
-    g_logTextView.layer.cornerRadius = 8;
+    g_logTextView.layer.cornerRadius = 10;
     [g_logWindow addSubview:g_logTextView];
     
     // Кнопка поиска
     UIButton *searchBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    searchBtn.frame = CGRectMake(15, 290, width - 30, 40);
+    searchBtn.frame = CGRectMake(15, 380, (width - 45) / 2, 42);
     [searchBtn setTitle:@"🔍 НАЙТИ" forState:UIControlStateNormal];
     searchBtn.backgroundColor = [UIColor systemBlueColor];
     [searchBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    searchBtn.layer.cornerRadius = 10;
-    searchBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-    [searchBtn addTarget:nil action:@selector(startAutoSearch) forControlEvents:UIControlEventTouchUpInside];
+    searchBtn.layer.cornerRadius = 12;
+    searchBtn.titleLabel.font = [UIFont boldSystemFontOfSize:15];
+    [searchBtn addTarget:nil action:@selector(startQuickSearch) forControlEvents:UIControlEventTouchUpInside];
     [g_logWindow addSubview:searchBtn];
     
     // Кнопка копирования
     UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    copyBtn.frame = CGRectMake(15, 340, width - 30, 35);
-    [copyBtn setTitle:@"📋 КОПИРОВАТЬ" forState:UIControlStateNormal];
+    copyBtn.frame = CGRectMake(25 + (width - 45) / 2, 380, (width - 45) / 2, 42);
+    [copyBtn setTitle:@"📋 КОПИ" forState:UIControlStateNormal];
     copyBtn.backgroundColor = [UIColor systemGreenColor];
     [copyBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    copyBtn.layer.cornerRadius = 10;
-    copyBtn.titleLabel.font = [UIFont boldSystemFontOfSize:13];
-    [copyBtn addTarget:nil action:@selector(copyLog) forControlEvents:UIControlEventTouchUpInside];
+    copyBtn.layer.cornerRadius = 12;
+    copyBtn.titleLabel.font = [UIFont boldSystemFontOfSize:15];
+    [copyBtn addTarget:nil action:@selector(copyLogs) forControlEvents:UIControlEventTouchUpInside];
     [g_logWindow addSubview:copyBtn];
     
     // Кнопка закрытия
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(width - 35, 5, 30, 30);
-    [closeBtn setTitle:@"✕" forState:UIControlStateNormal];
+    closeBtn.frame = CGRectMake(width/2 - 50, 432, 100, 32);
+    [closeBtn setTitle:@"ЗАКРЫТЬ" forState:UIControlStateNormal];
+    closeBtn.backgroundColor = [UIColor systemRedColor];
     [closeBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    closeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:18];
+    closeBtn.layer.cornerRadius = 8;
+    closeBtn.titleLabel.font = [UIFont boldSystemFontOfSize:13];
     [closeBtn addTarget:g_logWindow action:@selector(setHidden:) forControlEvents:UIControlEventTouchUpInside];
     [g_logWindow addSubview:closeBtn];
     
     [g_logWindow makeKeyAndVisible];
 }
 
-// ===== ПЛАВАЮЩАЯ КНОПКА =====
+void startQuickSearch() {
+    if (g_isSearching) {
+        addLog(@"⚠️ Подожди, поиск уже идет...");
+        return;
+    }
+    addLog(@"\n🔍 НАЧИНАЮ ПОИСК...");
+    addLog(@"⏳ Жди 10-20 секунд");
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        quickSearch();
+    });
+}
+
+void copyLogs() {
+    if (g_logTextView && g_logTextView.text.length > 0) {
+        UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
+        pasteboard.string = g_logTextView.text;
+        
+        dispatch_async(dispatch_get_main_queue(), ^{
+            UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"✅" message:@"Скопировано!" preferredStyle:UIAlertControllerStyleAlert];
+            UIWindow *keyWindow = nil;
+            for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+                if ([scene isKindOfClass:[UIWindowScene class]]) {
+                    UIWindowScene *ws = (UIWindowScene *)scene;
+                    for (UIWindow *w in ws.windows) {
+                        if (w.isKeyWindow) {
+                            keyWindow = w;
+                            break;
+                        }
+                    }
+                }
+                if (keyWindow) break;
+            }
+            [keyWindow.rootViewController presentViewController:alert animated:YES completion:nil];
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1.2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+                [alert dismissViewControllerAnimated:YES completion:nil];
+            });
+        });
+    }
+}
+
+// ===== ПЛАВАЮЩАЯ КНОПКА (В ПРАВОМ НИЖНЕМ УГЛУ) =====
 @interface FloatButton : UIImageView
 @property (nonatomic, copy) void (^actionBlock)(void);
 @property (nonatomic, assign) CGPoint lastLocation;
@@ -282,23 +310,23 @@ void createLogWindow() {
 @implementation FloatButton
 
 - (instancetype)init {
-    self = [super initWithFrame:CGRectMake(20, 120, 65, 65)];
+    CGFloat screenWidth = [UIScreen mainScreen].bounds.size.width;
+    CGFloat screenHeight = [UIScreen mainScreen].bounds.size.height;
+    
+    // ФИКСИРОВАННОЕ ПОЛОЖЕНИЕ — правый нижний угол
+    self = [super initWithFrame:CGRectMake(screenWidth - 75, screenHeight - 95, 60, 60)];
     if (self) {
         self.backgroundColor = [UIColor systemBlueColor];
-        self.layer.cornerRadius = 32.5;
-        self.layer.borderWidth = 3;
+        self.layer.cornerRadius = 30;
+        self.layer.borderWidth = 2;
         self.layer.borderColor = [UIColor whiteColor].CGColor;
         self.userInteractionEnabled = YES;
-        self.layer.shadowColor = [UIColor blackColor].CGColor;
-        self.layer.shadowOffset = CGSizeMake(0, 4);
-        self.layer.shadowOpacity = 0.5;
-        self.layer.shadowRadius = 6;
         
         UILabel *label = [[UILabel alloc] initWithFrame:self.bounds];
         label.text = @"🎯";
         label.textColor = [UIColor whiteColor];
         label.textAlignment = NSTextAlignmentCenter;
-        label.font = [UIFont boldSystemFontOfSize:32];
+        label.font = [UIFont boldSystemFontOfSize:28];
         [self addSubview:label];
         
         UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragButton:)];
@@ -319,9 +347,10 @@ void createLogWindow() {
     
     CGPoint newCenter = CGPointMake(self.lastLocation.x + translation.x, self.lastLocation.y + translation.y);
     
-    CGFloat half = 32.5;
+    // ОГРАНИЧЕНИЯ — кнопка всегда в видимой зоне
+    CGFloat half = 30;
     newCenter.x = MAX(half, MIN(self.superview.bounds.size.width - half, newCenter.x));
-    newCenter.y = MAX(half + 50, MIN(self.superview.bounds.size.height - half - 50, newCenter.y));
+    newCenter.y = MAX(half + 60, MIN(self.superview.bounds.size.height - half - 60, newCenter.y));
     
     self.center = newCenter;
 }
@@ -358,7 +387,6 @@ void createLogWindow() {
 // ===== ГЛАВНЫЙ UI =====
 @interface AimbotUI : NSObject
 @property (nonatomic, strong) PassthroughWindow *window;
-@property (nonatomic, strong) FloatButton *floatButton;
 @end
 
 @implementation AimbotUI
@@ -375,19 +403,16 @@ void createLogWindow() {
     self.window.backgroundColor = [UIColor clearColor];
     self.window.hidden = NO;
     
-    self.floatButton = [[FloatButton alloc] init];
-    self.window.floatButton = self.floatButton;
-    [self.window addSubview:self.floatButton];
+    g_floatButton = [[FloatButton alloc] init];
+    self.window.floatButton = g_floatButton;
+    [self.window addSubview:g_floatButton];
     
     __weak typeof(self) weakSelf = self;
-    [self.floatButton setAction:^{
+    [g_floatButton setAction:^{
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (strongSelf) {
             g_logText = nil;
             createLogWindow();
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 0.5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-                startAutoSearch();
-            });
         }
     }];
 }
