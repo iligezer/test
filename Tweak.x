@@ -45,30 +45,6 @@ float safeReadFloat(uintptr_t addr) {
     return val;
 }
 
-// ===== АВТОПОИСК КООРДИНАТ =====
-void findPositionOffset(uintptr_t transform) {
-    if (transform == 0) return;
-    
-    addLog([NSString stringWithFormat:@"\n🔍 Поиск координат в Transform 0x%lx:", transform]);
-    
-    int found = 0;
-    for (int offset = 0x20; offset <= 0x200 && found < 10; offset += 4) {
-        float x = safeReadFloat(transform + offset);
-        float y = safeReadFloat(transform + offset + 4);
-        float z = safeReadFloat(transform + offset + 8);
-        
-        if (x > -100 && x < 100 && y > -100 && y < 100 && z > -100 && z < 100 &&
-            (fabs(x) > 0.01 || fabs(y) > 0.01 || fabs(z) > 0.01)) {
-            addLog([NSString stringWithFormat:@"   ✅ 0x%02X: X=%.2f Y=%.2f Z=%.2f", offset, x, y, z]);
-            found++;
-        }
-    }
-    
-    if (found == 0) {
-        addLog(@"   ⚠️ Не найдено координат в диапазоне -100..100");
-    }
-}
-
 // ===== АНАЛИЗ СТРУКТУР =====
 void analyzeStructures() {
     if (g_structCount == 0) {
@@ -111,10 +87,9 @@ void analyzeStructures() {
             
             if (x > -100 && x < 100 && y > -100 && y < 100 && z > -100 && z < 100 &&
                 (fabs(x) > 0.01 || fabs(y) > 0.01 || fabs(z) > 0.01)) {
-                addLog([NSString stringWithFormat:@"   📍 ПОЗИЦИЯ (0x20): X=%.2f Y=%.2f Z=%.2f", x, y, z]);
+                addLog([NSString stringWithFormat:@"   📍 ПОЗИЦИЯ: X=%.2f Y=%.2f Z=%.2f", x, y, z]);
             } else {
-                addLog(@"   ⚠️ Смещение 0x20: координаты некорректны, ищу другие...");
-                findPositionOffset(transform);
+                addLog(@"   ⚠️ Координаты некорректны (скорее всего не в Transform)");
             }
         } else {
             addLog([NSString stringWithFormat:@"   Transform: 0 (не найден)"]);
@@ -124,8 +99,8 @@ void analyzeStructures() {
     addLog([NSString stringWithFormat:@"\n✅ Всего игроков: %d", validCount]);
 }
 
-// ===== РАБОЧИЙ СКАН =====
-void workingScan() {
+// ===== СТАРЫЙ РАБОЧИЙ СКАН =====
+void oldWorkingScan() {
     if (isSearching) {
         addLog(@"⏳ Уже ищу");
         return;
@@ -228,7 +203,7 @@ void workingScan() {
 @implementation MenuHandler
 + (void)onSearch {
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
-        workingScan();
+        oldWorkingScan();
     });
 }
 + (void)onAnalyze {
