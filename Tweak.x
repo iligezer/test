@@ -24,14 +24,14 @@ void clearLog() {
     addLog(@"🗑 Лог очищен");
 }
 
-// ===== АНАЛИЗ НАЙДЕННЫХ СТРУКТУР (КООРДИНАТЫ) =====
+// ===== АНАЛИЗ НАЙДЕННЫХ СТРУКТУР =====
 void analyzeStructures() {
     if (g_structCount == 0) {
-        addLog(@"⚠️ Нет структур для анализа. Сначала выполните поиск.");
+        addLog(@"⚠️ Нет структур. Сначала нажмите СКАН");
         return;
     }
     
-    addLog(@"\n📊 АНАЛИЗ СТРУКТУР");
+    addLog(@"\n📊 АНАЛИЗ КООРДИНАТ");
     addLog(@"=================================");
     
     task_t task = mach_task_self();
@@ -45,7 +45,6 @@ void analyzeStructures() {
         vm_read_overwrite(task, s + 0x34, 4, (vm_address_t)&team, NULL);
         vm_read_overwrite(task, s + 0x7A, 4, (vm_address_t)&dead, NULL);
         
-        // Фильтруем мусор
         if ((team != 0 && team != 1) || dead < 0 || dead > 100) continue;
         
         validCount++;
@@ -55,16 +54,12 @@ void analyzeStructures() {
         addLog([NSString stringWithFormat:@"   Team: %d %@", team, team == 0 ? @"(СВОЙ)" : @"(ВРАГ)"]);
         addLog([NSString stringWithFormat:@"   Dead: %d %@", dead, dead == 0 ? @"(ЖИВ)" : @"(МЕРТВ)"]);
         
-        // Читаем Transform (смещение 0x38)
         uintptr_t transform = 0;
         vm_read_overwrite(task, s + 0x38, 8, (vm_address_t)&transform, NULL);
         
         if (transform != 0) {
-            // Читаем позицию из Transform (смещение 0x20)
             float pos[3] = {0};
             vm_read_overwrite(task, transform + 0x20, 12, (vm_address_t)pos, NULL);
-            
-            addLog([NSString stringWithFormat:@"   Transform: 0x%lx", transform]);
             addLog([NSString stringWithFormat:@"   📍 ПОЗИЦИЯ: X=%.2f Y=%.2f Z=%.2f", pos[0], pos[1], pos[2]]);
         } else {
             addLog([NSString stringWithFormat:@"   Transform: 0 (не найден)"]);
@@ -74,7 +69,7 @@ void analyzeStructures() {
     addLog([NSString stringWithFormat:@"\n✅ Всего игроков: %d", validCount]);
 }
 
-// ===== ПОИСК ID (РАБОЧАЯ ВЕРСИЯ) =====
+// ===== ПОИСК ID =====
 void searchIDs() {
     if (isSearching) {
         addLog(@"⏳ Уже ищу");
@@ -88,6 +83,7 @@ void searchIDs() {
     int myID = 71068432;
     int enemyID = 55471766;
     int foundMy = 0, foundEnemy = 0;
+    int regionCount = 0;
     g_structCount = 0;
     
     task_t task = mach_task_self();
@@ -104,7 +100,7 @@ void searchIDs() {
         return;
     }
     
-    addLog(@"📊 Диапазон: 0x100000000 - 0x300000000");
+    addLog(@"📊 Сканирование...");
     
     while (1) {
         kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
@@ -113,6 +109,8 @@ void searchIDs() {
         
         if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE) &&
             addr >= 0x100000000 && addr <= 0x300000000) {
+            
+            regionCount++;
             
             for (uintptr_t page = addr; page < addr + size; page += 0x1000) {
                 uintptr_t pageSize = (page + 0x1000 > addr + size) ? (addr + size - page) : 0x1000;
@@ -158,9 +156,9 @@ void searchIDs() {
     free(buffer);
     
     NSTimeInterval elapsed = [[NSDate date] timeIntervalSinceDate:searchStartTime];
-    addLog([NSString stringWithFormat:@"\n✅ Регионов: %d, Время: %.0f сек", regionsChecked, elapsed]);
+    addLog([NSString stringWithFormat:@"\n✅ Регионов: %d, Время: %.0f сек", regionCount, elapsed]);
     addLog([NSString stringWithFormat:@"✅ СВОИХ: %d, ВРАГОВ: %d", foundMy, foundEnemy]);
-    addLog([NSString stringWithFormat:@"✅ Сохранено структур для анализа: %d", g_structCount]);
+    addLog([NSString stringWithFormat:@"✅ Сохранено структур: %d", g_structCount]);
     addLog(@"✅ ГОТОВО");
     isSearching = NO;
 }
@@ -211,7 +209,7 @@ void searchIDs() {
 }
 @end
 
-// ===== СОЗДАНИЕ МЕНЮ =====
+// ===== СОЗДАНИЕ МЕНЮ (ДЛЯ ГОРИЗОНТАЛЬНОГО ЭКРАНА) =====
 void createMenu() {
     UIWindow *key = nil;
     for (UIScene *s in UIApplication.sharedApplication.connectedScenes) {
@@ -225,7 +223,8 @@ void createMenu() {
     }
     if (!key) return;
     
-    CGFloat w = 300, h = 440;
+    CGFloat w = 320;
+    CGFloat h = 420;
     CGFloat x = (key.bounds.size.width - w) / 2;
     CGFloat y = (key.bounds.size.height - h) / 2;
     
@@ -244,7 +243,7 @@ void createMenu() {
     title.font = [UIFont boldSystemFontOfSize:14];
     [win addSubview:title];
     
-    logView = [[UITextView alloc] initWithFrame:CGRectMake(8, 42, w-16, 280)];
+    logView = [[UITextView alloc] initWithFrame:CGRectMake(8, 42, w-16, 270)];
     logView.backgroundColor = UIColor.blackColor;
     logView.textColor = UIColor.greenColor;
     logView.font = [UIFont fontWithName:@"Courier" size:10];
@@ -252,8 +251,9 @@ void createMenu() {
     logView.layer.cornerRadius = 6;
     [win addSubview:logView];
     
+    // Кнопки в 2 ряда
     UIButton *searchBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    searchBtn.frame = CGRectMake(8, 335, (w-35)/3, 38);
+    searchBtn.frame = CGRectMake(15, 325, (w-50)/2, 38);
     [searchBtn setTitle:@"🔍 СКАН" forState:UIControlStateNormal];
     searchBtn.backgroundColor = UIColor.systemBlueColor;
     [searchBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
@@ -262,7 +262,7 @@ void createMenu() {
     [win addSubview:searchBtn];
     
     UIButton *analyzeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    analyzeBtn.frame = CGRectMake(12 + (w-35)/3, 335, (w-35)/3, 38);
+    analyzeBtn.frame = CGRectMake(25 + (w-50)/2, 325, (w-50)/2, 38);
     [analyzeBtn setTitle:@"📍 АНАЛИЗ" forState:UIControlStateNormal];
     analyzeBtn.backgroundColor = UIColor.systemPurpleColor;
     [analyzeBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
@@ -271,7 +271,7 @@ void createMenu() {
     [win addSubview:analyzeBtn];
     
     UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    copyBtn.frame = CGRectMake(16 + (w-35)/3*2, 335, (w-35)/3, 38);
+    copyBtn.frame = CGRectMake(15, 375, (w-50)/2, 38);
     [copyBtn setTitle:@"📋 КОПИ" forState:UIControlStateNormal];
     copyBtn.backgroundColor = UIColor.systemGreenColor;
     [copyBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
@@ -280,7 +280,7 @@ void createMenu() {
     [win addSubview:copyBtn];
     
     UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    clearBtn.frame = CGRectMake(15, 385, (w-45)/2, 35);
+    clearBtn.frame = CGRectMake(25 + (w-50)/2, 375, (w-50)/2, 38);
     [clearBtn setTitle:@"🗑 ОЧИСТИТЬ" forState:UIControlStateNormal];
     clearBtn.backgroundColor = UIColor.systemOrangeColor;
     [clearBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
@@ -289,11 +289,11 @@ void createMenu() {
     [win addSubview:clearBtn];
     
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(25 + (w-45)/2, 385, (w-45)/2, 35);
-    [closeBtn setTitle:@"❌ ЗАКРЫТЬ" forState:UIControlStateNormal];
+    closeBtn.frame = CGRectMake(w/2-50, 425, 100, 32);
+    [closeBtn setTitle:@"ЗАКРЫТЬ" forState:UIControlStateNormal];
     closeBtn.backgroundColor = UIColor.systemRedColor;
     [closeBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    closeBtn.layer.cornerRadius = 8;
+    closeBtn.layer.cornerRadius = 6;
     [closeBtn addTarget:[MenuHandler class] action:@selector(onClose) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:closeBtn];
     
