@@ -7,8 +7,6 @@ static UITextView *logView = nil;
 static NSMutableString *logText = nil;
 static BOOL isSearching = NO;
 static NSDate *searchStartTime = nil;
-static uintptr_t g_foundStructures[200];
-static int g_foundCount = 0;
 
 void addLog(NSString *msg) {
     if (!logText) logText = [[NSMutableString alloc] init];
@@ -24,20 +22,22 @@ void clearLog() {
     addLog(@"🗑 Лог очищен");
 }
 
-// ===== БЫСТРЫЙ СКАН (ТОЛЬКО ID, БЕЗ ЧТЕНИЯ ОСТАЛЬНОГО) =====
-void fastScan() {
+// ===== РАБОЧИЙ СКАНЕР + АНАЛИЗ (БЕЗ ВЫЛЕТОВ) =====
+void fullScanAndAnalyze() {
     if (isSearching) {
         addLog(@"⏳ Поиск уже идет...");
         return;
     }
     isSearching = YES;
     searchStartTime = [NSDate date];
-    addLog(@"🔍 СКАНИРОВАНИЕ ID...");
+    addLog(@"🔍 СКАН + АНАЛИЗ");
     addLog(@"=================================");
     
     int myID = 71068432;
     int enemyID = 55471766;
-    g_foundCount = 0;
+    
+    uintptr_t foundStructures[200];
+    int foundCount = 0;
     
     task_t task = mach_task_self();
     vm_address_t addr = 0;
@@ -53,7 +53,7 @@ void fastScan() {
         return;
     }
     
-    addLog(@"📊 Диапазон: 0x100000000 - 0x300000000");
+    addLog(@"📊 Сканирование...");
     
     while (1) {
         kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
@@ -71,7 +71,7 @@ void fastScan() {
                 kern_return_t kr2 = vm_read_overwrite(task, page, pageSize, (vm_address_t)buffer, &read);
                 if (kr2 != KERN_SUCCESS || read < 4) continue;
                 
-                for (uintptr_t offset = 0; offset + 4 <= pageSize && g_foundCount < 200; offset += 8) {
+                for (uintptr_t offset = 0; offset + 4 <= pageSize && foundCount < 200; offset += 8) {
                     int val = *(int*)(buffer + offset);
                     
                     if (val == myID || val == enemyID) {
@@ -80,11 +80,11 @@ void fastScan() {
                         
                         // Проверяем дубликаты
                         BOOL dup = NO;
-                        for (int i = 0; i < g_foundCount; i++) {
-                            if (g_foundStructures[i] == structStart) { dup = YES; break; }
+                        for (int i = 0; i < foundCount; i++) {
+                            if (foundStructures[i] == structStart) { dup = YES; break; }
                         }
                         if (!dup) {
-                            g_foundStructures[g_foundCount++] = structStart;
+                            foundStructures[foundCount++] = structStart;
                         }
                     }
                 }
@@ -98,41 +98,61 @@ void fastScan() {
     free(buffer);
     
     NSTimeInterval elapsed = [[NSDate date] timeIntervalSinceDate:searchStartTime];
-    addLog([NSString stringWithFormat:@"\n✅ Найдено структур: %d, Время: %.0f сек", g_foundCount, elapsed]);
+    addLog([NSString stringWithFormat:@"✅ Найдено структур: %d, Время: %.0f сек", foundCount, elapsed]);
     
-    if (g_foundCount == 0) {
+    if (foundCount == 0) {
         addLog(@"⚠️ Ничего не найдено");
-    } else {
-        addLog(@"📋 Анализ структур...");
+        addLog(@"✅ ГОТОВО");
+        isSearching = NO;
+        return;
+    }
+    
+    addLog(@"\n📊 АНАЛИЗ СТРУКТУР");
+    addLog(@"=================================");
+    
+    int activePlayers = 0;
+    
+    for (int i = 0; i < foundCount; i++) {
+        uintptr_t s = foundStructures[i];
         
-        // Анализируем каждую структуру отдельно (без лишних вызовов)
-        for (int i = 0; i < g_foundCount; i++) {
-            uintptr_t s = g_foundStructures[i];
-            int id = 0, team = 0, dead = 0;
-            vm_read_overwrite(task, s + 0x10, 4, (vm_address_t)&id, NULL);
-            vm_read_overwrite(task, s + 0x34, 4, (vm_address_t)&team, NULL);
-            vm_read_overwrite(task, s + 0x7A, 4, (vm_address_t)&dead, NULL);
+        // Читаем данные
+        int id = 0, team = 0, dead = 0;
+        vm_read_overwrite(task, s + 0x10, 4, (vm_address_t)&id, NULL);
+        vm_read_overwrite(task, s + 0x34, 4, (vm_address_t)&team, NULL);
+        vm_read_overwrite(task, s + 0x7A, 4, (vm_address_t)&dead, NULL);
+        
+        // Фильтр: Team 0/1, Dead 0-100
+        if ((team != 0 && team != 1) || dead < 0 || dead > 100) continue;
+        
+        addLog([NSString stringWithFormat:@"\n🔹 ИГРОК %d", activePlayers + 1]);
+        addLog([NSString stringWithFormat:@"   Структура: 0x%lx", s]);
+        addLog([NSString stringWithFormat:@"   ID: %d", id]);
+        addLog([NSString stringWithFormat:@"   Team: %d %@", team, team == 0 ? @"(СВОЙ)" : @"(ВРАГ)"]);
+        addLog([NSString stringWithFormat:@"   Dead: %d %@", dead, dead == 0 ? @"(ЖИВ)" : @"(МЕРТВ)"]);
+        
+        // Transform и координаты
+        uintptr_t transform = 0;
+        vm_read_overwrite(task, s + 0x38, 8, (vm_address_t)&transform, NULL);
+        
+        if (transform != 0) {
+            float x = 0, y = 0, z = 0;
+            vm_read_overwrite(task, transform + 0x20, 4, (vm_address_t)&x, NULL);
+            vm_read_overwrite(task, transform + 0x24, 4, (vm_address_t)&y, NULL);
+            vm_read_overwrite(task, transform + 0x28, 4, (vm_address_t)&z, NULL);
             
-            addLog([NSString stringWithFormat:@"\n🔹 [%d] 0x%lx | ID:%d Team:%d Dead:%d", 
-                    i+1, s, id, team, dead]);
+            addLog([NSString stringWithFormat:@"   Transform: 0x%lx", transform]);
+            addLog([NSString stringWithFormat:@"   📍 ПОЗИЦИЯ: X=%.2f Y=%.2f Z=%.2f", x, y, z]);
             
-            // Читаем Transform и координаты
-            uintptr_t transform = 0;
-            vm_read_overwrite(task, s + 0x38, 8, (vm_address_t)&transform, NULL);
-            
-            if (transform != 0) {
-                float x=0, y=0, z=0;
-                vm_read_overwrite(task, transform + 0x20, 4, (vm_address_t)&x, NULL);
-                vm_read_overwrite(task, transform + 0x24, 4, (vm_address_t)&y, NULL);
-                vm_read_overwrite(task, transform + 0x28, 4, (vm_address_t)&z, NULL);
-                addLog([NSString stringWithFormat:@"   📍 POS: X=%.2f Y=%.2f Z=%.2f", x, y, z]);
-            } else {
-                addLog(@"   📍 Transform: 0");
+            if (fabs(x) > 0.1 || fabs(y) > 0.1 || fabs(z) > 0.1) {
+                activePlayers++;
             }
+        } else {
+            addLog([NSString stringWithFormat:@"   Transform: 0"]);
         }
     }
     
-    addLog(@"\n✅ ГОТОВО");
+    addLog([NSString stringWithFormat:@"\n✅ Активных игроков: %d", activePlayers]);
+    addLog(@"✅ ГОТОВО");
     isSearching = NO;
 }
 
@@ -147,7 +167,7 @@ void fastScan() {
 @implementation MenuHandler
 + (void)onSearch {
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
-        fastScan();
+        fullScanAndAnalyze();
     });
 }
 + (void)onClear { clearLog(); }
@@ -166,7 +186,7 @@ void fastScan() {
         }
         [k.rootViewController presentViewController:alert animated:YES completion:nil];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-            [alert dismissViewControllerAnimated:YES completion:nil];
+            [alert dismissViewControllerAnimated:YES completion:nil]);
         });
     }
 }
