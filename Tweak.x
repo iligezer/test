@@ -10,7 +10,7 @@ static NSMutableArray *g_idAddresses = nil;
 static NSMutableArray *g_idValues = nil;
 static NSMutableArray *g_candidates = nil;
 static int g_targetID = 71068432;
-static int g_maxPointersToCheck = 30;  // Ограничиваем количество указателей
+static int g_maxPointersToCheck = 30;
 
 void addLog(NSString *msg) {
     if (!logText) logText = [[NSMutableString alloc] init];
@@ -81,11 +81,10 @@ BOOL isValidPosition(float x, float y, float z) {
     return YES;
 }
 
-// ===== ОБХОД ЦЕПОЧКИ УКАЗАТЕЛЕЙ (С ОГРАНИЧЕНИЯМИ) =====
+// ===== ОБХОД ЦЕПОЧКИ =====
 void scanPointerChain(uintptr_t startAddr, int depth, NSMutableString *path, NSMutableArray *results) {
-    if (depth > 4) return;  // Максимум 4 уровня
+    if (depth > 4) return;
     
-    // Проверяем координаты по адресу +0x20
     float x = safeReadFloat(startAddr + 0x20);
     float y = safeReadFloat(startAddr + 0x24);
     float z = safeReadFloat(startAddr + 0x28);
@@ -102,7 +101,6 @@ void scanPointerChain(uintptr_t startAddr, int depth, NSMutableString *path, NSM
         return;
     }
     
-    // Собираем указатели вокруг (только в +0x20..+0x100, не весь диапазон)
     NSMutableArray *pointers = [NSMutableArray array];
     for (int offset = 0x20; offset <= 0x100; offset += 8) {
         uintptr_t ptr = safeReadPtr(startAddr + offset);
@@ -114,9 +112,8 @@ void scanPointerChain(uintptr_t startAddr, int depth, NSMutableString *path, NSM
         }
     }
     
-    // Ограничиваем количество указателей для проверки
     if (pointers.count > g_maxPointersToCheck) {
-        pointers = [pointers subarrayWithRange:NSMakeRange(0, g_maxPointersToCheck)];
+        pointers = [[pointers subarrayWithRange:NSMakeRange(0, g_maxPointersToCheck)] mutableCopy];
     }
     
     for (NSDictionary *p in pointers) {
@@ -135,11 +132,9 @@ void findTransforms(uintptr_t structStart) {
     addLogF(@"\n📊 АНАЛИЗ СТРУКТУРЫ 0x%lx", structStart);
     addLog(@"=================================");
     
-    // Сначала проверяем прямые указатели в структуре
     NSMutableArray *results = [NSMutableArray array];
     NSMutableString *startPath = [NSMutableString stringWithFormat:@"📌 Структура 0x%lx", structStart];
     
-    // Проверяем саму структуру
     float x = safeReadFloat(structStart + 0x20);
     float y = safeReadFloat(structStart + 0x24);
     float z = safeReadFloat(structStart + 0x28);
@@ -154,7 +149,6 @@ void findTransforms(uintptr_t structStart) {
         }];
     }
     
-    // Собираем указатели из структуры
     NSMutableArray *pointers = [NSMutableArray array];
     for (int offset = 0x20; offset <= 0x100; offset += 8) {
         uintptr_t ptr = safeReadPtr(structStart + offset);
@@ -166,9 +160,8 @@ void findTransforms(uintptr_t structStart) {
         }
     }
     
-    // Ограничиваем количество
     if (pointers.count > g_maxPointersToCheck) {
-        pointers = [pointers subarrayWithRange:NSMakeRange(0, g_maxPointersToCheck)];
+        pointers = [[pointers subarrayWithRange:NSMakeRange(0, g_maxPointersToCheck)] mutableCopy];
     }
     
     addLogF(@"🔍 Найдено указателей: %lu", (unsigned long)pointers.count);
@@ -207,14 +200,14 @@ void findTransforms(uintptr_t structStart) {
     addLogF(@"\n✅ Сохранено кандидатов: %lu", (unsigned long)g_candidates.count);
 }
 
-// ===== ПРОВЕРКА КАНДИДАТОВ =====
+// ===== ПРОВЕРКА =====
 void checkCandidates() {
     if (g_candidates.count == 0) {
         addLog(@"⚠️ Нет кандидатов. Сначала нажмите ОТСЕЯТЬ");
         return;
     }
     
-    addLog(@"\n🔍 ПРОВЕРКА КАНДИДАТОВ (ПОСЛЕ ДВИЖЕНИЯ)");
+    addLog(@"\n🔍 ПРОВЕРКА (ПОСЛЕ ДВИЖЕНИЯ)");
     addLog(@"=================================");
     
     int changedCount = 0;
@@ -238,7 +231,7 @@ void checkCandidates() {
         addLogF(@"   Стало: X=%.2f Y=%.2f Z=%.2f", newX, newY, newZ);
         
         if (fabs(newX - oldX) > 0.1 || fabs(newY - oldY) > 0.1 || fabs(newZ - oldZ) > 0.1) {
-            addLog(@"   ✅ ИЗМЕНИЛИСЬ! Это координаты игрока.");
+            addLog(@"   ✅ ИЗМЕНИЛИСЬ!");
             changedCount++;
             [validCandidates addObject:c];
         } else {
@@ -250,13 +243,11 @@ void checkCandidates() {
     
     if (changedCount == 1) {
         NSDictionary *c = validCandidates.firstObject;
-        addLogF(@"\n🎯 ЭТО КООРДИНАТЫ ИГРОКА!");
+        addLogF(@"\n🎯 КООРДИНАТЫ ИГРОКА!");
         addLogF(@"   Transform: 0x%lx", [c[@"transform"] unsignedLongLongValue]);
         addLogF(@"   Координаты: X=%.2f Y=%.2f Z=%.2f", 
                 [c[@"x"] floatValue], [c[@"y"] floatValue], [c[@"z"] floatValue]);
         addLog([c[@"path"] description]);
-    } else if (changedCount > 1) {
-        addLog(@"\n⚠️ Найдено несколько динамических координат. Проверьте вручную.");
     }
 }
 
@@ -396,7 +387,9 @@ void filterByDeath() {
 + (void)onCheck {
     checkCandidates();
 }
-+ (void)onClear { clearLog(); }
++ (void)onClear {
+    clearLog();
+}
 + (void)onCopy {
     if (logView && logView.text.length > 0) {
         UIPasteboard.generalPasteboard.string = logView.text;
@@ -412,7 +405,7 @@ void filterByDeath() {
         }
         [k.rootViewController presentViewController:alert animated:YES completion:nil];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-            [alert dismissViewControllerAnimated:YES completion:nil]);
+            [alert dismissViewControllerAnimated:YES completion:nil];
         });
     }
 }
