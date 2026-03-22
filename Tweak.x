@@ -6,7 +6,8 @@ static UIWindow *win = nil;
 static UITextView *logView = nil;
 static NSMutableString *logText = nil;
 static BOOL isSearching = NO;
-static NSMutableArray *g_idAddresses = nil;
+static NSMutableArray *g_idAddresses = nil;     // Адреса ID
+static NSMutableArray *g_idValues = nil;        // Сохраненные значения ID
 static int g_targetID = 71068432;
 static int g_enemyID = 55471766;
 
@@ -24,7 +25,6 @@ void clearLog() {
     addLog(@"🗑 Лог очищен");
 }
 
-// ===== БЕЗОПАСНОЕ ЧТЕНИЕ =====
 int safeReadInt(uintptr_t addr) {
     if (addr == 0) return 0;
     @try {
@@ -51,7 +51,7 @@ uintptr_t safeReadPtr(uintptr_t addr) {
     }
 }
 
-// ===== ПОИСК ВСЕХ ID =====
+// ===== ПОИСК ВСЕХ ID (С СОХРАНЕНИЕМ ЗНАЧЕНИЙ) =====
 void findAllIDs() {
     if (isSearching) {
         addLog(@"⏳ Уже ищу");
@@ -62,6 +62,7 @@ void findAllIDs() {
     addLog(@"=================================");
     
     g_idAddresses = [NSMutableArray array];
+    g_idValues = [NSMutableArray array];
     int foundMy = 0, foundEnemy = 0;
     
     task_t task = mach_task_self();
@@ -78,7 +79,7 @@ void findAllIDs() {
         return;
     }
     
-    addLog(@"📊 Диапазон: 0x100000000 - 0x200000000");
+    addLog(@"📊 Диапазон: 0x148000000 - 0x150000000");
     
     while (1) {
         kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
@@ -86,7 +87,7 @@ void findAllIDs() {
         if (kr != KERN_SUCCESS) break;
         
         if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE) &&
-            addr >= 0x100000000 && addr <= 0x200000000) {
+            addr >= 0x148000000 && addr <= 0x150000000) {
             
             for (uintptr_t page = addr; page < addr + size; page += 0x1000) {
                 uintptr_t pageSize = (page + 0x1000 > addr + size) ? (addr + size - page) : 0x1000;
@@ -103,31 +104,32 @@ void findAllIDs() {
                         foundMy++;
                         uintptr_t idAddr = page + offset;
                         [g_idAddresses addObject:@(idAddr)];
-                        addLog([NSString stringWithFormat:@"[СВОЙ %d] ID: 0x%lx", foundMy, idAddr]);
+                        [g_idValues addObject:@(val)];
+                        addLog([NSString stringWithFormat:@"[СВОЙ %d] ID: 0x%lx = %d", foundMy, idAddr, val]);
                     }
                     else if (val == g_enemyID && foundEnemy < 100) {
                         foundEnemy++;
                         uintptr_t idAddr = page + offset;
                         [g_idAddresses addObject:@(idAddr)];
-                        addLog([NSString stringWithFormat:@"[ВРАГ %d] ID: 0x%lx", foundEnemy, idAddr]);
+                        [g_idValues addObject:@(val)];
+                        addLog([NSString stringWithFormat:@"[ВРАГ %d] ID: 0x%lx = %d", foundEnemy, idAddr, val]);
                     }
                 }
             }
         }
         
         addr += size;
-        if (addr > 0x200000000) break;
+        if (addr > 0x150000000) break;
     }
     
     free(buffer);
     
     addLog([NSString stringWithFormat:@"\n✅ Найдено ID: %lu", (unsigned long)g_idAddresses.count]);
-    addLog([NSString stringWithFormat:@"✅ СВОИХ: %d, ВРАГОВ: %d", foundMy, foundEnemy]);
     addLog(@"✅ ГОТОВО");
     isSearching = NO;
 }
 
-// ===== ОТСЕИВАНИЕ ПО СМЕРТИ =====
+// ===== ОТСЕИВАНИЕ: ОСТАВЛЯЕМ ТОЛЬКО ТЕ, КОТОРЫЕ СТАЛИ -1 =====
 void filterByDeath() {
     if (g_idAddresses.count == 0) {
         addLog(@"⚠️ Нет сохраненных ID. Сначала нажмите ПОИСК");
@@ -137,38 +139,56 @@ void filterByDeath() {
     addLog(@"🔍 ОТСЕИВАНИЕ ПО СМЕРТИ");
     addLog(@"=================================");
     
-    NSMutableArray *newList = [NSMutableArray array];
-    int removed = 0;
+    NSMutableArray *newAddresses = [NSMutableArray array];
+    NSMutableArray *newValues = [NSMutableArray array];
+    int changedCount = 0;
     
-    for (NSNumber *num in g_idAddresses) {
-        uintptr_t addr = [num unsignedLongLongValue];
-        int val = safeReadInt(addr);
+    for (int i = 0; i < g_idAddresses.count; i++) {
+        uintptr_t addr = [g_idAddresses[i] unsignedLongLongValue];
+        int oldVal = [g_idValues[i] intValue];
+        int newVal = safeReadInt(addr);
         
-        if (val == -1) {
-            [newList addObject:num];
-            addLog([NSString stringWithFormat:@"   ✅ ОСТАВЛЕН: 0x%lx (стало -1)", addr]);
-        } else {
-            removed++;
+        addLog([NSString stringWithFormat:@"   0x%lx: %d -> %d", addr, oldVal, newVal]);
+        
+        // Если значение изменилось на -1 (смерть)
+        if (newVal == -1) {
+            [newAddresses addObject:@(addr)];
+            [newValues addObject:@(newVal)];
+            changedCount++;
+            addLog([NSString stringWithFormat:@"   ✅ ОСТАВЛЕН (стал -1): 0x%lx", addr]);
         }
     }
     
-    g_idAddresses = newList;
-    addLog([NSString stringWithFormat:@"\n✅ Удалено: %d, Осталось: %lu", removed, (unsigned long)g_idAddresses.count]);
+    g_idAddresses = newAddresses;
+    g_idValues = newValues;
+    
+    addLog([NSString stringWithFormat:@"\n✅ Изменилось на -1: %d, Осталось: %lu", changedCount, (unsigned long)g_idAddresses.count]);
     
     if (g_idAddresses.count == 1) {
         uintptr_t addr = [g_idAddresses.firstObject unsignedLongLongValue];
         addLog([NSString stringWithFormat:@"\n🎯 НАЙДЕН ПРАВИЛЬНЫЙ ID: 0x%lx", addr]);
         addLog([NSString stringWithFormat:@"   Структура: 0x%lx", addr - 0x10]);
         
+        // Ищем Transform рядом
         addLog(@"\n🔍 ИЩЕМ TRANSFORM РЯДОМ:");
         for (int offset = 0x20; offset <= 0x100; offset += 8) {
             uintptr_t transform = safeReadPtr(addr - 0x10 + offset);
             if (transform != 0 && transform > 0x100000000 && transform < 0x200000000) {
                 addLog([NSString stringWithFormat:@"   Возможный Transform по смещению +0x%02X: 0x%lx", offset, transform]);
+                
+                // Проверяем координаты
+                float x = safeReadFloat(transform + 0x20);
+                float y = safeReadFloat(transform + 0x24);
+                float z = safeReadFloat(transform + 0x28);
+                if (x > -100 && x < 100 && y > -100 && y < 100 && z > -100 && z < 100) {
+                    addLog([NSString stringWithFormat:@"      📍 Координаты: X=%.2f Y=%.2f Z=%.2f", x, y, z]);
+                }
             }
         }
     } else if (g_idAddresses.count > 1) {
         addLog(@"\n⚠️ Осталось несколько адресов. Умрите еще раз и повторите отсеивание.");
+    } else {
+        addLog(@"\n⚠️ Нет адресов, изменившихся на -1. Возможно, вы не умирали или ищете не в том диапазоне.");
     }
     
     addLog(@"✅ ГОТОВО");
@@ -208,7 +228,7 @@ void filterByDeath() {
         }
         [k.rootViewController presentViewController:alert animated:YES completion:nil];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-            [alert dismissViewControllerAnimated:YES completion:nil];
+            [alert dismissViewControllerAnimated:YES completion:nil]);
         });
     }
 }
