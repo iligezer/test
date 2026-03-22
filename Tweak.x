@@ -6,8 +6,8 @@ static UIWindow *win = nil;
 static UITextView *logView = nil;
 static NSMutableString *logText = nil;
 static BOOL isSearching = NO;
-static NSMutableArray *g_idAddresses = nil;     // Адреса ID
-static NSMutableArray *g_idValues = nil;        // Сохраненные значения ID
+static NSMutableArray *g_idAddresses = nil;
+static NSMutableArray *g_idValues = nil;
 static int g_targetID = 71068432;
 static int g_enemyID = 55471766;
 
@@ -25,6 +25,7 @@ void clearLog() {
     addLog(@"🗑 Лог очищен");
 }
 
+// ===== БЕЗОПАСНОЕ ЧТЕНИЕ =====
 int safeReadInt(uintptr_t addr) {
     if (addr == 0) return 0;
     @try {
@@ -51,7 +52,20 @@ uintptr_t safeReadPtr(uintptr_t addr) {
     }
 }
 
-// ===== ПОИСК ВСЕХ ID (С СОХРАНЕНИЕМ ЗНАЧЕНИЙ) =====
+float safeReadFloat(uintptr_t addr) {
+    if (addr == 0) return 0;
+    @try {
+        float val = 0;
+        vm_size_t read = 0;
+        kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, &read);
+        if (kr != KERN_SUCCESS || read != 4) return 0;
+        return val;
+    } @catch (NSException *e) {
+        return 0;
+    }
+}
+
+// ===== ПОИСК ВСЕХ ID =====
 void findAllIDs() {
     if (isSearching) {
         addLog(@"⏳ Уже ищу");
@@ -129,7 +143,7 @@ void findAllIDs() {
     isSearching = NO;
 }
 
-// ===== ОТСЕИВАНИЕ: ОСТАВЛЯЕМ ТОЛЬКО ТЕ, КОТОРЫЕ СТАЛИ -1 =====
+// ===== ОТСЕИВАНИЕ =====
 void filterByDeath() {
     if (g_idAddresses.count == 0) {
         addLog(@"⚠️ Нет сохраненных ID. Сначала нажмите ПОИСК");
@@ -150,7 +164,6 @@ void filterByDeath() {
         
         addLog([NSString stringWithFormat:@"   0x%lx: %d -> %d", addr, oldVal, newVal]);
         
-        // Если значение изменилось на -1 (смерть)
         if (newVal == -1) {
             [newAddresses addObject:@(addr)];
             [newValues addObject:@(newVal)];
@@ -169,14 +182,12 @@ void filterByDeath() {
         addLog([NSString stringWithFormat:@"\n🎯 НАЙДЕН ПРАВИЛЬНЫЙ ID: 0x%lx", addr]);
         addLog([NSString stringWithFormat:@"   Структура: 0x%lx", addr - 0x10]);
         
-        // Ищем Transform рядом
         addLog(@"\n🔍 ИЩЕМ TRANSFORM РЯДОМ:");
         for (int offset = 0x20; offset <= 0x100; offset += 8) {
             uintptr_t transform = safeReadPtr(addr - 0x10 + offset);
             if (transform != 0 && transform > 0x100000000 && transform < 0x200000000) {
                 addLog([NSString stringWithFormat:@"   Возможный Transform по смещению +0x%02X: 0x%lx", offset, transform]);
                 
-                // Проверяем координаты
                 float x = safeReadFloat(transform + 0x20);
                 float y = safeReadFloat(transform + 0x24);
                 float z = safeReadFloat(transform + 0x28);
@@ -212,7 +223,9 @@ void filterByDeath() {
 + (void)onFilter {
     filterByDeath();
 }
-+ (void)onClear { clearLog(); }
++ (void)onClear {
+    clearLog();
+}
 + (void)onCopy {
     if (logView && logView.text.length > 0) {
         UIPasteboard.generalPasteboard.string = logView.text;
@@ -228,7 +241,7 @@ void filterByDeath() {
         }
         [k.rootViewController presentViewController:alert animated:YES completion:nil];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-            [alert dismissViewControllerAnimated:YES completion:nil]);
+            [alert dismissViewControllerAnimated:YES completion:nil];
         });
     }
 }
