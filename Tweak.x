@@ -71,14 +71,6 @@ float safeReadFloat(uintptr_t addr) {
     return val;
 }
 
-NSString* safeReadString(uintptr_t addr, int maxLen) {
-    char buffer[256];
-    vm_size_t read = 0;
-    kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, maxLen, (vm_address_t)buffer, &read);
-    if (kr != KERN_SUCCESS) return @"";
-    return [NSString stringWithUTF8String:buffer];
-}
-
 // ===== ЗАПИСЬ ПАМЯТИ =====
 BOOL safeWriteInt(uintptr_t addr, int val) {
     kern_return_t kr = vm_write(mach_task_self(), addr, (vm_address_t)&val, 4);
@@ -186,6 +178,7 @@ NSArray* scanFloat(float targetValue, float tolerance, int maxResults) {
 }
 
 NSData* memoryDump(uintptr_t addr, int size) {
+    if (size > 65536) size = 65536;
     uint8_t *buffer = malloc(size);
     if (!buffer) return nil;
     vm_size_t read = 0;
@@ -266,7 +259,6 @@ NSString* handleCommand(NSString *cmd) {
         if (parts.count < 3) return @"ERROR: need addr and size";
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
         int size = [parts[2] intValue];
-        if (size > 65536) size = 65536;
         NSData *data = memoryDump(addr, size);
         if (!data) return @"ERROR: dump failed";
         return [NSString stringWithFormat:@"DUMP_DATA %@", [data base64EncodedStringWithOptions:0]];
@@ -275,8 +267,15 @@ NSString* handleCommand(NSString *cmd) {
     return @"ERROR: unknown command";
 }
 
-// ===== TCP СЕРВЕР =====
-void startServer() {
+// ===== ОБРАБОТЧИК КНОПОК =====
+@interface ServerController : NSObject
++ (void)startServer;
++ (void)stopServer;
++ (void)closeMenu;
+@end
+
+@implementation ServerController
++ (void)startServer {
     if (serverRunning) {
         addLog(@"⚠️ Сервер уже запущен");
         return;
@@ -351,7 +350,7 @@ void startServer() {
     });
 }
 
-void stopServer() {
++ (void)stopServer {
     serverRunning = NO;
     if (serverSocket >= 0) {
         close(serverSocket);
@@ -359,6 +358,14 @@ void stopServer() {
     }
     addLog(@"🛑 Сервер остановлен");
 }
+
++ (void)closeMenu {
+    if (win) {
+        win.hidden = YES;
+        win = nil;
+    }
+}
+@end
 
 // ===== МЕНЮ =====
 void createMenu() {
@@ -409,7 +416,7 @@ void createMenu() {
     startBtn.backgroundColor = UIColor.systemGreenColor;
     [startBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     startBtn.layer.cornerRadius = 6;
-    [startBtn addTarget:[UIApplication sharedApplication] action:@selector(startServer) forControlEvents:UIControlEventTouchUpInside];
+    [startBtn addTarget:[ServerController class] action:@selector(startServer) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:startBtn];
     
     UIButton *stopBtn = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -418,7 +425,7 @@ void createMenu() {
     stopBtn.backgroundColor = UIColor.systemRedColor;
     [stopBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     stopBtn.layer.cornerRadius = 6;
-    [stopBtn addTarget:[UIApplication sharedApplication] action:@selector(stopServer) forControlEvents:UIControlEventTouchUpInside];
+    [stopBtn addTarget:[ServerController class] action:@selector(stopServer) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:stopBtn];
     
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
@@ -428,7 +435,7 @@ void createMenu() {
     [closeBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     closeBtn.layer.cornerRadius = 5;
     closeBtn.titleLabel.font = [UIFont systemFontOfSize:12];
-    [closeBtn addTarget:win action:@selector(setHidden:) forControlEvents:UIControlEventTouchUpInside];
+    [closeBtn addTarget:[ServerController class] action:@selector(closeMenu) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:closeBtn];
     
     [win makeKeyAndVisible];
