@@ -8,9 +8,8 @@ static NSMutableString *logText = nil;
 static BOOL isSearching = NO;
 static NSMutableArray *g_idAddresses = nil;
 static NSMutableArray *g_idValues = nil;
-static NSMutableArray *g_candidates = nil;  // Сохраняем кандидатов на координаты
+static NSMutableArray *g_candidates = nil;
 static int g_targetID = 71068432;
-static int g_enemyID = 55471766;
 
 void addLog(NSString *msg) {
     if (!logText) logText = [[NSMutableString alloc] init];
@@ -81,11 +80,10 @@ BOOL isValidPosition(float x, float y, float z) {
     return YES;
 }
 
-// ===== РЕКУРСИВНЫЙ ПОИСК ПО ЦЕПОЧКЕ УКАЗАТЕЛЕЙ =====
+// ===== РЕКУРСИВНЫЙ ПОИСК =====
 void searchChain(uintptr_t addr, int depth, NSMutableString *path, NSMutableArray *results) {
     if (depth > 8) return;
     
-    // Проверяем координаты по адресу +0x20
     float x = safeReadFloat(addr + 0x20);
     float y = safeReadFloat(addr + 0x24);
     float z = safeReadFloat(addr + 0x28);
@@ -102,7 +100,6 @@ void searchChain(uintptr_t addr, int depth, NSMutableString *path, NSMutableArra
         return;
     }
     
-    // Собираем указатели в диапазоне ±0x200
     NSMutableArray *pointers = [NSMutableArray array];
     for (int offset = 0x20; offset <= 0x200; offset += 8) {
         uintptr_t ptr = safeReadPtr(addr + offset);
@@ -117,10 +114,8 @@ void searchChain(uintptr_t addr, int depth, NSMutableString *path, NSMutableArra
     for (NSDictionary *p in pointers) {
         int offset = [p[@"offset"] intValue];
         uintptr_t ptr = [p[@"value"] unsignedLongLongValue];
-        
         NSMutableString *newPath = [path mutableCopy];
-        [newPath appendFormat:@" → [%d]0x%lx", offset, ptr];
-        
+        [newPath appendFormat:@" → [+0x%02X]0x%lx", offset, ptr];
         searchChain(ptr, depth + 1, newPath, results);
     }
 }
@@ -132,7 +127,6 @@ void saveCandidates(uintptr_t structStart) {
     addLogF(@"\n📊 АНАЛИЗ СТРУКТУРЫ 0x%lx", structStart);
     addLog(@"=================================");
     
-    // Запускаем рекурсивный поиск от структуры
     NSMutableArray *results = [NSMutableArray array];
     NSMutableString *startPath = [NSMutableString stringWithFormat:@"📌 Структура 0x%lx", structStart];
     searchChain(structStart, 1, startPath, results);
@@ -151,7 +145,6 @@ void saveCandidates(uintptr_t structStart) {
         addLogF(@"   Координаты: X=%.2f Y=%.2f Z=%.2f", 
                 [r[@"x"] floatValue], [r[@"y"] floatValue], [r[@"z"] floatValue]);
         
-        // Сохраняем кандидата с полной информацией о цепочке
         [g_candidates addObject:@{
             @"path": r[@"path"],
             @"transform": r[@"transform"],
@@ -165,10 +158,10 @@ void saveCandidates(uintptr_t structStart) {
     addLogF(@"\n✅ Сохранено кандидатов: %lu", (unsigned long)g_candidates.count);
 }
 
-// ===== ПРОВЕРКА КАНДИДАТОВ (ПОСЛЕ ДВИЖЕНИЯ) =====
+// ===== ПРОВЕРКА КАНДИДАТОВ =====
 void checkCandidates() {
     if (g_candidates.count == 0) {
-        addLog(@"⚠️ Нет сохраненных кандидатов. Сначала нажмите ПОИСК СТРУКТУРЫ");
+        addLog(@"⚠️ Нет сохраненных кандидатов. Сначала нажмите ОТСЕЯТЬ");
         return;
     }
     
@@ -195,37 +188,28 @@ void checkCandidates() {
         addLogF(@"   Было: X=%.2f Y=%.2f Z=%.2f", oldX, oldY, oldZ);
         addLogF(@"   Стало: X=%.2f Y=%.2f Z=%.2f", newX, newY, newZ);
         
-        // Проверяем, изменились ли координаты
         if (fabs(newX - oldX) > 0.1 || fabs(newY - oldY) > 0.1 || fabs(newZ - oldZ) > 0.1) {
             addLog(@"   ✅ ИЗМЕНИЛИСЬ! Это координаты игрока.");
             validCount++;
             [validCandidates addObject:c];
         } else {
-            addLog(@"   ⚠️ НЕ ИЗМЕНИЛИСЬ. Это статичные координаты.");
+            addLog(@"   ⚠️ НЕ ИЗМЕНИЛИСЬ.");
             
-            // Нужно идти дальше по цепочке указателей
-            addLog(@"   🔍 Ищем следующий указатель в цепочке...");
-            
-            // Извлекаем текущий адрес из пути
             NSString *path = c[@"path"];
             NSArray *parts = [path componentsSeparatedByString:@" → "];
             if (parts.count >= 2) {
-                // Берем последний адрес из цепочки
                 NSString *lastPart = parts.lastObject;
                 NSRange range = [lastPart rangeOfString:@"0x[0-9a-fA-F]+" options:NSRegularExpressionSearch];
                 if (range.location != NSNotFound) {
                     NSString *addrStr = [lastPart substringWithRange:range];
                     unsigned long long addr = strtoull([addrStr UTF8String], NULL, 16);
-                    addLogF(@"   📌 Текущий адрес: 0x%llx", addr);
+                    addLogF(@"   🔍 Ищем следующий указатель вокруг 0x%llx...", addr);
                     
-                    // Ищем следующий указатель вокруг этого адреса
                     BOOL foundNext = NO;
                     for (int offset = 0x20; offset <= 0x200 && !foundNext; offset += 8) {
                         uintptr_t nextPtr = safeReadPtr(addr + offset);
                         if (nextPtr != 0 && nextPtr > 0x100000000 && nextPtr < 0x200000000) {
                             addLogF(@"      Найден указатель по +0x%02X: 0x%lx", offset, nextPtr);
-                            
-                            // Проверяем координаты по новому адресу
                             float nx = safeReadFloat(nextPtr + 0x20);
                             float ny = safeReadFloat(nextPtr + 0x24);
                             float nz = safeReadFloat(nextPtr + 0x28);
@@ -256,7 +240,7 @@ void checkCandidates() {
     }
 }
 
-// ===== ПОИСК СТРУКТУРЫ =====
+// ===== ПОИСК ID =====
 void findStructure() {
     if (isSearching) {
         addLog(@"⏳ Уже ищу");
