@@ -91,19 +91,9 @@ float safeReadFloat(uintptr_t addr) {
     return val;
 }
 
-// 8-байтные чтения
 long long safeReadLong(uintptr_t addr) {
     if (addr == 0) return 0;
     long long val = 0;
-    vm_size_t read = 0;
-    kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 8, (vm_address_t)&val, &read);
-    if (kr != KERN_SUCCESS || read != 8) return 0;
-    return val;
-}
-
-unsigned long long safeReadULong(uintptr_t addr) {
-    if (addr == 0) return 0;
-    unsigned long long val = 0;
     vm_size_t read = 0;
     kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 8, (vm_address_t)&val, &read);
     if (kr != KERN_SUCCESS || read != 8) return 0;
@@ -129,7 +119,7 @@ NSArray* scanInt(int targetValue, int maxResults) {
         if (kr != KERN_SUCCESS) break;
         
         if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE) &&
-            addr >= 0x100000000 && addr <= 0x300000000) {
+            addr >= 0x100000000) {  // Убрали верхнюю границу
             
             for (uintptr_t page = addr; page < addr + size; page += 0x10000) {
                 uintptr_t pageSize = (page + 0x10000 > addr + size) ? (addr + size - page) : 0x10000;
@@ -152,7 +142,6 @@ NSArray* scanInt(int targetValue, int maxResults) {
             }
         }
         addr += size;
-        if (addr > 0x300000000) break;
     }
     free(buffer);
     return results;
@@ -176,7 +165,7 @@ NSArray* scanShort(short targetValue, int maxResults) {
         if (kr != KERN_SUCCESS) break;
         
         if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE) &&
-            addr >= 0x100000000 && addr <= 0x300000000) {
+            addr >= 0x100000000) {
             
             for (uintptr_t page = addr; page < addr + size; page += 0x10000) {
                 uintptr_t pageSize = (page + 0x10000 > addr + size) ? (addr + size - page) : 0x10000;
@@ -199,7 +188,6 @@ NSArray* scanShort(short targetValue, int maxResults) {
             }
         }
         addr += size;
-        if (addr > 0x300000000) break;
     }
     free(buffer);
     return results;
@@ -223,7 +211,7 @@ NSArray* scanByte(char targetValue, int maxResults) {
         if (kr != KERN_SUCCESS) break;
         
         if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE) &&
-            addr >= 0x100000000 && addr <= 0x300000000) {
+            addr >= 0x100000000) {
             
             for (uintptr_t page = addr; page < addr + size; page += 0x10000) {
                 uintptr_t pageSize = (page + 0x10000 > addr + size) ? (addr + size - page) : 0x10000;
@@ -246,7 +234,6 @@ NSArray* scanByte(char targetValue, int maxResults) {
             }
         }
         addr += size;
-        if (addr > 0x300000000) break;
     }
     free(buffer);
     return results;
@@ -270,7 +257,7 @@ NSArray* scanFloat(float targetValue, float tolerance, int maxResults) {
         if (kr != KERN_SUCCESS) break;
         
         if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE) &&
-            addr >= 0x100000000 && addr <= 0x300000000) {
+            addr >= 0x100000000) {
             
             for (uintptr_t page = addr; page < addr + size; page += 0x10000) {
                 uintptr_t pageSize = (page + 0x10000 > addr + size) ? (addr + size - page) : 0x10000;
@@ -293,13 +280,11 @@ NSArray* scanFloat(float targetValue, float tolerance, int maxResults) {
             }
         }
         addr += size;
-        if (addr > 0x300000000) break;
     }
     free(buffer);
     return results;
 }
 
-// 8-байтное сканирование
 NSArray* scanLong(long long targetValue, int maxResults) {
     NSMutableArray *results = [NSMutableArray array];
     task_t task = mach_task_self();
@@ -318,7 +303,7 @@ NSArray* scanLong(long long targetValue, int maxResults) {
         if (kr != KERN_SUCCESS) break;
         
         if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE) &&
-            addr >= 0x100000000 && addr <= 0x300000000) {
+            addr >= 0x100000000) {
             
             for (uintptr_t page = addr; page < addr + size; page += 0x10000) {
                 uintptr_t pageSize = (page + 0x10000 > addr + size) ? (addr + size - page) : 0x10000;
@@ -341,54 +326,6 @@ NSArray* scanLong(long long targetValue, int maxResults) {
             }
         }
         addr += size;
-        if (addr > 0x300000000) break;
-    }
-    free(buffer);
-    return results;
-}
-
-NSArray* scanULong(unsigned long long targetValue, int maxResults) {
-    NSMutableArray *results = [NSMutableArray array];
-    task_t task = mach_task_self();
-    vm_address_t addr = 0;
-    vm_size_t size = 0;
-    struct vm_region_basic_info_64 info;
-    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-    mach_port_t object_name = MACH_PORT_NULL;
-    uint8_t *buffer = malloc(0x10000);
-    
-    if (!buffer) return results;
-    
-    while (1) {
-        kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
-                                         (vm_region_info_t)&info, &count, &object_name);
-        if (kr != KERN_SUCCESS) break;
-        
-        if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE) &&
-            addr >= 0x100000000 && addr <= 0x300000000) {
-            
-            for (uintptr_t page = addr; page < addr + size; page += 0x10000) {
-                uintptr_t pageSize = (page + 0x10000 > addr + size) ? (addr + size - page) : 0x10000;
-                if (pageSize < 8) continue;
-                
-                vm_size_t read = 0;
-                kr = vm_read_overwrite(task, page, pageSize, (vm_address_t)buffer, &read);
-                if (kr != KERN_SUCCESS || read < 8) continue;
-                
-                for (uintptr_t offset = 0; offset + 8 <= pageSize; offset += 8) {
-                    unsigned long long val = *(unsigned long long*)(buffer + offset);
-                    if (val == targetValue) {
-                        [results addObject:@(page + offset)];
-                        if (results.count >= maxResults) {
-                            free(buffer);
-                            return results;
-                        }
-                    }
-                }
-            }
-        }
-        addr += size;
-        if (addr > 0x300000000) break;
     }
     free(buffer);
     return results;
@@ -422,7 +359,6 @@ NSString* handleCommand(NSString *cmd) {
     if ([command isEqualToString:@"PING"]) {
         return @"PONG";
     }
-    // 1 байт
     else if ([command isEqualToString:@"SCAN_BYTE"]) {
         if (parts.count < 2) return @"ERROR: need value";
         char value = (char)[parts[1] intValue];
@@ -434,7 +370,6 @@ NSString* handleCommand(NSString *cmd) {
         }
         return response;
     }
-    // 2 байта
     else if ([command isEqualToString:@"SCAN_SHORT"]) {
         if (parts.count < 2) return @"ERROR: need value";
         short value = (short)[parts[1] intValue];
@@ -446,7 +381,6 @@ NSString* handleCommand(NSString *cmd) {
         }
         return response;
     }
-    // 4 байта int
     else if ([command isEqualToString:@"SCAN_INT"]) {
         if (parts.count < 2) return @"ERROR: need value";
         int value = [parts[1] intValue];
@@ -458,24 +392,11 @@ NSString* handleCommand(NSString *cmd) {
         }
         return response;
     }
-    // 8 байт long long
     else if ([command isEqualToString:@"SCAN_LONG"]) {
         if (parts.count < 2) return @"ERROR: need value";
         long long value = strtoll([parts[1] UTF8String], NULL, 0);
         int max = (parts.count > 2) ? [parts[2] intValue] : 500;
         NSArray *results = scanLong(value, max);
-        NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
-        for (NSNumber *addr in results) {
-            [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
-        }
-        return response;
-    }
-    // unsigned long long
-    else if ([command isEqualToString:@"SCAN_ULONG"]) {
-        if (parts.count < 2) return @"ERROR: need value";
-        unsigned long long value = strtoull([parts[1] UTF8String], NULL, 0);
-        int max = (parts.count > 2) ? [parts[2] intValue] : 500;
-        NSArray *results = scanULong(value, max);
         NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
         for (NSNumber *addr in results) {
             [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
@@ -494,40 +415,29 @@ NSString* handleCommand(NSString *cmd) {
         }
         return response;
     }
-    // Чтение 1 байт
     else if ([command isEqualToString:@"READ_BYTE"]) {
         if (parts.count < 2) return @"ERROR: need addr";
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
         char val = safeReadByte(addr);
         return [NSString stringWithFormat:@"BYTE %d", val];
     }
-    // Чтение 2 байта
     else if ([command isEqualToString:@"READ_SHORT"]) {
         if (parts.count < 2) return @"ERROR: need addr";
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
         short val = safeReadShort(addr);
         return [NSString stringWithFormat:@"SHORT %d", val];
     }
-    // Чтение 4 байта
     else if ([command isEqualToString:@"READ_INT"]) {
         if (parts.count < 2) return @"ERROR: need addr";
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
         int val = safeReadInt(addr);
         return [NSString stringWithFormat:@"INT %d", val];
     }
-    // Чтение 8 байт long long
     else if ([command isEqualToString:@"READ_LONG"]) {
         if (parts.count < 2) return @"ERROR: need addr";
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
         long long val = safeReadLong(addr);
         return [NSString stringWithFormat:@"LONG %lld", val];
-    }
-    // Чтение unsigned long long
-    else if ([command isEqualToString:@"READ_ULONG"]) {
-        if (parts.count < 2) return @"ERROR: need addr";
-        uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
-        unsigned long long val = safeReadULong(addr);
-        return [NSString stringWithFormat:@"ULONG %llu", val];
     }
     else if ([command isEqualToString:@"READ_FLOAT"]) {
         if (parts.count < 2) return @"ERROR: need addr";
@@ -557,7 +467,7 @@ NSString* handleCommand(NSString *cmd) {
     return @"ERROR: unknown command";
 }
 
-// ===== TCP СЕРВЕР (остается без изменений) =====
+// ===== TCP СЕРВЕР =====
 void startServer(void) {
     if (serverRunning) {
         addLog(@"⚠️ Сервер уже запущен");
@@ -732,7 +642,7 @@ void createMenu(void) {
     [win makeKeyAndVisible];
 }
 
-// ===== ПЛАВАЮЩАЯ КНОПКА =====
+// ===== ПЛАВАЮЩАЯ КНОПКА (ПОЛУПРОЗРАЧНАЯ) =====
 @interface FloatBtn : UIView
 @property (nonatomic, copy) void (^onTap)(void);
 @property (nonatomic, assign) CGPoint last;
@@ -744,7 +654,7 @@ void createMenu(void) {
     CGFloat sh = UIScreen.mainScreen.bounds.size.height;
     self = [super initWithFrame:CGRectMake(sw-65, sh-85, 55, 55)];
     if (self) {
-        self.backgroundColor = UIColor.systemBlueColor;
+        self.backgroundColor = [UIColor.systemBlueColor colorWithAlphaComponent:0.7]; // Полупрозрачный
         self.layer.cornerRadius = 27.5;
         self.layer.borderWidth = 2;
         self.layer.borderColor = UIColor.whiteColor.CGColor;
