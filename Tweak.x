@@ -7,11 +7,11 @@ static UITextView *logView = nil;
 static NSMutableString *logText = nil;
 static BOOL isSearching = NO;
 static NSMutableArray *g_idAddresses = nil;
-static NSMutableArray *g_idValues = nil;
 static int g_targetID = 71068432;
 static uintptr_t g_foundNetworkPlayer = 0;
 static uintptr_t g_foundTransform = 0;
 static float g_playerX = 0, g_playerY = 0, g_playerZ = 0;
+static uintptr_t g_quarkStruct = 0;
 
 void addLog(NSString *msg) {
     if (!logText) logText = [[NSMutableString alloc] init];
@@ -35,13 +35,13 @@ void clearLog() {
     addLog(@"🗑 Лог очищен");
 }
 
+// ===== БЕЗОПАСНОЕ ЧТЕНИЕ =====
 int safeReadInt(uintptr_t addr) {
     if (addr == 0) return 0;
     @try {
         int val = 0;
         vm_size_t read = 0;
-        kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, &read);
-        if (kr != KERN_SUCCESS || read != 4) return 0;
+        vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, &read);
         return val;
     } @catch (NSException *e) {
         return 0;
@@ -53,8 +53,7 @@ uintptr_t safeReadPtr(uintptr_t addr) {
     @try {
         uintptr_t val = 0;
         vm_size_t read = 0;
-        kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 8, (vm_address_t)&val, &read);
-        if (kr != KERN_SUCCESS || read != 8) return 0;
+        vm_read_overwrite(mach_task_self(), addr, 8, (vm_address_t)&val, &read);
         return val;
     } @catch (NSException *e) {
         return 0;
@@ -66,8 +65,7 @@ float safeReadFloat(uintptr_t addr) {
     @try {
         float val = 0;
         vm_size_t read = 0;
-        kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, &read);
-        if (kr != KERN_SUCCESS || read != 4) return 0;
+        vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, &read);
         return val;
     } @catch (NSException *e) {
         return 0;
@@ -82,137 +80,99 @@ BOOL isValidPosition(float x, float y, float z) {
     return YES;
 }
 
-// ===== АЛЬТЕРНАТИВНЫЙ ПОИСК: ИЩЕМ NETWORKPLAYER ПО ТРАНСФОРМУ ВОКРУГ СТРУКТУРЫ =====
-void findNetworkPlayerByTransformAround(uintptr_t quarkStruct) {
-    addLogF(@"\n🔍 АЛЬТЕРНАТИВНЫЙ ПОИСК: СКАНИРУЕМ ВОКРУГ СТРУКТУРЫ 0x%lx", quarkStruct);
+// ===== ПОИСК NETWORKPLAYER ЧЕРЕЗ COORD Y =====
+void findNetworkPlayerByYCoord(uintptr_t quarkStruct) {
+    addLogF(@"\n🔍 ПОИСК NETWORKPLAYER ЧЕРЕЗ КООРДИНАТЫ Y");
+    addLogF(@"   QuarkStruct: 0x%lx", quarkStruct);
     addLog(@"=================================");
     
-    uintptr_t start = quarkStruct - 0x200;
-    uintptr_t end = quarkStruct + 0x200;
+    uintptr_t start = 0x140000000;
+    uintptr_t end = 0x200000000;
     int found = 0;
     
-    addLogF(@"📊 Диапазон: 0x%lx - 0x%lx", start, end);
+    task_t task = mach_task_self();
+    vm_address_t addr = 0;
+    vm_size_t size = 0;
+    struct vm_region_basic_info_64 info;
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t object_name = MACH_PORT_NULL;
     
-    for (uintptr_t addr = start; addr < end; addr += 8) {
-        uintptr_t transform = safeReadPtr(addr);
-        if (transform == 0) continue;
-        if (transform < 0x100000000 || transform > 0x300000000) continue;
-        
-        float x = safeReadFloat(transform + 0x20);
-        float y = safeReadFloat(transform + 0x24);
-        float z = safeReadFloat(transform + 0x28);
-        
-        if (isValidPosition(x, y, z)) {
-            found++;
-            addLogF(@"\n🎯 НАЙДЕН TRANSFORM ВОКРУГ СТРУКТУРЫ!");
-            addLogF(@"   Адрес указателя на Transform: 0x%lx", addr);
-            addLogF(@"   Transform: 0x%lx", transform);
-            addLogF(@"   📍 КООРДИНАТЫ: X=%.2f Y=%.2f Z=%.2f", x, y, z);
-            
-            // Проверяем, есть ли рядом QuarkPlayer
-            for (int offset = 0x100; offset <= 0x200; offset += 8) {
-                uintptr_t possibleNetworkPlayer = addr - offset;
-                if (possibleNetworkPlayer < 0x100000000) continue;
-                
-                uintptr_t checkQuark = safeReadPtr(possibleNetworkPlayer + 0x1A8);
-                if (checkQuark == quarkStruct) {
-                    addLogF(@"   ✅ Найден NetworkPlayer: 0x%lx (смещение +0x%02X)", possibleNetworkPlayer, offset);
-                    g_foundNetworkPlayer = possibleNetworkPlayer;
-                    g_foundTransform = transform;
-                    g_playerX = x; g_playerY = y; g_playerZ = z;
-                    return;
-                }
-            }
-        }
-    }
-    
-    if (found == 0) {
-        addLog(@"❌ Transform не найден вокруг структуры");
-    } else {
-        addLogF(@"\n✅ Найдено Transform: %d, но NetworkPlayer не идентифицирован", found);
-    }
-}
-
-// ===== ПОИСК NETWORKPLAYER С ПЕРЕБОРОМ СМЕЩЕНИЙ (РАСШИРЕННЫЙ ДИАПАЗОН) =====
-void findNetworkPlayerWithOffset(uintptr_t quarkStruct) {
-    addLogF(@"\n🔍 ПОИСК NETWORKPLAYER ДЛЯ QUARK 0x%lx", quarkStruct);
-    addLog(@"=================================");
-    
-    uintptr_t start = 0x100000000;
-    uintptr_t end = 0x300000000;
-    int bestOffset = 0;
-    uintptr_t bestNetworkPlayer = 0;
-    uintptr_t bestTransform = 0;
-    float bestX = 0, bestY = 0, bestZ = 0;
-    
-    addLog(@"📊 Поиск указателей на QuarkRoomPlayer...");
-    
-    NSMutableArray *pointers = [NSMutableArray array];
-    for (uintptr_t addr = start; addr < end; addr += 8) {
-        uintptr_t ptr = safeReadPtr(addr);
-        if (ptr == quarkStruct) {
-            [pointers addObject:@(addr)];
-            if (pointers.count > 200) break;
-        }
-    }
-    
-    addLogF(@"📊 Найдено указателей: %lu", (unsigned long)pointers.count);
-    
-    if (pointers.count == 0) {
-        addLog(@"❌ Нет указателей на QuarkRoomPlayer в диапазоне 0x100000000-0x300000000");
-        addLog(@"🔁 Пробуем альтернативный метод...");
-        findNetworkPlayerByTransformAround(quarkStruct);
+    uint8_t *buffer = malloc(0x10000);
+    if (!buffer) {
+        addLog(@"❌ Ошибка памяти");
         return;
     }
     
-    addLog(@"🔍 Перебор возможных смещений (0x100-0x200)...");
+    addLog(@"📊 Сканируем диапазон 0x140000000 - 0x200000000 в поисках float Y...");
     
-    for (int offset = 0x100; offset <= 0x200; offset += 8) {
-        for (NSNumber *num in pointers) {
-            uintptr_t ptrAddr = [num unsignedLongLongValue];
-            uintptr_t networkPlayer = ptrAddr - offset;
+    while (1) {
+        kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
+                                         (vm_region_info_t)&info, &count, &object_name);
+        if (kr != KERN_SUCCESS) break;
+        
+        if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE) &&
+            addr >= start && addr <= end) {
             
-            if (networkPlayer < start || networkPlayer > end) continue;
-            
-            uintptr_t transform = safeReadPtr(networkPlayer + 0x38);
-            if (transform == 0) continue;
-            if (transform < start || transform > end) continue;
-            
-            float x = safeReadFloat(transform + 0x20);
-            float y = safeReadFloat(transform + 0x24);
-            float z = safeReadFloat(transform + 0x28);
-            
-            if (isValidPosition(x, y, z)) {
-                addLogF(@"\n🎯 НАЙДЕН ВАЛИДНЫЙ NETWORKPLAYER!");
-                addLogF(@"   Смещение QuarkPlayer: +0x%02X", offset);
-                addLogF(@"   NetworkPlayer: 0x%lx", networkPlayer);
-                addLogF(@"   Transform: 0x%lx", transform);
-                addLogF(@"   📍 КООРДИНАТЫ: X=%.2f Y=%.2f Z=%.2f", x, y, z);
+            for (uintptr_t page = addr; page < addr + size; page += 0x10000) {
+                uintptr_t pageSize = (page + 0x10000 > addr + size) ? (addr + size - page) : 0x10000;
+                if (pageSize < 12) continue;
                 
-                if (bestOffset == 0 || (x != 0 && y != 0)) {
-                    bestOffset = offset;
-                    bestNetworkPlayer = networkPlayer;
-                    bestTransform = transform;
-                    bestX = x; bestY = y; bestZ = z;
+                vm_size_t read = 0;
+                kern_return_t kr2 = vm_read_overwrite(task, page, pageSize, (vm_address_t)buffer, &read);
+                if (kr2 != KERN_SUCCESS || read < 12) continue;
+                
+                for (uintptr_t offset = 0; offset + 12 <= pageSize; offset += 4) {
+                    float y = *(float*)(buffer + offset);
+                    
+                    // Ищем Y в разумном диапазоне (высота игрока 0.5-5)
+                    if (y > 0.5 && y < 5.0) {
+                        uintptr_t coordAddr = page + offset;
+                        uintptr_t transform = coordAddr - 0x24;
+                        uintptr_t networkPlayer = transform - 0x38;
+                        
+                        if (networkPlayer < start || networkPlayer > end) continue;
+                        
+                        // Проверяем, указывает ли NetworkPlayer на нашу структуру
+                        uintptr_t checkQuark = safeReadPtr(networkPlayer + 0x1A8);
+                        if (checkQuark == quarkStruct) {
+                            found++;
+                            addLogF(@"\n🎯 НАЙДЕН NETWORKPLAYER!");
+                            addLogF(@"   Адрес Y: 0x%lx (%.2f)", coordAddr, y);
+                            addLogF(@"   Transform: 0x%lx", transform);
+                            addLogF(@"   NetworkPlayer: 0x%lx", networkPlayer);
+                            
+                            float x = safeReadFloat(transform + 0x20);
+                            float z = safeReadFloat(transform + 0x28);
+                            addLogF(@"   📍 КООРДИНАТЫ: X=%.2f Y=%.2f Z=%.2f", x, y, z);
+                            
+                            g_foundNetworkPlayer = networkPlayer;
+                            g_foundTransform = transform;
+                            g_playerX = x; g_playerY = y; g_playerZ = z;
+                            break;
+                        }
+                    }
                 }
+                if (found > 0) break;
             }
         }
+        if (found > 0) break;
+        addr += size;
+        if (addr > end) break;
     }
     
-    if (bestOffset != 0) {
-        g_foundNetworkPlayer = bestNetworkPlayer;
-        g_foundTransform = bestTransform;
-        g_playerX = bestX; g_playerY = bestY; g_playerZ = bestZ;
-        
+    free(buffer);
+    
+    if (found > 0) {
         addLogF(@"\n✅ ✅ ✅ УСПЕХ! ✅ ✅ ✅");
         addLogF(@"🎯 NetworkPlayer: 0x%lx", g_foundNetworkPlayer);
         addLogF(@"🎯 Transform: 0x%lx", g_foundTransform);
         addLogF(@"🎯 КООРДИНАТЫ ИГРОКА: X=%.2f Y=%.2f Z=%.2f", g_playerX, g_playerY, g_playerZ);
-        addLogF(@"🎯 Смещение QuarkPlayer в NetworkPlayer: +0x%02X", bestOffset);
     } else {
-        addLog(@"\n❌ NetworkPlayer не найден ни с одним смещением");
-        addLog(@"🔁 Пробуем альтернативный метод...");
-        findNetworkPlayerByTransformAround(quarkStruct);
+        addLog(@"\n❌ NetworkPlayer не найден");
+        addLog(@"💡 Возможные причины:");
+        addLog(@"   1. Диапазон поиска слишком узкий");
+        addLog(@"   2. Смещение QuarkPlayer не 0x1A8");
+        addLog(@"   3. Transform игрока не в диапазоне 0x140000000-0x200000000");
     }
 }
 
@@ -227,7 +187,6 @@ void findStructure() {
     addLog(@"=================================");
     
     g_idAddresses = [NSMutableArray array];
-    g_idValues = [NSMutableArray array];
     int foundMy = 0;
     
     task_t task = mach_task_self();
@@ -269,7 +228,6 @@ void findStructure() {
                         foundMy++;
                         uintptr_t idAddr = page + offset;
                         [g_idAddresses addObject:@(idAddr)];
-                        [g_idValues addObject:@(val)];
                         if (foundMy <= 100) {
                             addLogF(@"[%d] 0x%lx", foundMy, idAddr);
                         }
@@ -322,7 +280,8 @@ void filterByDeath() {
     
     if (foundMinusOne == 1 && foundStruct != 0) {
         addLogF(@"\n🎯 СТРУКТУРА QUARKROOMPLAYER: 0x%lx", foundStruct);
-        findNetworkPlayerWithOffset(foundStruct);
+        g_quarkStruct = foundStruct;
+        findNetworkPlayerByYCoord(foundStruct);
     } else {
         addLog(@"⚠️ Нет адресов, ставших -1.");
     }
@@ -437,7 +396,7 @@ void createMenu() {
     win.hidden = NO;
     
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, w, 28)];
-    title.text = @"🎯 ESP SCANNER v3.0";
+    title.text = @"🎯 ESP SCANNER v4.0";
     title.textColor = UIColor.systemBlueColor;
     title.textAlignment = NSTextAlignmentCenter;
     title.font = [UIFont boldSystemFontOfSize:14];
