@@ -8,7 +8,6 @@ static NSMutableString *logText = nil;
 static BOOL isSearching = NO;
 static NSMutableArray *g_idAddresses = nil;
 static NSMutableArray *g_idValues = nil;
-static NSMutableArray *g_candidates = nil;
 static int g_targetID = 71068432;
 static uintptr_t g_foundNetworkPlayer = 0;
 static uintptr_t g_foundTransform = 0;
@@ -36,7 +35,6 @@ void clearLog() {
     addLog(@"🗑 Лог очищен");
 }
 
-// ===== БЕЗОПАСНОЕ ЧТЕНИЕ =====
 int safeReadInt(uintptr_t addr) {
     if (addr == 0) return 0;
     @try {
@@ -84,7 +82,58 @@ BOOL isValidPosition(float x, float y, float z) {
     return YES;
 }
 
-// ===== ПОИСК NETWORKPLAYER С ПЕРЕБОРОМ СМЕЩЕНИЙ =====
+// ===== АЛЬТЕРНАТИВНЫЙ ПОИСК: ИЩЕМ NETWORKPLAYER ПО ТРАНСФОРМУ ВОКРУГ СТРУКТУРЫ =====
+void findNetworkPlayerByTransformAround(uintptr_t quarkStruct) {
+    addLogF(@"\n🔍 АЛЬТЕРНАТИВНЫЙ ПОИСК: СКАНИРУЕМ ВОКРУГ СТРУКТУРЫ 0x%lx", quarkStruct);
+    addLog(@"=================================");
+    
+    uintptr_t start = quarkStruct - 0x200;
+    uintptr_t end = quarkStruct + 0x200;
+    int found = 0;
+    
+    addLogF(@"📊 Диапазон: 0x%lx - 0x%lx", start, end);
+    
+    for (uintptr_t addr = start; addr < end; addr += 8) {
+        uintptr_t transform = safeReadPtr(addr);
+        if (transform == 0) continue;
+        if (transform < 0x100000000 || transform > 0x300000000) continue;
+        
+        float x = safeReadFloat(transform + 0x20);
+        float y = safeReadFloat(transform + 0x24);
+        float z = safeReadFloat(transform + 0x28);
+        
+        if (isValidPosition(x, y, z)) {
+            found++;
+            addLogF(@"\n🎯 НАЙДЕН TRANSFORM ВОКРУГ СТРУКТУРЫ!");
+            addLogF(@"   Адрес указателя на Transform: 0x%lx", addr);
+            addLogF(@"   Transform: 0x%lx", transform);
+            addLogF(@"   📍 КООРДИНАТЫ: X=%.2f Y=%.2f Z=%.2f", x, y, z);
+            
+            // Проверяем, есть ли рядом QuarkPlayer
+            for (int offset = 0x100; offset <= 0x200; offset += 8) {
+                uintptr_t possibleNetworkPlayer = addr - offset;
+                if (possibleNetworkPlayer < 0x100000000) continue;
+                
+                uintptr_t checkQuark = safeReadPtr(possibleNetworkPlayer + 0x1A8);
+                if (checkQuark == quarkStruct) {
+                    addLogF(@"   ✅ Найден NetworkPlayer: 0x%lx (смещение +0x%02X)", possibleNetworkPlayer, offset);
+                    g_foundNetworkPlayer = possibleNetworkPlayer;
+                    g_foundTransform = transform;
+                    g_playerX = x; g_playerY = y; g_playerZ = z;
+                    return;
+                }
+            }
+        }
+    }
+    
+    if (found == 0) {
+        addLog(@"❌ Transform не найден вокруг структуры");
+    } else {
+        addLogF(@"\n✅ Найдено Transform: %d, но NetworkPlayer не идентифицирован", found);
+    }
+}
+
+// ===== ПОИСК NETWORKPLAYER С ПЕРЕБОРОМ СМЕЩЕНИЙ (РАСШИРЕННЫЙ ДИАПАЗОН) =====
 void findNetworkPlayerWithOffset(uintptr_t quarkStruct) {
     addLogF(@"\n🔍 ПОИСК NETWORKPLAYER ДЛЯ QUARK 0x%lx", quarkStruct);
     addLog(@"=================================");
@@ -98,24 +147,24 @@ void findNetworkPlayerWithOffset(uintptr_t quarkStruct) {
     
     addLog(@"📊 Поиск указателей на QuarkRoomPlayer...");
     
-    // Сначала собираем все указатели на QuarkRoomPlayer
     NSMutableArray *pointers = [NSMutableArray array];
     for (uintptr_t addr = start; addr < end; addr += 8) {
         uintptr_t ptr = safeReadPtr(addr);
         if (ptr == quarkStruct) {
             [pointers addObject:@(addr)];
-            if (pointers.count > 100) break; // Ограничиваем для скорости
+            if (pointers.count > 200) break;
         }
     }
     
     addLogF(@"📊 Найдено указателей: %lu", (unsigned long)pointers.count);
     
     if (pointers.count == 0) {
-        addLog(@"❌ Нет указателей на QuarkRoomPlayer");
+        addLog(@"❌ Нет указателей на QuarkRoomPlayer в диапазоне 0x100000000-0x300000000");
+        addLog(@"🔁 Пробуем альтернативный метод...");
+        findNetworkPlayerByTransformAround(quarkStruct);
         return;
     }
     
-    // Для каждого указателя перебираем возможные смещения
     addLog(@"🔍 Перебор возможных смещений (0x100-0x200)...");
     
     for (int offset = 0x100; offset <= 0x200; offset += 8) {
@@ -125,12 +174,10 @@ void findNetworkPlayerWithOffset(uintptr_t quarkStruct) {
             
             if (networkPlayer < start || networkPlayer > end) continue;
             
-            // Проверяем Transform по смещению 0x38
             uintptr_t transform = safeReadPtr(networkPlayer + 0x38);
             if (transform == 0) continue;
             if (transform < start || transform > end) continue;
             
-            // Проверяем координаты
             float x = safeReadFloat(transform + 0x20);
             float y = safeReadFloat(transform + 0x24);
             float z = safeReadFloat(transform + 0x28);
@@ -138,12 +185,10 @@ void findNetworkPlayerWithOffset(uintptr_t quarkStruct) {
             if (isValidPosition(x, y, z)) {
                 addLogF(@"\n🎯 НАЙДЕН ВАЛИДНЫЙ NETWORKPLAYER!");
                 addLogF(@"   Смещение QuarkPlayer: +0x%02X", offset);
-                addLogF(@"   Указатель на Quark: 0x%lx", ptrAddr);
                 addLogF(@"   NetworkPlayer: 0x%lx", networkPlayer);
                 addLogF(@"   Transform: 0x%lx", transform);
                 addLogF(@"   📍 КООРДИНАТЫ: X=%.2f Y=%.2f Z=%.2f", x, y, z);
                 
-                // Сохраняем лучший результат
                 if (bestOffset == 0 || (x != 0 && y != 0)) {
                     bestOffset = offset;
                     bestNetworkPlayer = networkPlayer;
@@ -166,7 +211,8 @@ void findNetworkPlayerWithOffset(uintptr_t quarkStruct) {
         addLogF(@"🎯 Смещение QuarkPlayer в NetworkPlayer: +0x%02X", bestOffset);
     } else {
         addLog(@"\n❌ NetworkPlayer не найден ни с одним смещением");
-        addLog(@"💡 Попробуйте расширить диапазон поиска указателей");
+        addLog(@"🔁 Пробуем альтернативный метод...");
+        findNetworkPlayerByTransformAround(quarkStruct);
     }
 }
 
@@ -191,7 +237,7 @@ void findStructure() {
     mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
     mach_port_t object_name = MACH_PORT_NULL;
     
-    uint8_t *buffer = malloc(0x10000); // 64KB буфер для скорости
+    uint8_t *buffer = malloc(0x10000);
     if (!buffer) {
         addLog(@"❌ Ошибка памяти");
         isSearching = NO;
@@ -266,7 +312,7 @@ void filterByDeath() {
             foundMinusOne++;
             foundStruct = addr - 0x10;
             addLogF(@"   ✅ -1: 0x%lx", addr);
-            break; // Нашли первый -1
+            break;
         }
     }
     
@@ -284,7 +330,7 @@ void filterByDeath() {
     addLog(@"✅ ГОТОВО");
 }
 
-// ===== ПРОВЕРКА КООРДИНАТ (ПОСЛЕ ДВИЖЕНИЯ) =====
+// ===== ПРОВЕРКА КООРДИНАТ =====
 void checkCoordinates() {
     if (g_foundTransform == 0) {
         addLog(@"⚠️ Сначала найдите координаты через ПОИСК → СМЕРТЬ → ОТСЕЯТЬ");
@@ -306,7 +352,7 @@ void checkCoordinates() {
         g_playerX = newX; g_playerY = newY; g_playerZ = newZ;
         addLogF(@"   🎯 ТЕКУЩИЕ КООРДИНАТЫ: X=%.2f Y=%.2f Z=%.2f", g_playerX, g_playerY, g_playerZ);
     } else {
-        addLog(@"   ⚠️ КООРДИНАТЫ НЕ ИЗМЕНИЛИСЬ. Возможно, это не игрок.");
+        addLog(@"   ⚠️ КООРДИНАТЫ НЕ ИЗМЕНИЛИСЬ.");
     }
 }
 
@@ -378,7 +424,7 @@ void createMenu() {
     }
     if (!key) return;
     
-    CGFloat w = 280, h = 320;
+    CGFloat w = 280, h = 340;
     CGFloat x = (key.bounds.size.width - w) / 2;
     CGFloat y = (key.bounds.size.height - h) / 2;
     
@@ -391,13 +437,13 @@ void createMenu() {
     win.hidden = NO;
     
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, w, 28)];
-    title.text = @"🎯 ESP SCANNER v2.0";
+    title.text = @"🎯 ESP SCANNER v3.0";
     title.textColor = UIColor.systemBlueColor;
     title.textAlignment = NSTextAlignmentCenter;
     title.font = [UIFont boldSystemFontOfSize:14];
     [win addSubview:title];
     
-    logView = [[UITextView alloc] initWithFrame:CGRectMake(8, 42, w-16, 170)];
+    logView = [[UITextView alloc] initWithFrame:CGRectMake(8, 42, w-16, 180)];
     logView.backgroundColor = UIColor.blackColor;
     logView.textColor = UIColor.greenColor;
     logView.font = [UIFont fontWithName:@"Courier" size:9];
@@ -408,7 +454,7 @@ void createMenu() {
     CGFloat btnW = (w - 30) / 2;
     
     UIButton *searchBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    searchBtn.frame = CGRectMake(10, 220, btnW, 38);
+    searchBtn.frame = CGRectMake(10, 235, btnW, 38);
     [searchBtn setTitle:@"🔍 ПОИСК ID" forState:UIControlStateNormal];
     searchBtn.backgroundColor = UIColor.systemBlueColor;
     [searchBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
@@ -417,7 +463,7 @@ void createMenu() {
     [win addSubview:searchBtn];
     
     UIButton *filterBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    filterBtn.frame = CGRectMake(20 + btnW, 220, btnW, 38);
+    filterBtn.frame = CGRectMake(20 + btnW, 235, btnW, 38);
     [filterBtn setTitle:@"💀 ОТСЕЯТЬ" forState:UIControlStateNormal];
     filterBtn.backgroundColor = UIColor.systemRedColor;
     [filterBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
@@ -426,7 +472,7 @@ void createMenu() {
     [win addSubview:filterBtn];
     
     UIButton *checkBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    checkBtn.frame = CGRectMake(10, 265, btnW, 34);
+    checkBtn.frame = CGRectMake(10, 280, btnW, 34);
     [checkBtn setTitle:@"📍 ПРОВЕРИТЬ" forState:UIControlStateNormal];
     checkBtn.backgroundColor = UIColor.systemPurpleColor;
     [checkBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
@@ -435,7 +481,7 @@ void createMenu() {
     [win addSubview:checkBtn];
     
     UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    copyBtn.frame = CGRectMake(20 + btnW, 265, btnW, 34);
+    copyBtn.frame = CGRectMake(20 + btnW, 280, btnW, 34);
     [copyBtn setTitle:@"📋 КОПИ" forState:UIControlStateNormal];
     copyBtn.backgroundColor = UIColor.systemGreenColor;
     [copyBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
@@ -444,7 +490,7 @@ void createMenu() {
     [win addSubview:copyBtn];
     
     UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    clearBtn.frame = CGRectMake(10, 306, btnW, 32);
+    clearBtn.frame = CGRectMake(10, 321, btnW, 32);
     [clearBtn setTitle:@"🗑 ОЧИСТИТЬ" forState:UIControlStateNormal];
     clearBtn.backgroundColor = UIColor.systemOrangeColor;
     [clearBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
@@ -453,7 +499,7 @@ void createMenu() {
     [win addSubview:clearBtn];
     
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(20 + btnW, 306, btnW, 32);
+    closeBtn.frame = CGRectMake(20 + btnW, 321, btnW, 32);
     [closeBtn setTitle:@"❌ ЗАКРЫТЬ" forState:UIControlStateNormal];
     closeBtn.backgroundColor = UIColor.systemGrayColor;
     [closeBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
