@@ -196,7 +196,6 @@ void filterByDeath() {
     NSMutableArray *newAddresses = [NSMutableArray array];
     NSMutableArray *newValues = [NSMutableArray array];
     int foundMinusOne = 0;
-    uintptr_t foundStruct = 0;
     
     for (int i = 0; i < g_idAddresses.count; i++) {
         uintptr_t addr = [g_idAddresses[i] unsignedLongLongValue];
@@ -204,12 +203,10 @@ void filterByDeath() {
         
         addLogF(@"   0x%lx: %d -> %d", addr, [g_idValues[i] intValue], newVal);
         
-        // Оставляем ТОЛЬКО те, которые стали -1
         if (newVal == -1) {
             [newAddresses addObject:@(addr)];
             [newValues addObject:@(newVal)];
             foundMinusOne++;
-            foundStruct = addr - 0x10;
             addLogF(@"   ✅ СТАЛ -1: 0x%lx", addr);
         }
     }
