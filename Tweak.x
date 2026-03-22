@@ -378,7 +378,7 @@ NSString* listModules(void) {
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
         
-        if (addr >= 0x100000000 && addr <= 0x300000000) {
+        if (addr >= 0x100000000) {
             [result appendFormat:@"0x%lx-0x%lx ", (unsigned long)addr, (unsigned long)(addr + size)];
             
             if (info.protection & VM_PROT_READ) [result appendString:@"r"];
@@ -528,6 +528,48 @@ NSString* handleCommand(NSString *cmd) {
         }
         return response;
     }
+    // LIST_MODULES
+    else if ([command isEqualToString:@"LIST_MODULES"]) {
+        return listModules();
+    }
+    // GET_MODULE
+    else if ([command isEqualToString:@"GET_MODULE"]) {
+        if (parts.count < 2) return @"ERROR: need module name";
+        NSString *moduleName = parts[1];
+        
+        task_t task = mach_task_self();
+        vm_address_t addr = 0;
+        vm_size_t size = 0;
+        struct vm_region_basic_info_64 info;
+        mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+        mach_port_t object_name = MACH_PORT_NULL;
+        
+        while (1) {
+            kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
+                                             (vm_region_info_t)&info, &count, &object_name);
+            if (kr != KERN_SUCCESS) break;
+            
+            if (addr >= 0x100000000) {
+                // Читаем первые 256 байт региона и ищем имя модуля
+                uint8_t *buffer = malloc(256);
+                if (buffer) {
+                    vm_size_t read = 0;
+                    kr = vm_read_overwrite(task, addr, 256, (vm_address_t)buffer, &read);
+                    if (kr == KERN_SUCCESS && read > 0) {
+                        NSString *dataStr = [[NSString alloc] initWithBytes:buffer length:read encoding:NSUTF8StringEncoding];
+                        if (dataStr && [dataStr containsString:moduleName]) {
+                            free(buffer);
+                            return [NSString stringWithFormat:@"MODULE 0x%lx 0x%lx", (unsigned long)addr, (unsigned long)(addr + size)];
+                        }
+                    }
+                    free(buffer);
+                }
+            }
+            addr += size;
+            if (addr > 0x300000000) break;
+        }
+        return @"ERROR: module not found";
+    }
     // Чтение
     else if ([command isEqualToString:@"READ_BYTE"]) {
         if (parts.count < 2) return @"ERROR: need addr";
@@ -577,9 +619,6 @@ NSString* handleCommand(NSString *cmd) {
         NSString *b64 = [data base64EncodedStringWithOptions:0];
         return [NSString stringWithFormat:@"DUMP_DATA %@", b64];
     }
-    else if ([command isEqualToString:@"LIST_MODULES"]) {
-    return listModules();
-}
     
     return @"ERROR: unknown command";
 }
