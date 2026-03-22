@@ -25,7 +25,6 @@ void clearLog() {
     addLog(@"🗑 Лог очищен");
 }
 
-// ===== БЕЗОПАСНОЕ ЧТЕНИЕ =====
 int safeReadInt(uintptr_t addr) {
     if (addr == 0) return 0;
     @try {
@@ -62,6 +61,39 @@ float safeReadFloat(uintptr_t addr) {
         return val;
     } @catch (NSException *e) {
         return 0;
+    }
+}
+
+// ===== ВЫВОД ВСЕХ ЗНАЧЕНИЙ В ДИАПАЗОНЕ ±200 БАЙТ =====
+void dumpStructure(uintptr_t structStart) {
+    addLog(@"\n📊 ДАМП СТРУКТУРЫ (0x%lx) ±200 байт", structStart);
+    addLog(@"=================================");
+    
+    uintptr_t start = structStart - 0x80;
+    uintptr_t end = structStart + 0x200;
+    
+    addLog(@"\n🔹 I4 (4 байта):");
+    for (uintptr_t addr = start; addr <= end; addr += 4) {
+        int val = safeReadInt(addr);
+        if (val != 0) {
+            addLog(@"   0x%lx: %d", addr, val);
+        }
+    }
+    
+    addLog(@"\n🔹 I8 (8 байт):");
+    for (uintptr_t addr = start; addr <= end; addr += 8) {
+        uintptr_t val = safeReadPtr(addr);
+        if (val != 0 && val > 0x100000000 && val < 0x200000000) {
+            addLog(@"   0x%lx: 0x%lx", addr, val);
+        }
+    }
+    
+    addLog(@"\n🔹 FLOAT (4 байта):");
+    for (uintptr_t addr = start; addr <= end; addr += 4) {
+        float val = safeReadFloat(addr);
+        if (val > -100 && val < 100 && fabs(val) > 0.01) {
+            addLog(@"   0x%lx: %.2f", addr, val);
+        }
     }
 }
 
@@ -156,19 +188,19 @@ void filterByDeath() {
     NSMutableArray *newAddresses = [NSMutableArray array];
     NSMutableArray *newValues = [NSMutableArray array];
     int changedCount = 0;
+    uintptr_t foundStruct = 0;
     
     for (int i = 0; i < g_idAddresses.count; i++) {
         uintptr_t addr = [g_idAddresses[i] unsignedLongLongValue];
         int oldVal = [g_idValues[i] intValue];
         int newVal = safeReadInt(addr);
         
-        addLog([NSString stringWithFormat:@"   0x%lx: %d -> %d", addr, oldVal, newVal]);
-        
         if (newVal == -1) {
             [newAddresses addObject:@(addr)];
             [newValues addObject:@(newVal)];
             changedCount++;
-            addLog([NSString stringWithFormat:@"   ✅ ОСТАВЛЕН (стал -1): 0x%lx", addr]);
+            foundStruct = addr - 0x10;
+            addLog([NSString stringWithFormat:@"   ✅ ОСТАВЛЕН: 0x%lx (стал -1)", addr]);
         }
     }
     
@@ -177,25 +209,9 @@ void filterByDeath() {
     
     addLog([NSString stringWithFormat:@"\n✅ Изменилось на -1: %d, Осталось: %lu", changedCount, (unsigned long)g_idAddresses.count]);
     
-    if (g_idAddresses.count == 1) {
-        uintptr_t addr = [g_idAddresses.firstObject unsignedLongLongValue];
-        addLog([NSString stringWithFormat:@"\n🎯 НАЙДЕН ПРАВИЛЬНЫЙ ID: 0x%lx", addr]);
-        addLog([NSString stringWithFormat:@"   Структура: 0x%lx", addr - 0x10]);
-        
-        addLog(@"\n🔍 ИЩЕМ TRANSFORM РЯДОМ:");
-        for (int offset = 0x20; offset <= 0x100; offset += 8) {
-            uintptr_t transform = safeReadPtr(addr - 0x10 + offset);
-            if (transform != 0 && transform > 0x100000000 && transform < 0x200000000) {
-                addLog([NSString stringWithFormat:@"   Возможный Transform по смещению +0x%02X: 0x%lx", offset, transform]);
-                
-                float x = safeReadFloat(transform + 0x20);
-                float y = safeReadFloat(transform + 0x24);
-                float z = safeReadFloat(transform + 0x28);
-                if (x > -100 && x < 100 && y > -100 && y < 100 && z > -100 && z < 100) {
-                    addLog([NSString stringWithFormat:@"      📍 Координаты: X=%.2f Y=%.2f Z=%.2f", x, y, z]);
-                }
-            }
-        }
+    if (g_idAddresses.count == 1 && foundStruct != 0) {
+        addLog([NSString stringWithFormat:@"\n🎯 НАЙДЕНА СТРУКТУРА: 0x%lx", foundStruct]);
+        dumpStructure(foundStruct);
     } else if (g_idAddresses.count > 1) {
         addLog(@"\n⚠️ Осталось несколько адресов. Умрите еще раз и повторите отсеивание.");
     } else {
@@ -223,9 +239,7 @@ void filterByDeath() {
 + (void)onFilter {
     filterByDeath();
 }
-+ (void)onClear {
-    clearLog();
-}
++ (void)onClear { clearLog(); }
 + (void)onCopy {
     if (logView && logView.text.length > 0) {
         UIPasteboard.generalPasteboard.string = logView.text;
