@@ -91,7 +91,6 @@ void findNetworkPlayerWithOffset(uintptr_t quarkStruct) {
     
     uintptr_t start = 0x100000000;
     uintptr_t end = 0x300000000;
-    int found = 0;
     int bestOffset = 0;
     uintptr_t bestNetworkPlayer = 0;
     uintptr_t bestTransform = 0;
@@ -137,7 +136,6 @@ void findNetworkPlayerWithOffset(uintptr_t quarkStruct) {
             float z = safeReadFloat(transform + 0x28);
             
             if (isValidPosition(x, y, z)) {
-                found++;
                 addLogF(@"\n🎯 НАЙДЕН ВАЛИДНЫЙ NETWORKPLAYER!");
                 addLogF(@"   Смещение QuarkPlayer: +0x%02X", offset);
                 addLogF(@"   Указатель на Quark: 0x%lx", ptrAddr);
@@ -532,7 +530,6 @@ void createMenu() {
         self.w.btn = b;
         [self.w addSubview:b];
         
-        __weak typeof(self) weak = self;
         b.onTap = ^{
             logText = nil;
             createMenu();
