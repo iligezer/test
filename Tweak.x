@@ -81,53 +81,85 @@ BOOL isValidPosition(float x, float y, float z) {
     return YES;
 }
 
-// ===== СОХРАНЕНИЕ КАНДИДАТОВ НА КООРДИНАТЫ =====
-void saveCandidates(uintptr_t structStart) {
-    g_candidates = [NSMutableArray array];
+// ===== РЕКУРСИВНЫЙ ПОИСК ПО ЦЕПОЧКЕ УКАЗАТЕЛЕЙ =====
+void searchChain(uintptr_t addr, int depth, NSMutableString *path, NSMutableArray *results) {
+    if (depth > 8) return;
     
-    addLogF(@"\n📊 СОХРАНЯЮ КАНДИДАТОВ ИЗ СТРУКТУРЫ 0x%lx", structStart);
-    addLog(@"=================================");
+    // Проверяем координаты по адресу +0x20
+    float x = safeReadFloat(addr + 0x20);
+    float y = safeReadFloat(addr + 0x24);
+    float z = safeReadFloat(addr + 0x28);
     
-    uintptr_t start = structStart - 0x80;
-    uintptr_t end = structStart + 0x200;
+    if (isValidPosition(x, y, z)) {
+        [results addObject:@{
+            @"path": path,
+            @"transform": @(addr),
+            @"coordAddr": @(addr + 0x20),
+            @"x": @(x),
+            @"y": @(y),
+            @"z": @(z)
+        }];
+        return;
+    }
     
-    // Собираем все указатели
+    // Собираем указатели в диапазоне ±0x200
     NSMutableArray *pointers = [NSMutableArray array];
-    for (uintptr_t addr = start; addr <= end; addr += 8) {
-        uintptr_t val = safeReadPtr(addr);
-        if (val != 0 && val > 0x100000000 && val < 0x200000000) {
+    for (int offset = 0x20; offset <= 0x200; offset += 8) {
+        uintptr_t ptr = safeReadPtr(addr + offset);
+        if (ptr != 0 && ptr > 0x100000000 && ptr < 0x200000000) {
             [pointers addObject:@{
-                @"addr": @(addr),
-                @"value": @(val)
+                @"offset": @(offset),
+                @"value": @(ptr)
             }];
         }
     }
     
-    // Для каждого указателя ищем координаты в его окружении
     for (NSDictionary *p in pointers) {
+        int offset = [p[@"offset"] intValue];
         uintptr_t ptr = [p[@"value"] unsignedLongLongValue];
         
-        // Сканируем ±200 байт вокруг указателя
-        for (int offset = -0x80; offset <= 0x200; offset += 4) {
-            uintptr_t testAddr = ptr + offset;
-            float x = safeReadFloat(testAddr);
-            float y = safeReadFloat(testAddr + 4);
-            float z = safeReadFloat(testAddr + 8);
-            
-            if (isValidPosition(x, y, z)) {
-                // Сохраняем кандидата
-                [g_candidates addObject:@{
-                    @"ptr": @(ptr),
-                    @"offset": @(offset),
-                    @"addr": @(testAddr),
-                    @"x": @(x),
-                    @"y": @(y),
-                    @"z": @(z)
-                }];
-                addLogF(@"   КАНДИДАТ: указатель 0x%lx +%d → 0x%lx (%.2f, %.2f, %.2f)", 
-                        ptr, offset, testAddr, x, y, z);
-            }
-        }
+        NSMutableString *newPath = [path mutableCopy];
+        [newPath appendFormat:@" → [%d]0x%lx", offset, ptr];
+        
+        searchChain(ptr, depth + 1, newPath, results);
+    }
+}
+
+// ===== СОХРАНЕНИЕ КАНДИДАТОВ =====
+void saveCandidates(uintptr_t structStart) {
+    g_candidates = [NSMutableArray array];
+    
+    addLogF(@"\n📊 АНАЛИЗ СТРУКТУРЫ 0x%lx", structStart);
+    addLog(@"=================================");
+    
+    // Запускаем рекурсивный поиск от структуры
+    NSMutableArray *results = [NSMutableArray array];
+    NSMutableString *startPath = [NSMutableString stringWithFormat:@"📌 Структура 0x%lx", structStart];
+    searchChain(structStart, 1, startPath, results);
+    
+    if (results.count == 0) {
+        addLog(@"❌ Не найдено Transform в цепочке указателей");
+        return;
+    }
+    
+    addLog(@"✅ Найдены возможные Transform:");
+    for (int i = 0; i < results.count; i++) {
+        NSDictionary *r = results[i];
+        addLogF(@"\n🔹 ВАРИАНТ %d:", i+1);
+        addLog([r[@"path"] description]);
+        addLogF(@"   Transform: 0x%lx", [r[@"transform"] unsignedLongLongValue]);
+        addLogF(@"   Координаты: X=%.2f Y=%.2f Z=%.2f", 
+                [r[@"x"] floatValue], [r[@"y"] floatValue], [r[@"z"] floatValue]);
+        
+        // Сохраняем кандидата с полной информацией о цепочке
+        [g_candidates addObject:@{
+            @"path": r[@"path"],
+            @"transform": r[@"transform"],
+            @"coordAddr": r[@"coordAddr"],
+            @"x": r[@"x"],
+            @"y": r[@"y"],
+            @"z": r[@"z"]
+        }];
     }
     
     addLogF(@"\n✅ Сохранено кандидатов: %lu", (unsigned long)g_candidates.count);
@@ -144,40 +176,84 @@ void checkCandidates() {
     addLog(@"=================================");
     
     int validCount = 0;
+    NSMutableArray *validCandidates = [NSMutableArray array];
     
     for (int i = 0; i < g_candidates.count; i++) {
         NSDictionary *c = g_candidates[i];
-        uintptr_t addr = [c[@"addr"] unsignedLongLongValue];
+        uintptr_t coordAddr = [c[@"coordAddr"] unsignedLongLongValue];
         float oldX = [c[@"x"] floatValue];
         float oldY = [c[@"y"] floatValue];
         float oldZ = [c[@"z"] floatValue];
         
-        float newX = safeReadFloat(addr);
-        float newY = safeReadFloat(addr + 4);
-        float newZ = safeReadFloat(addr + 8);
+        float newX = safeReadFloat(coordAddr);
+        float newY = safeReadFloat(coordAddr + 4);
+        float newZ = safeReadFloat(coordAddr + 8);
         
-        addLogF(@"\n📍 КАНДИДАТ %d: 0x%lx", i+1, addr);
+        addLogF(@"\n📍 КАНДИДАТ %d:", i+1);
+        addLog([c[@"path"] description]);
+        addLogF(@"   Координаты: 0x%lx", coordAddr);
         addLogF(@"   Было: X=%.2f Y=%.2f Z=%.2f", oldX, oldY, oldZ);
         addLogF(@"   Стало: X=%.2f Y=%.2f Z=%.2f", newX, newY, newZ);
         
         // Проверяем, изменились ли координаты
         if (fabs(newX - oldX) > 0.1 || fabs(newY - oldY) > 0.1 || fabs(newZ - oldZ) > 0.1) {
-            addLog(@"   ✅ ИЗМЕНИЛИСЬ! Это похоже на координаты игрока.");
+            addLog(@"   ✅ ИЗМЕНИЛИСЬ! Это координаты игрока.");
             validCount++;
-            
-            // Показываем информацию о Transform
-            uintptr_t transform = addr - 0x20;
-            addLogF(@"   Transform: 0x%lx", transform);
-            
-            // Ищем указатель на этот Transform в структуре
-            addLog(@"   Ищем указатель на этот Transform...");
-            // Здесь можно добавить поиск указателя, но пока выводим адрес
+            [validCandidates addObject:c];
         } else {
-            addLog(@"   ⚠️ НЕ ИЗМЕНИЛИСЬ. Это статичные координаты (объекты, декор).");
+            addLog(@"   ⚠️ НЕ ИЗМЕНИЛИСЬ. Это статичные координаты.");
+            
+            // Нужно идти дальше по цепочке указателей
+            addLog(@"   🔍 Ищем следующий указатель в цепочке...");
+            
+            // Извлекаем текущий адрес из пути
+            NSString *path = c[@"path"];
+            NSArray *parts = [path componentsSeparatedByString:@" → "];
+            if (parts.count >= 2) {
+                // Берем последний адрес из цепочки
+                NSString *lastPart = parts.lastObject;
+                NSRange range = [lastPart rangeOfString:@"0x[0-9a-fA-F]+" options:NSRegularExpressionSearch];
+                if (range.location != NSNotFound) {
+                    NSString *addrStr = [lastPart substringWithRange:range];
+                    unsigned long long addr = strtoull([addrStr UTF8String], NULL, 16);
+                    addLogF(@"   📌 Текущий адрес: 0x%llx", addr);
+                    
+                    // Ищем следующий указатель вокруг этого адреса
+                    BOOL foundNext = NO;
+                    for (int offset = 0x20; offset <= 0x200 && !foundNext; offset += 8) {
+                        uintptr_t nextPtr = safeReadPtr(addr + offset);
+                        if (nextPtr != 0 && nextPtr > 0x100000000 && nextPtr < 0x200000000) {
+                            addLogF(@"      Найден указатель по +0x%02X: 0x%lx", offset, nextPtr);
+                            
+                            // Проверяем координаты по новому адресу
+                            float nx = safeReadFloat(nextPtr + 0x20);
+                            float ny = safeReadFloat(nextPtr + 0x24);
+                            float nz = safeReadFloat(nextPtr + 0x28);
+                            if (isValidPosition(nx, ny, nz)) {
+                                addLogF(@"      ✅ Найден Transform: 0x%lx", nextPtr);
+                                addLogF(@"      📍 Координаты: X=%.2f Y=%.2f Z=%.2f", nx, ny, nz);
+                                foundNext = YES;
+                            }
+                        }
+                    }
+                    if (!foundNext) {
+                        addLog(@"      ❌ Следующий указатель не найден");
+                    }
+                }
+            }
         }
     }
     
     addLogF(@"\n✅ Найдено динамических кандидатов: %d из %lu", validCount, (unsigned long)g_candidates.count);
+    
+    if (validCount == 1) {
+        NSDictionary *c = validCandidates.firstObject;
+        addLogF(@"\n🎯 ЭТО КООРДИНАТЫ ИГРОКА!");
+        addLogF(@"   Transform: 0x%lx", [c[@"transform"] unsignedLongLongValue]);
+        addLogF(@"   Координаты: X=%.2f Y=%.2f Z=%.2f", 
+                [c[@"x"] floatValue], [c[@"y"] floatValue], [c[@"z"] floatValue]);
+        addLog([c[@"path"] description]);
+    }
 }
 
 // ===== ПОИСК СТРУКТУРЫ =====
