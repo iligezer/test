@@ -131,7 +131,7 @@ NSString* processCommand(NSString *cmd) {
         NSMutableArray *ids = scanIDs();
         NSMutableString *response = [NSMutableString stringWithFormat:@"COUNT:%lu\n", (unsigned long)ids.count];
         for (NSNumber *addr in ids) {
-            [response appendFormat:@"0x%lx\n", [addr unsignedLongLongValue]];
+            [response appendFormat:@"0x%llx\n", [addr unsignedLongLongValue]];
         }
         return response;
     }
@@ -143,7 +143,7 @@ NSString* processCommand(NSString *cmd) {
     else if ([command isEqualToString:@"READ_PTR"] && parts.count >= 2) {
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
         uintptr_t val = safeReadPtr(addr);
-        return [NSString stringWithFormat:@"0x%lx", val];
+        return [NSString stringWithFormat:@"0x%llx", (unsigned long long)val];
     }
     else if ([command isEqualToString:@"READ_FLOAT"] && parts.count >= 2) {
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
