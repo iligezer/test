@@ -78,13 +78,15 @@ void findNetworkPlayer(uintptr_t quarkPlayerStruct) {
     addLog(@"=================================");
     
     uintptr_t start = 0x100000000;
-    uintptr_t end = 0x200000000;
+    uintptr_t end = 0x300000000;  // РАСШИРЕННЫЙ ДИАПАЗОН
     int found = 0;
+    
+    addLog(@"📊 Поиск указателей в диапазоне 0x100000000 - 0x300000000");
     
     for (uintptr_t addr = start; addr < end; addr += 8) {
         uintptr_t ptr = safeReadPtr(addr);
         if (ptr == quarkPlayerStruct) {
-            uintptr_t networkPlayer = addr - 0x1A8;  // _quarkPlayer на 0x1A8
+            uintptr_t networkPlayer = addr - 0x1A8;
             addLogF(@"\n✅ NetworkPlayer: 0x%lx", networkPlayer);
             addLogF(@"   Указатель найден по адресу: 0x%lx", addr);
             
@@ -103,8 +105,31 @@ void findNetworkPlayer(uintptr_t quarkPlayerStruct) {
     }
     
     if (found == 0) {
+        addLog(@"\n❌ NetworkPlayer не найден в диапазоне 0x100000000-0x300000000");
+        addLog(@"💡 Попробуем найти указатель другим способом...");
+        
+        // Альтернативный поиск: ищем адрес, который +0x1A8 указывает на структуру
+        for (uintptr_t addr = start; addr < end; addr += 8) {
+            uintptr_t potentialNetwork = addr;
+            uintptr_t quarkPtr = safeReadPtr(potentialNetwork + 0x1A8);
+            if (quarkPtr == quarkPlayerStruct) {
+                addLogF(@"\n✅ NetworkPlayer (альт): 0x%lx", potentialNetwork);
+                uintptr_t transform = safeReadPtr(potentialNetwork + 0x38);
+                if (transform != 0) {
+                    addLogF(@"   Transform: 0x%lx", transform);
+                    float x = safeReadFloat(transform + 0x20);
+                    float y = safeReadFloat(transform + 0x24);
+                    float z = safeReadFloat(transform + 0x28);
+                    addLogF(@"   📍 КООРДИНАТЫ: X=%.2f Y=%.2f Z=%.2f", x, y, z);
+                    found++;
+                    break;
+                }
+            }
+        }
+    }
+    
+    if (found == 0) {
         addLog(@"\n❌ NetworkPlayer не найден");
-        addLog(@"💡 Возможно, смещение _quarkPlayer не 0x1A8");
     } else {
         addLogF(@"\n✅ Найдено NetworkPlayer: %d", found);
     }
