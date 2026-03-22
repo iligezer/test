@@ -23,7 +23,6 @@ void addLog(NSString *msg) {
     });
 }
 
-// ===== ПОЛУЧИТЬ IP АДРЕС =====
 NSString* getIPAddress() {
     NSString *address = @"error";
     struct ifaddrs *interfaces = NULL;
@@ -69,6 +68,30 @@ float safeReadFloat(uintptr_t addr) {
     kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, &read);
     if (kr != KERN_SUCCESS || read != 4) return 0;
     return val;
+}
+
+uint8_t safeReadByte(uintptr_t addr) {
+    uint8_t val = 0;
+    vm_size_t read = 0;
+    kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 1, (vm_address_t)&val, &read);
+    if (kr != KERN_SUCCESS || read != 1) return 0;
+    return val;
+}
+
+uint16_t safeReadShort(uintptr_t addr) {
+    uint16_t val = 0;
+    vm_size_t read = 0;
+    kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 2, (vm_address_t)&val, &read);
+    if (kr != KERN_SUCCESS || read != 2) return 0;
+    return val;
+}
+
+NSString* safeReadString(uintptr_t addr, int maxLen) {
+    char buffer[256];
+    vm_size_t read = 0;
+    kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, maxLen, (vm_address_t)buffer, &read);
+    if (kr != KERN_SUCCESS) return @"";
+    return [NSString stringWithUTF8String:buffer];
 }
 
 // ===== ЗАПИСЬ ПАМЯТИ =====
@@ -178,7 +201,7 @@ NSArray* scanFloat(float targetValue, float tolerance, int maxResults) {
 }
 
 NSData* memoryDump(uintptr_t addr, int size) {
-    if (size > 65536) size = 65536;
+    if (size > 1024 * 1024) size = 1024 * 1024; // максимум 1 МБ
     uint8_t *buffer = malloc(size);
     if (!buffer) return nil;
     vm_size_t read = 0;
@@ -203,7 +226,7 @@ NSString* handleCommand(NSString *cmd) {
     else if ([command isEqualToString:@"SCAN_INT"]) {
         if (parts.count < 2) return @"ERROR: need value";
         int value = [parts[1] intValue];
-        int max = (parts.count > 2) ? [parts[2] intValue] : 100;
+        int max = (parts.count > 2) ? [parts[2] intValue] : 500;
         NSArray *results = scanInt(value, max);
         NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
         for (NSNumber *addr in results) {
@@ -215,7 +238,7 @@ NSString* handleCommand(NSString *cmd) {
         if (parts.count < 2) return @"ERROR: need value";
         float value = [parts[1] floatValue];
         float tolerance = (parts.count > 2) ? [parts[2] floatValue] : 0.001;
-        int max = (parts.count > 3) ? [parts[3] intValue] : 100;
+        int max = (parts.count > 3) ? [parts[3] intValue] : 500;
         NSArray *results = scanFloat(value, tolerance, max);
         NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
         for (NSNumber *addr in results) {
@@ -229,17 +252,36 @@ NSString* handleCommand(NSString *cmd) {
         int val = safeReadInt(addr);
         return [NSString stringWithFormat:@"INT %d", val];
     }
+    else if ([command isEqualToString:@"READ_FLOAT"]) {
+        if (parts.count < 2) return @"ERROR: need addr";
+        uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
+        float val = safeReadFloat(addr);
+        return [NSString stringWithFormat:@"FLOAT %f", val];
+    }
     else if ([command isEqualToString:@"READ_PTR"]) {
         if (parts.count < 2) return @"ERROR: need addr";
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
         uintptr_t val = safeReadPtr(addr);
         return [NSString stringWithFormat:@"PTR 0x%lx", val];
     }
-    else if ([command isEqualToString:@"READ_FLOAT"]) {
+    else if ([command isEqualToString:@"READ_BYTE"]) {
         if (parts.count < 2) return @"ERROR: need addr";
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
-        float val = safeReadFloat(addr);
-        return [NSString stringWithFormat:@"FLOAT %f", val];
+        uint8_t val = safeReadByte(addr);
+        return [NSString stringWithFormat:@"BYTE %d", val];
+    }
+    else if ([command isEqualToString:@"READ_SHORT"]) {
+        if (parts.count < 2) return @"ERROR: need addr";
+        uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
+        uint16_t val = safeReadShort(addr);
+        return [NSString stringWithFormat:@"SHORT %d", val];
+    }
+    else if ([command isEqualToString:@"READ_STRING"]) {
+        if (parts.count < 2) return @"ERROR: need addr";
+        uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
+        int maxLen = (parts.count > 2) ? [parts[2] intValue] : 64;
+        NSString *str = safeReadString(addr, maxLen);
+        return [NSString stringWithFormat:@"STRING %@", str];
     }
     else if ([command isEqualToString:@"WRITE_INT"]) {
         if (parts.count < 3) return @"ERROR: need addr and value";
@@ -259,23 +301,18 @@ NSString* handleCommand(NSString *cmd) {
         if (parts.count < 3) return @"ERROR: need addr and size";
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
         int size = [parts[2] intValue];
+        if (size > 1048576) size = 1048576;
         NSData *data = memoryDump(addr, size);
         if (!data) return @"ERROR: dump failed";
-        return [NSString stringWithFormat:@"DUMP_DATA %@", [data base64EncodedStringWithOptions:0]];
+        NSString *b64 = [data base64EncodedStringWithOptions:0];
+        return [NSString stringWithFormat:@"DUMP_DATA %@", b64];
     }
     
     return @"ERROR: unknown command";
 }
 
-// ===== ОБРАБОТЧИК КНОПОК =====
-@interface ServerController : NSObject
-+ (void)startServer;
-+ (void)stopServer;
-+ (void)closeMenu;
-@end
-
-@implementation ServerController
-+ (void)startServer {
+// ===== TCP СЕРВЕР =====
+void startServer() {
     if (serverRunning) {
         addLog(@"⚠️ Сервер уже запущен");
         return;
@@ -315,7 +352,7 @@ NSString* handleCommand(NSString *cmd) {
     NSString *ip = getIPAddress();
     addLog(@"✅ Сервер запущен на порту 12345");
     addLog([NSString stringWithFormat:@"📡 IP: %@", ip]);
-    addLog(@"💡 Подключитесь с ПК: python client.py");
+    addLog(@"💡 Подключитесь с ПК");
     
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
         while (serverRunning) {
@@ -328,7 +365,7 @@ NSString* handleCommand(NSString *cmd) {
             inet_ntop(AF_INET, &clientAddr.sin_addr, clientIP, sizeof(clientIP));
             addLog([NSString stringWithFormat:@"🔌 Подключён клиент: %s", clientIP]);
             
-            char buffer[4096];
+            char buffer[65536];
             while (serverRunning) {
                 memset(buffer, 0, sizeof(buffer));
                 ssize_t received = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
@@ -350,7 +387,7 @@ NSString* handleCommand(NSString *cmd) {
     });
 }
 
-+ (void)stopServer {
+void stopServer() {
     serverRunning = NO;
     if (serverSocket >= 0) {
         close(serverSocket);
@@ -359,6 +396,16 @@ NSString* handleCommand(NSString *cmd) {
     addLog(@"🛑 Сервер остановлен");
 }
 
+// ===== ОБРАБОТЧИК КНОПОК =====
+@interface ServerController : NSObject
++ (void)startServer;
++ (void)stopServer;
++ (void)closeMenu;
+@end
+
+@implementation ServerController
++ (void)startServer { startServer(); }
++ (void)stopServer { stopServer(); }
 + (void)closeMenu {
     if (win) {
         win.hidden = YES;
