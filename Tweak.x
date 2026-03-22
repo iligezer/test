@@ -6,7 +6,9 @@ static UIWindow *win = nil;
 static UITextView *logView = nil;
 static NSMutableString *logText = nil;
 static BOOL isSearching = NO;
-static NSDate *searchStartTime = nil;
+static NSMutableArray *g_idAddresses = nil;  // Сохраняем адреса ID
+static int g_targetID = 71068432;            // Твой ID
+static int g_enemyID = 55471766;             // ID врага
 
 void addLog(NSString *msg) {
     if (!logText) logText = [[NSMutableString alloc] init];
@@ -22,6 +24,7 @@ void clearLog() {
     addLog(@"🗑 Лог очищен");
 }
 
+// ===== БЕЗОПАСНОЕ ЧТЕНИЕ =====
 int safeReadInt(uintptr_t addr) {
     if (addr == 0) return 0;
     @try {
@@ -35,69 +38,17 @@ int safeReadInt(uintptr_t addr) {
     }
 }
 
-uintptr_t safeReadPtr(uintptr_t addr) {
-    if (addr == 0) return 0;
-    @try {
-        uintptr_t val = 0;
-        vm_size_t read = 0;
-        kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 8, (vm_address_t)&val, &read);
-        if (kr != KERN_SUCCESS || read != 8) return 0;
-        return val;
-    } @catch (NSException *e) {
-        return 0;
-    }
-}
-
-float safeReadFloat(uintptr_t addr) {
-    if (addr == 0) return 0;
-    @try {
-        float val = 0;
-        vm_size_t read = 0;
-        kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, &read);
-        if (kr != KERN_SUCCESS || read != 4) return 0;
-        return val;
-    } @catch (NSException *e) {
-        return 0;
-    }
-}
-
-BOOL isValidPlayerPosition(float x, float y, float z) {
-    if (x < -100 || x > 100) return NO;
-    if (y < -100 || y > 100) return NO;
-    if (z < -100 || z > 100) return NO;
-    if (fabs(x) < 0.01 && fabs(y) < 0.01 && fabs(z) < 0.01) return NO;
-    return YES;
-}
-
-BOOL isValidStructure(uintptr_t structStart) {
-    for (int offset = 0x20; offset <= 0x80; offset += 8) {
-        uintptr_t transformPtr = safeReadPtr(structStart + offset);
-        if (transformPtr == 0) continue;
-        if (transformPtr < 0x100000000 || transformPtr > 0x300000000) continue;
-        
-        float x = safeReadFloat(transformPtr + 0x20);
-        float y = safeReadFloat(transformPtr + 0x24);
-        float z = safeReadFloat(transformPtr + 0x28);
-        
-        if (isValidPlayerPosition(x, y, z)) {
-            return YES;
-        }
-    }
-    return NO;
-}
-
-void autoFindFiltered() {
+// ===== ПОИСК ВСЕХ ID =====
+void findAllIDs() {
     if (isSearching) {
         addLog(@"⏳ Уже ищу");
         return;
     }
     isSearching = YES;
-    searchStartTime = [NSDate date];
-    addLog(@"🔍 АВТОПОИСК (С ФИЛЬТРАЦИЕЙ)");
+    addLog(@"🔍 ПОИСК ВСЕХ ID");
     addLog(@"=================================");
     
-    int myID = 71068432;
-    int enemyID = 55471766;
+    g_idAddresses = [NSMutableArray array];
     int foundMy = 0, foundEnemy = 0;
     int regionsChecked = 0;
     
@@ -115,7 +66,7 @@ void autoFindFiltered() {
         return;
     }
     
-    addLog(@"📊 Диапазон: 0x140000000 - 0x170000000");
+    addLog(@"📊 Диапазон: 0x100000000 - 0x200000000");
     
     while (1) {
         kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
@@ -123,7 +74,7 @@ void autoFindFiltered() {
         if (kr != KERN_SUCCESS) break;
         
         if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE) &&
-            addr >= 0x140000000 && addr <= 0x170000000) {
+            addr >= 0x100000000 && addr <= 0x200000000) {
             
             regionsChecked++;
             
@@ -138,82 +89,87 @@ void autoFindFiltered() {
                 for (uintptr_t offset = 0; offset + 4 <= pageSize; offset += 8) {
                     int val = *(int*)(buffer + offset);
                     
-                    if (val == myID && foundMy < 20) {
+                    if (val == g_targetID && foundMy < 100) {
+                        foundMy++;
                         uintptr_t idAddr = page + offset;
-                        uintptr_t structStart = idAddr - 0x10;
-                        
-                        if (isValidStructure(structStart)) {
-                            foundMy++;
-                            int team = safeReadInt(structStart + 0x34);
-                            int dead = safeReadInt(structStart + 0x7A);
-                            
-                            addLog([NSString stringWithFormat:@"\n🔹 [СВОЙ %d] СТРУКТУРА: 0x%lx", foundMy, structStart]);
-                            addLog([NSString stringWithFormat:@"   ID: %d, Team: %d, Dead: %d", myID, team, dead]);
-                            
-                            for (int trOffset = 0x20; trOffset <= 0x80; trOffset += 8) {
-                                uintptr_t transform = safeReadPtr(structStart + trOffset);
-                                if (transform == 0) continue;
-                                
-                                float x = safeReadFloat(transform + 0x20);
-                                float y = safeReadFloat(transform + 0x24);
-                                float z = safeReadFloat(transform + 0x28);
-                                
-                                if (isValidPlayerPosition(x, y, z)) {
-                                    addLog([NSString stringWithFormat:@"   ✅ Transform: 0x%lx (смещение +0x%02X)", transform, trOffset]);
-                                    addLog([NSString stringWithFormat:@"   📍 КООРДИНАТЫ: X=%.2f Y=%.2f Z=%.2f", x, y, z]);
-                                    break;
-                                }
-                            }
-                        }
+                        [g_idAddresses addObject:@(idAddr)];
+                        addLog([NSString stringWithFormat:@"[СВОЙ %d] ID: 0x%lx", foundMy, idAddr]);
                     }
-                    else if (val == enemyID && foundEnemy < 20) {
+                    else if (val == g_enemyID && foundEnemy < 100) {
+                        foundEnemy++;
                         uintptr_t idAddr = page + offset;
-                        uintptr_t structStart = idAddr - 0x10;
-                        
-                        if (isValidStructure(structStart)) {
-                            foundEnemy++;
-                            int team = safeReadInt(structStart + 0x34);
-                            int dead = safeReadInt(structStart + 0x7A);
-                            
-                            addLog([NSString stringWithFormat:@"\n🔹 [ВРАГ %d] СТРУКТУРА: 0x%lx", foundEnemy, structStart]);
-                            addLog([NSString stringWithFormat:@"   ID: %d, Team: %d, Dead: %d", enemyID, team, dead]);
-                            
-                            for (int trOffset = 0x20; trOffset <= 0x80; trOffset += 8) {
-                                uintptr_t transform = safeReadPtr(structStart + trOffset);
-                                if (transform == 0) continue;
-                                
-                                float x = safeReadFloat(transform + 0x20);
-                                float y = safeReadFloat(transform + 0x24);
-                                float z = safeReadFloat(transform + 0x28);
-                                
-                                if (isValidPlayerPosition(x, y, z)) {
-                                    addLog([NSString stringWithFormat:@"   ✅ Transform: 0x%lx (смещение +0x%02X)", transform, trOffset]);
-                                    addLog([NSString stringWithFormat:@"   📍 КООРДИНАТЫ: X=%.2f Y=%.2f Z=%.2f", x, y, z]);
-                                    break;
-                                }
-                            }
-                        }
+                        [g_idAddresses addObject:@(idAddr)];
+                        addLog([NSString stringWithFormat:@"[ВРАГ %d] ID: 0x%lx", foundEnemy, idAddr]);
                     }
                 }
             }
         }
         
         addr += size;
-        if (addr > 0x170000000) break;
+        if (addr > 0x200000000) break;
     }
     
     free(buffer);
     
-    NSTimeInterval elapsed = [[NSDate date] timeIntervalSinceDate:searchStartTime];
-    addLog([NSString stringWithFormat:@"\n✅ Регионов: %d, Время: %.0f сек", regionsChecked, elapsed]);
-    addLog([NSString stringWithFormat:@"✅ Найдено СВОИХ: %d, ВРАГОВ: %d", foundMy, foundEnemy]);
+    addLog([NSString stringWithFormat:@"\n✅ Найдено ID: %lu", (unsigned long)g_idAddresses.count]);
+    addLog([NSString stringWithFormat:@"✅ СВОИХ: %d, ВРАГОВ: %d", foundMy, foundEnemy]);
     addLog(@"✅ ГОТОВО");
     isSearching = NO;
+}
+
+// ===== ОТСЕИВАНИЕ ПО СМЕРТИ (ID становится -1) =====
+void filterByDeath() {
+    if (g_idAddresses.count == 0) {
+        addLog(@"⚠️ Нет сохраненных ID. Сначала нажмите ПОИСК");
+        return;
+    }
+    
+    addLog(@"🔍 ОТСЕИВАНИЕ ПО СМЕРТИ");
+    addLog(@"=================================");
+    
+    NSMutableArray *newList = [NSMutableArray array];
+    int removed = 0;
+    
+    for (NSNumber *num in g_idAddresses) {
+        uintptr_t addr = [num unsignedLongLongValue];
+        int val = safeReadInt(addr);
+        
+        // Если значение стало -1 — это правильный ID игрока
+        if (val == -1) {
+            [newList addObject:num];
+            addLog([NSString stringWithFormat:@"   ✅ ОСТАВЛЕН: 0x%lx (стало -1)", addr]);
+        } else {
+            removed++;
+        }
+    }
+    
+    g_idAddresses = newList;
+    addLog([NSString stringWithFormat:@"\n✅ Удалено: %d, Осталось: %lu", removed, (unsigned long)g_idAddresses.count]);
+    
+    if (g_idAddresses.count == 1) {
+        uintptr_t addr = [g_idAddresses.firstObject unsignedLongLongValue];
+        addLog([NSString stringWithFormat:@"\n🎯 НАЙДЕН ПРАВИЛЬНЫЙ ID: 0x%lx", addr]);
+        addLog([NSString stringWithFormat:@"   Структура: 0x%lx", addr - 0x10]);
+        
+        // Проверяем Transform рядом
+        addLog(@"\n🔍 ИЩЕМ TRANSFORM РЯДОМ:");
+        for (int offset = 0x20; offset <= 0x100; offset += 8) {
+            uintptr_t transform = safeReadPtr(addr - 0x10 + offset);
+            if (transform != 0 && transform > 0x100000000 && transform < 0x200000000) {
+                addLog([NSString stringWithFormat:@"   Возможный Transform по смещению +0x%02X: 0x%lx", offset, transform]);
+            }
+        }
+    } else if (g_idAddresses.count > 1) {
+        addLog(@"\n⚠️ Осталось несколько адресов. Умрите еще раз и повторите отсеивание.");
+    }
+    
+    addLog(@"✅ ГОТОВО");
 }
 
 // ===== КЛАСС-ОБРАБОТЧИК =====
 @interface MenuHandler : NSObject
 + (void)onSearch;
++ (void)onFilter;
 + (void)onClear;
 + (void)onCopy;
 + (void)onClose;
@@ -222,8 +178,11 @@ void autoFindFiltered() {
 @implementation MenuHandler
 + (void)onSearch {
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
-        autoFindFiltered();
+        findAllIDs();
     });
+}
++ (void)onFilter {
+    filterByDeath();
 }
 + (void)onClear { clearLog(); }
 + (void)onCopy {
@@ -267,7 +226,7 @@ void createMenu() {
     }
     if (!key) return;
     
-    CGFloat w = 280, h = 380;
+    CGFloat w = 280, h = 320;
     CGFloat x = (key.bounds.size.width - w) / 2;
     CGFloat y = (key.bounds.size.height - h) / 2;
     
@@ -280,13 +239,13 @@ void createMenu() {
     win.hidden = NO;
     
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, w, 28)];
-    title.text = @"🎯 ESP SCANNER";
+    title.text = @"🎯 ID SCANNER";
     title.textColor = UIColor.systemBlueColor;
     title.textAlignment = NSTextAlignmentCenter;
     title.font = [UIFont boldSystemFontOfSize:14];
     [win addSubview:title];
     
-    logView = [[UITextView alloc] initWithFrame:CGRectMake(8, 42, w-16, 240)];
+    logView = [[UITextView alloc] initWithFrame:CGRectMake(8, 42, w-16, 180)];
     logView.backgroundColor = UIColor.blackColor;
     logView.textColor = UIColor.greenColor;
     logView.font = [UIFont fontWithName:@"Courier" size:10];
@@ -295,36 +254,36 @@ void createMenu() {
     [win addSubview:logView];
     
     UIButton *searchBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    searchBtn.frame = CGRectMake(15, 295, (w-45)/2, 38);
-    [searchBtn setTitle:@"🔍 АВТОПОИСК" forState:UIControlStateNormal];
+    searchBtn.frame = CGRectMake(15, 235, (w-45)/2, 38);
+    [searchBtn setTitle:@"🔍 ПОИСК" forState:UIControlStateNormal];
     searchBtn.backgroundColor = UIColor.systemBlueColor;
     [searchBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     searchBtn.layer.cornerRadius = 8;
     [searchBtn addTarget:[MenuHandler class] action:@selector(onSearch) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:searchBtn];
     
+    UIButton *filterBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    filterBtn.frame = CGRectMake(25 + (w-45)/2, 235, (w-45)/2, 38);
+    [filterBtn setTitle:@"💀 ОТСЕЯТЬ" forState:UIControlStateNormal];
+    filterBtn.backgroundColor = UIColor.systemRedColor;
+    [filterBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    filterBtn.layer.cornerRadius = 8;
+    [filterBtn addTarget:[MenuHandler class] action:@selector(onFilter) forControlEvents:UIControlEventTouchUpInside];
+    [win addSubview:filterBtn];
+    
     UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    copyBtn.frame = CGRectMake(25 + (w-45)/2, 295, (w-45)/2, 38);
+    copyBtn.frame = CGRectMake(15, 280, (w-45)/2, 34);
     [copyBtn setTitle:@"📋 КОПИ" forState:UIControlStateNormal];
     copyBtn.backgroundColor = UIColor.systemGreenColor;
     [copyBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    copyBtn.layer.cornerRadius = 8;
+    copyBtn.layer.cornerRadius = 6;
     [copyBtn addTarget:[MenuHandler class] action:@selector(onCopy) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:copyBtn];
     
-    UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    clearBtn.frame = CGRectMake(15, 340, (w-45)/2, 34);
-    [clearBtn setTitle:@"🗑 ОЧИСТИТЬ" forState:UIControlStateNormal];
-    clearBtn.backgroundColor = UIColor.systemOrangeColor;
-    [clearBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    clearBtn.layer.cornerRadius = 6;
-    [clearBtn addTarget:[MenuHandler class] action:@selector(onClear) forControlEvents:UIControlEventTouchUpInside];
-    [win addSubview:clearBtn];
-    
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(25 + (w-45)/2, 340, (w-45)/2, 34);
+    closeBtn.frame = CGRectMake(25 + (w-45)/2, 280, (w-45)/2, 34);
     [closeBtn setTitle:@"❌ ЗАКРЫТЬ" forState:UIControlStateNormal];
-    closeBtn.backgroundColor = UIColor.systemRedColor;
+    closeBtn.backgroundColor = UIColor.systemGrayColor;
     [closeBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     closeBtn.layer.cornerRadius = 6;
     [closeBtn addTarget:[MenuHandler class] action:@selector(onClose) forControlEvents:UIControlEventTouchUpInside];
@@ -414,6 +373,6 @@ __attribute__((constructor))
 static void init() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         app = [[App alloc] init];
-        NSLog(@"[ESP] Ready");
+        NSLog(@"[SCAN] Ready");
     });
 }
