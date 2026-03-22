@@ -80,96 +80,59 @@ BOOL isValidPosition(float x, float y, float z) {
     return YES;
 }
 
-// ===== РЕКУРСИВНЫЙ ПОИСК =====
-void searchChain(uintptr_t addr, int depth, NSMutableString *path, NSMutableArray *results) {
-    if (depth > 8) return;
+// ===== БЫСТРЫЙ ПОИСК TRANSFORM (БЕЗ РЕКУРСИИ, ТОЛЬКО ПРЯМЫЕ УКАЗАТЕЛИ) =====
+void findDirectTransforms(uintptr_t structStart) {
+    g_candidates = [NSMutableArray array];
     
-    float x = safeReadFloat(addr + 0x20);
-    float y = safeReadFloat(addr + 0x24);
-    float z = safeReadFloat(addr + 0x28);
+    addLogF(@"\n📊 ПОИСК TRANSFORM В СТРУКТУРЕ 0x%lx", structStart);
+    addLog(@"=================================");
     
-    if (isValidPosition(x, y, z)) {
-        [results addObject:@{
-            @"path": path,
-            @"transform": @(addr),
-            @"coordAddr": @(addr + 0x20),
-            @"x": @(x),
-            @"y": @(y),
-            @"z": @(z)
-        }];
-        return;
-    }
-    
-    NSMutableArray *pointers = [NSMutableArray array];
-    for (int offset = 0x20; offset <= 0x200; offset += 8) {
-        uintptr_t ptr = safeReadPtr(addr + offset);
-        if (ptr != 0 && ptr > 0x100000000 && ptr < 0x200000000) {
-            [pointers addObject:@{
-                @"offset": @(offset),
-                @"value": @(ptr)
+    int found = 0;
+    // Проверяем только прямые указатели в структуре (от +0x20 до +0x100)
+    for (int offset = 0x20; offset <= 0x100; offset += 8) {
+        uintptr_t ptr = safeReadPtr(structStart + offset);
+        if (ptr == 0) continue;
+        if (ptr < 0x100000000 || ptr > 0x200000000) continue;
+        
+        // Проверяем координаты по адресу ptr + 0x20
+        float x = safeReadFloat(ptr + 0x20);
+        float y = safeReadFloat(ptr + 0x24);
+        float z = safeReadFloat(ptr + 0x28);
+        
+        if (isValidPosition(x, y, z)) {
+            found++;
+            addLogF(@"\n🔹 TRANSFORM %d: 0x%lx (смещение +0x%02X)", found, ptr, offset);
+            addLogF(@"   📍 Координаты: X=%.2f Y=%.2f Z=%.2f", x, y, z);
+            
+            [g_candidates addObject:@{
+                @"transform": @(ptr),
+                @"coordAddr": @(ptr + 0x20),
+                @"x": @(x),
+                @"y": @(y),
+                @"z": @(z),
+                @"offset": @(offset)
             }];
         }
     }
     
-    for (NSDictionary *p in pointers) {
-        int offset = [p[@"offset"] intValue];
-        uintptr_t ptr = [p[@"value"] unsignedLongLongValue];
-        NSMutableString *newPath = [path mutableCopy];
-        [newPath appendFormat:@" → [+0x%02X]0x%lx", offset, ptr];
-        searchChain(ptr, depth + 1, newPath, results);
+    if (found == 0) {
+        addLog(@"❌ Transform не найден в прямых указателях структуры");
+    } else {
+        addLogF(@"\n✅ Найдено Transform: %d", found);
     }
-}
-
-// ===== СОХРАНЕНИЕ КАНДИДАТОВ =====
-void saveCandidates(uintptr_t structStart) {
-    g_candidates = [NSMutableArray array];
-    
-    addLogF(@"\n📊 АНАЛИЗ СТРУКТУРЫ 0x%lx", structStart);
-    addLog(@"=================================");
-    
-    NSMutableArray *results = [NSMutableArray array];
-    NSMutableString *startPath = [NSMutableString stringWithFormat:@"📌 Структура 0x%lx", structStart];
-    searchChain(structStart, 1, startPath, results);
-    
-    if (results.count == 0) {
-        addLog(@"❌ Не найдено Transform в цепочке указателей");
-        return;
-    }
-    
-    addLog(@"✅ Найдены возможные Transform:");
-    for (int i = 0; i < results.count; i++) {
-        NSDictionary *r = results[i];
-        addLogF(@"\n🔹 ВАРИАНТ %d:", i+1);
-        addLog([r[@"path"] description]);
-        addLogF(@"   Transform: 0x%lx", [r[@"transform"] unsignedLongLongValue]);
-        addLogF(@"   Координаты: X=%.2f Y=%.2f Z=%.2f", 
-                [r[@"x"] floatValue], [r[@"y"] floatValue], [r[@"z"] floatValue]);
-        
-        [g_candidates addObject:@{
-            @"path": r[@"path"],
-            @"transform": r[@"transform"],
-            @"coordAddr": r[@"coordAddr"],
-            @"x": r[@"x"],
-            @"y": r[@"y"],
-            @"z": r[@"z"]
-        }];
-    }
-    
-    addLogF(@"\n✅ Сохранено кандидатов: %lu", (unsigned long)g_candidates.count);
 }
 
 // ===== ПРОВЕРКА КАНДИДАТОВ =====
 void checkCandidates() {
     if (g_candidates.count == 0) {
-        addLog(@"⚠️ Нет сохраненных кандидатов. Сначала нажмите ОТСЕЯТЬ");
+        addLog(@"⚠️ Нет кандидатов. Сначала нажмите ОТСЕЯТЬ");
         return;
     }
     
-    addLog(@"\n🔍 ПРОВЕРКА КАНДИДАТОВ (ПОСЛЕ ДВИЖЕНИЯ)");
+    addLog(@"\n🔍 ПРОВЕРКА (ПОСЛЕ ДВИЖЕНИЯ)");
     addLog(@"=================================");
     
-    int validCount = 0;
-    NSMutableArray *validCandidates = [NSMutableArray array];
+    int changedCount = 0;
     
     for (int i = 0; i < g_candidates.count; i++) {
         NSDictionary *c = g_candidates[i];
@@ -183,60 +146,34 @@ void checkCandidates() {
         float newZ = safeReadFloat(coordAddr + 8);
         
         addLogF(@"\n📍 КАНДИДАТ %d:", i+1);
-        addLog([c[@"path"] description]);
-        addLogF(@"   Координаты: 0x%lx", coordAddr);
+        addLogF(@"   Transform: 0x%lx", [c[@"transform"] unsignedLongLongValue]);
         addLogF(@"   Было: X=%.2f Y=%.2f Z=%.2f", oldX, oldY, oldZ);
         addLogF(@"   Стало: X=%.2f Y=%.2f Z=%.2f", newX, newY, newZ);
         
         if (fabs(newX - oldX) > 0.1 || fabs(newY - oldY) > 0.1 || fabs(newZ - oldZ) > 0.1) {
             addLog(@"   ✅ ИЗМЕНИЛИСЬ! Это координаты игрока.");
-            validCount++;
-            [validCandidates addObject:c];
+            changedCount++;
         } else {
             addLog(@"   ⚠️ НЕ ИЗМЕНИЛИСЬ.");
-            
-            NSString *path = c[@"path"];
-            NSArray *parts = [path componentsSeparatedByString:@" → "];
-            if (parts.count >= 2) {
-                NSString *lastPart = parts.lastObject;
-                NSRange range = [lastPart rangeOfString:@"0x[0-9a-fA-F]+" options:NSRegularExpressionSearch];
-                if (range.location != NSNotFound) {
-                    NSString *addrStr = [lastPart substringWithRange:range];
-                    unsigned long long addr = strtoull([addrStr UTF8String], NULL, 16);
-                    addLogF(@"   🔍 Ищем следующий указатель вокруг 0x%llx...", addr);
-                    
-                    BOOL foundNext = NO;
-                    for (int offset = 0x20; offset <= 0x200 && !foundNext; offset += 8) {
-                        uintptr_t nextPtr = safeReadPtr(addr + offset);
-                        if (nextPtr != 0 && nextPtr > 0x100000000 && nextPtr < 0x200000000) {
-                            addLogF(@"      Найден указатель по +0x%02X: 0x%lx", offset, nextPtr);
-                            float nx = safeReadFloat(nextPtr + 0x20);
-                            float ny = safeReadFloat(nextPtr + 0x24);
-                            float nz = safeReadFloat(nextPtr + 0x28);
-                            if (isValidPosition(nx, ny, nz)) {
-                                addLogF(@"      ✅ Найден Transform: 0x%lx", nextPtr);
-                                addLogF(@"      📍 Координаты: X=%.2f Y=%.2f Z=%.2f", nx, ny, nz);
-                                foundNext = YES;
-                            }
-                        }
-                    }
-                    if (!foundNext) {
-                        addLog(@"      ❌ Следующий указатель не найден");
-                    }
-                }
-            }
         }
     }
     
-    addLogF(@"\n✅ Найдено динамических кандидатов: %d из %lu", validCount, (unsigned long)g_candidates.count);
+    addLogF(@"\n✅ Изменилось: %d из %lu", changedCount, (unsigned long)g_candidates.count);
     
-    if (validCount == 1) {
-        NSDictionary *c = validCandidates.firstObject;
-        addLogF(@"\n🎯 ЭТО КООРДИНАТЫ ИГРОКА!");
-        addLogF(@"   Transform: 0x%lx", [c[@"transform"] unsignedLongLongValue]);
-        addLogF(@"   Координаты: X=%.2f Y=%.2f Z=%.2f", 
-                [c[@"x"] floatValue], [c[@"y"] floatValue], [c[@"z"] floatValue]);
-        addLog([c[@"path"] description]);
+    if (changedCount == 1) {
+        for (NSDictionary *c in g_candidates) {
+            uintptr_t coordAddr = [c[@"coordAddr"] unsignedLongLongValue];
+            float newX = safeReadFloat(coordAddr);
+            float newY = safeReadFloat(coordAddr + 4);
+            float newZ = safeReadFloat(coordAddr + 8);
+            float oldX = [c[@"x"] floatValue];
+            if (fabs(newX - oldX) > 0.1) {
+                addLogF(@"\n🎯 НАЙДЕНЫ КООРДИНАТЫ ИГРОКА!");
+                addLogF(@"   Transform: 0x%lx", [c[@"transform"] unsignedLongLongValue]);
+                addLogF(@"   Координаты: X=%.2f Y=%.2f Z=%.2f", newX, newY, newZ);
+                break;
+            }
+        }
     }
 }
 
@@ -247,7 +184,7 @@ void findStructure() {
         return;
     }
     isSearching = YES;
-    addLog(@"🔍 ПОИСК СТРУКТУРЫ (ID = -1)");
+    addLog(@"🔍 ПОИСК ID");
     addLog(@"=================================");
     
     g_idAddresses = [NSMutableArray array];
@@ -294,7 +231,7 @@ void findStructure() {
                         uintptr_t idAddr = page + offset;
                         [g_idAddresses addObject:@(idAddr)];
                         [g_idValues addObject:@(val)];
-                        addLogF(@"[ID %d] 0x%lx = %d", foundMy, idAddr, val);
+                        addLogF(@"[%d] 0x%lx", foundMy, idAddr);
                     }
                 }
             }
@@ -314,7 +251,7 @@ void findStructure() {
 // ===== ОТСЕИВАНИЕ =====
 void filterByDeath() {
     if (g_idAddresses.count == 0) {
-        addLog(@"⚠️ Нет сохраненных ID. Сначала нажмите ПОИСК");
+        addLog(@"⚠️ Нет ID. Сначала нажмите ПОИСК");
         return;
     }
     
@@ -322,7 +259,6 @@ void filterByDeath() {
     addLog(@"=================================");
     
     NSMutableArray *newAddresses = [NSMutableArray array];
-    NSMutableArray *newValues = [NSMutableArray array];
     int foundMinusOne = 0;
     uintptr_t foundStruct = 0;
     
@@ -332,25 +268,22 @@ void filterByDeath() {
         
         if (newVal == -1) {
             [newAddresses addObject:@(addr)];
-            [newValues addObject:@(newVal)];
             foundMinusOne++;
             foundStruct = addr - 0x10;
-            addLogF(@"   ✅ СТАЛ -1: 0x%lx", addr);
+            addLogF(@"   ✅ -1: 0x%lx", addr);
+            break; // Нашли первый -1, выходим
         }
     }
     
     g_idAddresses = newAddresses;
-    g_idValues = newValues;
     
-    addLogF(@"\n✅ Найдено адресов, ставших -1: %d", foundMinusOne);
+    addLogF(@"\n✅ Найдено -1: %d", foundMinusOne);
     
     if (foundMinusOne == 1 && foundStruct != 0) {
-        addLogF(@"\n🎯 НАЙДЕНА СТРУКТУРА: 0x%lx", foundStruct);
-        saveCandidates(foundStruct);
-    } else if (foundMinusOne > 1) {
-        addLogF(@"\n⚠️ Найдено %d адресов. Нужно повторить отсеивание.", foundMinusOne);
+        addLogF(@"\n🎯 СТРУКТУРА: 0x%lx", foundStruct);
+        findDirectTransforms(foundStruct);
     } else {
-        addLog(@"\n⚠️ Нет адресов, ставших -1.");
+        addLog(@"⚠️ Нет адресов, ставших -1.");
     }
     
     addLog(@"✅ ГОТОВО");
@@ -373,7 +306,9 @@ void filterByDeath() {
     });
 }
 + (void)onFilter {
-    filterByDeath();
+    dispatch_async(dispatch_get_global_queue(0, 0), ^{
+        filterByDeath();
+    });
 }
 + (void)onCheck {
     checkCandidates();
@@ -406,7 +341,7 @@ void filterByDeath() {
 }
 @end
 
-// ===== МЕНЮ =====
+// ===== МЕНЮ (УМЕНЬШЕННОЕ) =====
 void createMenu() {
     UIWindow *key = nil;
     for (UIScene *s in UIApplication.sharedApplication.connectedScenes) {
@@ -420,7 +355,7 @@ void createMenu() {
     }
     if (!key) return;
     
-    CGFloat w = 280, h = 380;
+    CGFloat w = 260, h = 280;
     CGFloat x = (key.bounds.size.width - w) / 2;
     CGFloat y = (key.bounds.size.height - h) / 2;
     
@@ -432,72 +367,66 @@ void createMenu() {
     win.layer.borderColor = UIColor.systemBlueColor.CGColor;
     win.hidden = NO;
     
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, w, 28)];
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, w, 24)];
     title.text = @"🎯 ESP SCANNER";
     title.textColor = UIColor.systemBlueColor;
     title.textAlignment = NSTextAlignmentCenter;
     title.font = [UIFont boldSystemFontOfSize:14];
     [win addSubview:title];
     
-    logView = [[UITextView alloc] initWithFrame:CGRectMake(8, 42, w-16, 220)];
+    logView = [[UITextView alloc] initWithFrame:CGRectMake(6, 38, w-12, 150)];
     logView.backgroundColor = UIColor.blackColor;
     logView.textColor = UIColor.greenColor;
-    logView.font = [UIFont fontWithName:@"Courier" size:10];
+    logView.font = [UIFont fontWithName:@"Courier" size:9];
     logView.editable = NO;
     logView.layer.cornerRadius = 6;
     [win addSubview:logView];
     
+    CGFloat btnW = (w - 25) / 2;
+    
     UIButton *searchBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    searchBtn.frame = CGRectMake(15, 275, (w-45)/2, 38);
-    [searchBtn setTitle:@"🔍 ПОИСК ID" forState:UIControlStateNormal];
+    searchBtn.frame = CGRectMake(10, 195, btnW, 32);
+    [searchBtn setTitle:@"🔍 ПОИСК" forState:UIControlStateNormal];
     searchBtn.backgroundColor = UIColor.systemBlueColor;
     [searchBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    searchBtn.layer.cornerRadius = 8;
+    searchBtn.layer.cornerRadius = 6;
     [searchBtn addTarget:[MenuHandler class] action:@selector(onSearch) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:searchBtn];
     
     UIButton *filterBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    filterBtn.frame = CGRectMake(25 + (w-45)/2, 275, (w-45)/2, 38);
+    filterBtn.frame = CGRectMake(15 + btnW, 195, btnW, 32);
     [filterBtn setTitle:@"💀 ОТСЕЯТЬ" forState:UIControlStateNormal];
     filterBtn.backgroundColor = UIColor.systemRedColor;
     [filterBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    filterBtn.layer.cornerRadius = 8;
+    filterBtn.layer.cornerRadius = 6;
     [filterBtn addTarget:[MenuHandler class] action:@selector(onFilter) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:filterBtn];
     
     UIButton *checkBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    checkBtn.frame = CGRectMake(15, 320, (w-45)/2, 38);
+    checkBtn.frame = CGRectMake(10, 232, btnW, 30);
     [checkBtn setTitle:@"📍 ПРОВЕРИТЬ" forState:UIControlStateNormal];
     checkBtn.backgroundColor = UIColor.systemPurpleColor;
     [checkBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    checkBtn.layer.cornerRadius = 8;
+    checkBtn.layer.cornerRadius = 6;
     [checkBtn addTarget:[MenuHandler class] action:@selector(onCheck) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:checkBtn];
     
     UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    copyBtn.frame = CGRectMake(25 + (w-45)/2, 320, (w-45)/2, 38);
+    copyBtn.frame = CGRectMake(15 + btnW, 232, btnW, 30);
     [copyBtn setTitle:@"📋 КОПИ" forState:UIControlStateNormal];
     copyBtn.backgroundColor = UIColor.systemGreenColor;
     [copyBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    copyBtn.layer.cornerRadius = 8;
+    copyBtn.layer.cornerRadius = 6;
     [copyBtn addTarget:[MenuHandler class] action:@selector(onCopy) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:copyBtn];
     
-    UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    clearBtn.frame = CGRectMake(15, 365, (w-45)/2, 34);
-    [clearBtn setTitle:@"🗑 ОЧИСТИТЬ" forState:UIControlStateNormal];
-    clearBtn.backgroundColor = UIColor.systemOrangeColor;
-    [clearBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    clearBtn.layer.cornerRadius = 6;
-    [clearBtn addTarget:[MenuHandler class] action:@selector(onClear) forControlEvents:UIControlEventTouchUpInside];
-    [win addSubview:clearBtn];
-    
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(25 + (w-45)/2, 365, (w-45)/2, 34);
+    closeBtn.frame = CGRectMake(w/2-35, 267, 70, 26);
     [closeBtn setTitle:@"❌ ЗАКРЫТЬ" forState:UIControlStateNormal];
     closeBtn.backgroundColor = UIColor.systemGrayColor;
     [closeBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    closeBtn.layer.cornerRadius = 6;
+    closeBtn.layer.cornerRadius = 5;
+    closeBtn.titleLabel.font = [UIFont systemFontOfSize:12];
     [closeBtn addTarget:[MenuHandler class] action:@selector(onClose) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:closeBtn];
     
