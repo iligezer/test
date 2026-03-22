@@ -20,6 +20,14 @@ void addLog(NSString *msg) {
     });
 }
 
+void addLogF(NSString *format, ...) {
+    va_list args;
+    va_start(args, format);
+    NSString *msg = [[NSString alloc] initWithFormat:format arguments:args];
+    va_end(args);
+    addLog(msg);
+}
+
 void clearLog() {
     logText = nil;
     addLog(@"🗑 Лог очищен");
@@ -64,9 +72,9 @@ float safeReadFloat(uintptr_t addr) {
     }
 }
 
-// ===== ВЫВОД ВСЕХ ЗНАЧЕНИЙ В ДИАПАЗОНЕ ±200 БАЙТ =====
+// ===== ВЫВОД ВСЕХ ЗНАЧЕНИЙ =====
 void dumpStructure(uintptr_t structStart) {
-    addLog(@"\n📊 ДАМП СТРУКТУРЫ (0x%lx) ±200 байт", structStart);
+    addLogF(@"\n📊 ДАМП СТРУКТУРЫ (0x%lx) ±200 байт", structStart);
     addLog(@"=================================");
     
     uintptr_t start = structStart - 0x80;
@@ -76,7 +84,7 @@ void dumpStructure(uintptr_t structStart) {
     for (uintptr_t addr = start; addr <= end; addr += 4) {
         int val = safeReadInt(addr);
         if (val != 0) {
-            addLog(@"   0x%lx: %d", addr, val);
+            addLogF(@"   0x%lx: %d", addr, val);
         }
     }
     
@@ -84,7 +92,7 @@ void dumpStructure(uintptr_t structStart) {
     for (uintptr_t addr = start; addr <= end; addr += 8) {
         uintptr_t val = safeReadPtr(addr);
         if (val != 0 && val > 0x100000000 && val < 0x200000000) {
-            addLog(@"   0x%lx: 0x%lx", addr, val);
+            addLogF(@"   0x%lx: 0x%lx", addr, val);
         }
     }
     
@@ -92,7 +100,7 @@ void dumpStructure(uintptr_t structStart) {
     for (uintptr_t addr = start; addr <= end; addr += 4) {
         float val = safeReadFloat(addr);
         if (val > -100 && val < 100 && fabs(val) > 0.01) {
-            addLog(@"   0x%lx: %.2f", addr, val);
+            addLogF(@"   0x%lx: %.2f", addr, val);
         }
     }
 }
@@ -151,14 +159,14 @@ void findAllIDs() {
                         uintptr_t idAddr = page + offset;
                         [g_idAddresses addObject:@(idAddr)];
                         [g_idValues addObject:@(val)];
-                        addLog([NSString stringWithFormat:@"[СВОЙ %d] ID: 0x%lx = %d", foundMy, idAddr, val]);
+                        addLogF(@"[СВОЙ %d] ID: 0x%lx = %d", foundMy, idAddr, val);
                     }
                     else if (val == g_enemyID && foundEnemy < 100) {
                         foundEnemy++;
                         uintptr_t idAddr = page + offset;
                         [g_idAddresses addObject:@(idAddr)];
                         [g_idValues addObject:@(val)];
-                        addLog([NSString stringWithFormat:@"[ВРАГ %d] ID: 0x%lx = %d", foundEnemy, idAddr, val]);
+                        addLogF(@"[ВРАГ %d] ID: 0x%lx = %d", foundEnemy, idAddr, val);
                     }
                 }
             }
@@ -170,7 +178,7 @@ void findAllIDs() {
     
     free(buffer);
     
-    addLog([NSString stringWithFormat:@"\n✅ Найдено ID: %lu", (unsigned long)g_idAddresses.count]);
+    addLogF(@"\n✅ Найдено ID: %lu", (unsigned long)g_idAddresses.count);
     addLog(@"✅ ГОТОВО");
     isSearching = NO;
 }
@@ -192,7 +200,6 @@ void filterByDeath() {
     
     for (int i = 0; i < g_idAddresses.count; i++) {
         uintptr_t addr = [g_idAddresses[i] unsignedLongLongValue];
-        int oldVal = [g_idValues[i] intValue];
         int newVal = safeReadInt(addr);
         
         if (newVal == -1) {
@@ -200,17 +207,17 @@ void filterByDeath() {
             [newValues addObject:@(newVal)];
             changedCount++;
             foundStruct = addr - 0x10;
-            addLog([NSString stringWithFormat:@"   ✅ ОСТАВЛЕН: 0x%lx (стал -1)", addr]);
+            addLogF(@"   ✅ ОСТАВЛЕН: 0x%lx (стал -1)", addr);
         }
     }
     
     g_idAddresses = newAddresses;
     g_idValues = newValues;
     
-    addLog([NSString stringWithFormat:@"\n✅ Изменилось на -1: %d, Осталось: %lu", changedCount, (unsigned long)g_idAddresses.count]);
+    addLogF(@"\n✅ Изменилось на -1: %d, Осталось: %lu", changedCount, (unsigned long)g_idAddresses.count);
     
     if (g_idAddresses.count == 1 && foundStruct != 0) {
-        addLog([NSString stringWithFormat:@"\n🎯 НАЙДЕНА СТРУКТУРА: 0x%lx", foundStruct]);
+        addLogF(@"\n🎯 НАЙДЕНА СТРУКТУРА: 0x%lx", foundStruct);
         dumpStructure(foundStruct);
     } else if (g_idAddresses.count > 1) {
         addLog(@"\n⚠️ Осталось несколько адресов. Умрите еще раз и повторите отсеивание.");
