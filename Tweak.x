@@ -361,6 +361,47 @@ NSData* memoryDump(uintptr_t addr, int size) {
     return data;
 }
 
+// ===== ПОЛУЧЕНИЕ СПИСКА МОДУЛЕЙ =====
+NSString* listModules(void) {
+    NSMutableString *result = [NSMutableString string];
+    task_t task = mach_task_self();
+    vm_address_t addr = 0;
+    vm_size_t size = 0;
+    struct vm_region_basic_info_64 info;
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t object_name = MACH_PORT_NULL;
+    
+    [result appendString:@"MODULES\n"];
+    
+    while (1) {
+        kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
+                                         (vm_region_info_t)&info, &count, &object_name);
+        if (kr != KERN_SUCCESS) break;
+        
+        if (addr >= 0x100000000) {
+            [result appendFormat:@"0x%lx-0x%lx ", (unsigned long)addr, (unsigned long)(addr + size)];
+            
+            if (info.protection & VM_PROT_READ) [result appendString:@"r"];
+            else [result appendString:@"-"];
+            if (info.protection & VM_PROT_WRITE) [result appendString:@"w"];
+            else [result appendString:@"-"];
+            if (info.protection & VM_PROT_EXECUTE) [result appendString:@"x"];
+            else [result appendString:@"-"];
+            
+            // Пытаемся получить имя региона
+            char name[256] = {0};
+            uint32_t name_len = 256;
+            if (vm_region_64_get_name(task, addr, name, &name_len) == KERN_SUCCESS && name_len > 0) {
+                [result appendFormat:@" %s", name];
+            }
+            [result appendString:@"\n"];
+        }
+        addr += size;
+        if (addr > 0x300000000) break;
+    }
+    return result;
+}
+
 // ===== ОБРАБОТКА КОМАНД =====
 NSString* handleCommand(NSString *cmd) {
     NSArray *parts = [cmd componentsSeparatedByString:@" "];
@@ -542,6 +583,9 @@ NSString* handleCommand(NSString *cmd) {
         NSString *b64 = [data base64EncodedStringWithOptions:0];
         return [NSString stringWithFormat:@"DUMP_DATA %@", b64];
     }
+    else if ([command isEqualToString:@"LIST_MODULES"]) {
+    return listModules();
+}
     
     return @"ERROR: unknown command";
 }
