@@ -6,9 +6,9 @@ static UIWindow *win = nil;
 static UITextView *logView = nil;
 static NSMutableString *logText = nil;
 static BOOL isSearching = NO;
-static NSMutableArray *g_idAddresses = nil;  // Сохраняем адреса ID
-static int g_targetID = 71068432;            // Твой ID
-static int g_enemyID = 55471766;             // ID врага
+static NSMutableArray *g_idAddresses = nil;
+static int g_targetID = 71068432;
+static int g_enemyID = 55471766;
 
 void addLog(NSString *msg) {
     if (!logText) logText = [[NSMutableString alloc] init];
@@ -38,6 +38,19 @@ int safeReadInt(uintptr_t addr) {
     }
 }
 
+uintptr_t safeReadPtr(uintptr_t addr) {
+    if (addr == 0) return 0;
+    @try {
+        uintptr_t val = 0;
+        vm_size_t read = 0;
+        kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 8, (vm_address_t)&val, &read);
+        if (kr != KERN_SUCCESS || read != 8) return 0;
+        return val;
+    } @catch (NSException *e) {
+        return 0;
+    }
+}
+
 // ===== ПОИСК ВСЕХ ID =====
 void findAllIDs() {
     if (isSearching) {
@@ -50,7 +63,6 @@ void findAllIDs() {
     
     g_idAddresses = [NSMutableArray array];
     int foundMy = 0, foundEnemy = 0;
-    int regionsChecked = 0;
     
     task_t task = mach_task_self();
     vm_address_t addr = 0;
@@ -75,8 +87,6 @@ void findAllIDs() {
         
         if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE) &&
             addr >= 0x100000000 && addr <= 0x200000000) {
-            
-            regionsChecked++;
             
             for (uintptr_t page = addr; page < addr + size; page += 0x1000) {
                 uintptr_t pageSize = (page + 0x1000 > addr + size) ? (addr + size - page) : 0x1000;
@@ -117,7 +127,7 @@ void findAllIDs() {
     isSearching = NO;
 }
 
-// ===== ОТСЕИВАНИЕ ПО СМЕРТИ (ID становится -1) =====
+// ===== ОТСЕИВАНИЕ ПО СМЕРТИ =====
 void filterByDeath() {
     if (g_idAddresses.count == 0) {
         addLog(@"⚠️ Нет сохраненных ID. Сначала нажмите ПОИСК");
@@ -134,7 +144,6 @@ void filterByDeath() {
         uintptr_t addr = [num unsignedLongLongValue];
         int val = safeReadInt(addr);
         
-        // Если значение стало -1 — это правильный ID игрока
         if (val == -1) {
             [newList addObject:num];
             addLog([NSString stringWithFormat:@"   ✅ ОСТАВЛЕН: 0x%lx (стало -1)", addr]);
@@ -151,7 +160,6 @@ void filterByDeath() {
         addLog([NSString stringWithFormat:@"\n🎯 НАЙДЕН ПРАВИЛЬНЫЙ ID: 0x%lx", addr]);
         addLog([NSString stringWithFormat:@"   Структура: 0x%lx", addr - 0x10]);
         
-        // Проверяем Transform рядом
         addLog(@"\n🔍 ИЩЕМ TRANSFORM РЯДОМ:");
         for (int offset = 0x20; offset <= 0x100; offset += 8) {
             uintptr_t transform = safeReadPtr(addr - 0x10 + offset);
