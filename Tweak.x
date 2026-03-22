@@ -183,47 +183,54 @@ void findAllIDs() {
     isSearching = NO;
 }
 
-// ===== ОТСЕИВАНИЕ =====
+// ===== ОТСЕИВАНИЕ: ОСТАВЛЯЕМ ТОЛЬКО ТЕ, КОТОРЫЕ СТАЛИ -1 =====
 void filterByDeath() {
     if (g_idAddresses.count == 0) {
         addLog(@"⚠️ Нет сохраненных ID. Сначала нажмите ПОИСК");
         return;
     }
     
-    addLog(@"🔍 ОТСЕИВАНИЕ ПО СМЕРТИ");
+    addLog(@"🔍 ОТСЕИВАНИЕ ПО СМЕРТИ (ИЩЕМ -1)");
     addLog(@"=================================");
     
     NSMutableArray *newAddresses = [NSMutableArray array];
     NSMutableArray *newValues = [NSMutableArray array];
-    int changedCount = 0;
+    int foundMinusOne = 0;
     uintptr_t foundStruct = 0;
     
     for (int i = 0; i < g_idAddresses.count; i++) {
         uintptr_t addr = [g_idAddresses[i] unsignedLongLongValue];
         int newVal = safeReadInt(addr);
         
-        // Ищем любое изменение (не только -1, но и 0 или другое число)
-        if (newVal != [g_idValues[i] intValue]) {
+        addLogF(@"   0x%lx: %d -> %d", addr, [g_idValues[i] intValue], newVal);
+        
+        // Оставляем ТОЛЬКО те, которые стали -1
+        if (newVal == -1) {
             [newAddresses addObject:@(addr)];
             [newValues addObject:@(newVal)];
-            changedCount++;
+            foundMinusOne++;
             foundStruct = addr - 0x10;
-            addLogF(@"   ✅ ИЗМЕНИЛСЯ: 0x%lx: %d -> %d", addr, [g_idValues[i] intValue], newVal);
+            addLogF(@"   ✅ СТАЛ -1: 0x%lx", addr);
         }
     }
     
     g_idAddresses = newAddresses;
     g_idValues = newValues;
     
-    addLogF(@"\n✅ Изменилось: %d, Осталось: %lu", changedCount, (unsigned long)g_idAddresses.count);
+    addLogF(@"\n✅ Найдено адресов, ставших -1: %d", foundMinusOne);
     
-    if (g_idAddresses.count == 1 && foundStruct != 0) {
-        addLogF(@"\n🎯 НАЙДЕНА СТРУКТУРА: 0x%lx", foundStruct);
-        dumpStructure(foundStruct);
-    } else if (g_idAddresses.count > 1) {
-        addLog(@"\n⚠️ Осталось несколько адресов. Повторите действие еще раз.");
+    if (foundMinusOne == 1) {
+        uintptr_t addr = [g_idAddresses.firstObject unsignedLongLongValue];
+        addLogF(@"\n🎯 НАЙДЕН ПРАВИЛЬНЫЙ ID: 0x%lx", addr);
+        addLogF(@"   Структура: 0x%lx", addr - 0x10);
+        dumpStructure(addr - 0x10);
+    } else if (foundMinusOne > 1) {
+        addLogF(@"\n⚠️ Найдено %d адресов, ставших -1. Нужно повторить отсеивание.", foundMinusOne);
+        for (NSNumber *num in g_idAddresses) {
+            addLogF(@"   0x%lx", [num unsignedLongLongValue]);
+        }
     } else {
-        addLog(@"\n⚠️ Нет адресов, изменившихся. Возможно, вы не получали урон.");
+        addLog(@"\n⚠️ Нет адресов, ставших -1. Возможно, вы не умирали.");
     }
     
     addLog(@"✅ ГОТОВО");
