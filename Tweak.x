@@ -168,24 +168,39 @@ NSArray* scanFloat(float targetValue, float tolerance, int maxResults) {
     return results;
 }
 
+// ===== ГЛАВНОЕ: ФУНКЦИЯ ДАМПА ПАМЯТИ =====
 NSData* memoryDump(uintptr_t addr, int size) {
+    addLog([NSString stringWithFormat:@"📡 memoryDump: addr=0x%lx, size=%d", addr, size]);
+    
     if (size > 1024 * 1024) size = 1024 * 1024;
+    if (size < 1) size = 1;
+    
     uint8_t *buffer = malloc(size);
-    if (!buffer) return nil;
+    if (!buffer) {
+        addLog(@"❌ malloc failed");
+        return nil;
+    }
     
     vm_size_t read = 0;
     kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, size, (vm_address_t)buffer, &read);
     
     if (kr != KERN_SUCCESS) {
-        addLog([NSString stringWithFormat:@"❌ vm_read error: %d", kr]);
+        addLog([NSString stringWithFormat:@"❌ vm_read error: %d, addr=0x%lx", kr, addr]);
         free(buffer);
         return nil;
     }
     
-    addLog([NSString stringWithFormat:@"✅ Read %lu bytes at 0x%lx", read, addr]);
+    addLog([NSString stringWithFormat:@"✅ Read %lu bytes", read]);
     
     NSData *data = [NSData dataWithBytes:buffer length:read];
     free(buffer);
+    
+    // Принудительно проверяем, что данные не пустые
+    if (data.length == 0) {
+        addLog(@"⚠️ WARNING: data is empty!");
+        return nil;
+    }
+    
     return data;
 }
 
@@ -250,18 +265,24 @@ NSString* handleCommand(NSString *cmd) {
         
         NSData *data = memoryDump(addr, size);
         if (!data) {
-            addLog(@"❌ memoryDump failed");
+            addLog(@"❌ memoryDump returned nil");
             return @"ERROR: dump failed";
         }
         
         addLog([NSString stringWithFormat:@"✅ Data length: %lu", (unsigned long)data.length]);
         
-        NSString *b64 = [data base64EncodedStringWithOptions:0];
+        // Пробуем другой метод кодирования
+        NSString *b64 = [data base64EncodedStringWithOptions:NSDataBase64Encoding64CharacterLineLength];
+        if (!b64 || b64.length == 0) {
+            addLog(@"❌ base64 encoding failed");
+            return @"ERROR: base64 failed";
+        }
+        
         addLog([NSString stringWithFormat:@"✅ Base64 length: %lu", (unsigned long)b64.length]);
         
-        // Важно: пробел между DUMP_DATA и base64
+        // Формируем ответ и проверяем
         NSString *response = [NSString stringWithFormat:@"DUMP_DATA %@", b64];
-        addLog([NSString stringWithFormat:@"📤 Response length: %lu", (unsigned long)response.length]);
+        addLog([NSString stringWithFormat:@"📤 Response total length: %lu", (unsigned long)response.length]);
         
         return response;
     }
@@ -269,7 +290,7 @@ NSString* handleCommand(NSString *cmd) {
     return @"ERROR: unknown command";
 }
 
-// ===== TCP СЕРВЕР =====
+// ===== TCP СЕРВЕР (увеличиваем буфер) =====
 void startServer(void) {
     if (serverRunning) {
         addLog(@"⚠️ Сервер уже запущен");
@@ -323,7 +344,8 @@ void startServer(void) {
             inet_ntop(AF_INET, &clientAddr.sin_addr, clientIP, sizeof(clientIP));
             addLog([NSString stringWithFormat:@"🔌 Подключён клиент: %s", clientIP]);
             
-            char buffer[65536];
+            // Увеличиваем буфер для больших ответов
+            char buffer[1024 * 1024]; // 1 МБ буфер
             while (serverRunning) {
                 memset(buffer, 0, sizeof(buffer));
                 ssize_t received = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
