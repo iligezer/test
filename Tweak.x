@@ -1,17 +1,15 @@
 #import <UIKit/UIKit.h>
 #import <mach/mach.h>
+#import <arpa/inet.h>
 #import <sys/socket.h>
 #import <netinet/in.h>
-#import <arpa/inet.h>
-#import <pthread.h>
 
 // ===== ГЛОБАЛЬНЫЕ =====
-static UIWindow *win = nil;
-static UITextView *logView = nil;
-static NSMutableString *logText = nil;
 static int serverSocket = -1;
 static BOOL serverRunning = NO;
-static int g_targetID = 71068432;
+static NSMutableString *logText = nil;
+static UITextView *logView = nil;
+static UIWindow *win = nil;
 
 void addLog(NSString *msg) {
     if (!logText) logText = [[NSMutableString alloc] init];
@@ -19,70 +17,70 @@ void addLog(NSString *msg) {
     [logText appendString:@"\n"];
     dispatch_async(dispatch_get_main_queue(), ^{
         if (logView) logView.text = logText;
+        NSLog(@"[SERVER] %@", msg);
     });
 }
 
-void addLogF(NSString *format, ...) {
-    va_list args;
-    va_start(args, format);
-    NSString *msg = [[NSString alloc] initWithFormat:format arguments:args];
-    va_end(args);
-    addLog(msg);
-}
-
-// ===== БЕЗОПАСНОЕ ЧТЕНИЕ =====
+// ===== БЕЗОПАСНОЕ ЧТЕНИЕ ПАМЯТИ =====
 int safeReadInt(uintptr_t addr) {
-    if (addr == 0) return 0;
-    @try {
-        int val = 0;
-        vm_size_t read = 0;
-        kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, &read);
-        if (kr != KERN_SUCCESS || read != 4) return 0;
-        return val;
-    } @catch (NSException *e) {
-        return 0;
-    }
+    int val = 0;
+    vm_size_t read = 0;
+    kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, &read);
+    if (kr != KERN_SUCCESS || read != 4) return 0;
+    return val;
 }
 
 uintptr_t safeReadPtr(uintptr_t addr) {
-    if (addr == 0) return 0;
-    @try {
-        uintptr_t val = 0;
-        vm_size_t read = 0;
-        kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 8, (vm_address_t)&val, &read);
-        if (kr != KERN_SUCCESS || read != 8) return 0;
-        return val;
-    } @catch (NSException *e) {
-        return 0;
-    }
+    uintptr_t val = 0;
+    vm_size_t read = 0;
+    kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 8, (vm_address_t)&val, &read);
+    if (kr != KERN_SUCCESS || read != 8) return 0;
+    return val;
 }
 
 float safeReadFloat(uintptr_t addr) {
-    if (addr == 0) return 0;
-    @try {
-        float val = 0;
-        vm_size_t read = 0;
-        kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, &read);
-        if (kr != KERN_SUCCESS || read != 4) return 0;
-        return val;
-    } @catch (NSException *e) {
-        return 0;
-    }
+    float val = 0;
+    vm_size_t read = 0;
+    kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, &read);
+    if (kr != KERN_SUCCESS || read != 4) return 0;
+    return val;
 }
 
-// ===== СКАНИРОВАНИЕ ID =====
-NSMutableArray* scanIDs() {
+NSString* safeReadString(uintptr_t addr, int maxLen) {
+    char buffer[256];
+    vm_size_t read = 0;
+    kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, maxLen, (vm_address_t)buffer, &read);
+    if (kr != KERN_SUCCESS) return @"";
+    return [NSString stringWithUTF8String:buffer];
+}
+
+// ===== ЗАПИСЬ ПАМЯТИ =====
+BOOL safeWriteInt(uintptr_t addr, int val) {
+    kern_return_t kr = vm_write(mach_task_self(), addr, (vm_address_t)&val, 4);
+    return kr == KERN_SUCCESS;
+}
+
+BOOL safeWriteFloat(uintptr_t addr, float val) {
+    kern_return_t kr = vm_write(mach_task_self(), addr, (vm_address_t)&val, 4);
+    return kr == KERN_SUCCESS;
+}
+
+BOOL safeWritePtr(uintptr_t addr, uintptr_t val) {
+    kern_return_t kr = vm_write(mach_task_self(), addr, (vm_address_t)&val, 8);
+    return kr == KERN_SUCCESS;
+}
+
+// ===== СКАНИРОВАНИЕ ПАМЯТИ =====
+NSArray* scanInt(int targetValue, int maxResults) {
     NSMutableArray *results = [NSMutableArray array];
-    int found = 0;
-    
     task_t task = mach_task_self();
     vm_address_t addr = 0;
     vm_size_t size = 0;
     struct vm_region_basic_info_64 info;
     mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
     mach_port_t object_name = MACH_PORT_NULL;
-    
     uint8_t *buffer = malloc(0x10000);
+    
     if (!buffer) return results;
     
     while (1) {
@@ -98,214 +96,286 @@ NSMutableArray* scanIDs() {
                 if (pageSize < 4) continue;
                 
                 vm_size_t read = 0;
-                kern_return_t kr2 = vm_read_overwrite(task, page, pageSize, (vm_address_t)buffer, &read);
-                if (kr2 != KERN_SUCCESS || read < 4) continue;
+                kr = vm_read_overwrite(task, page, pageSize, (vm_address_t)buffer, &read);
+                if (kr != KERN_SUCCESS || read < 4) continue;
                 
-                for (uintptr_t offset = 0; offset + 4 <= pageSize; offset += 8) {
+                for (uintptr_t offset = 0; offset + 4 <= pageSize; offset += 4) {
                     int val = *(int*)(buffer + offset);
-                    if (val == g_targetID && found < 1000) {
-                        found++;
+                    if (val == targetValue) {
                         [results addObject:@(page + offset)];
+                        if (results.count >= maxResults) {
+                            free(buffer);
+                            return results;
+                        }
                     }
                 }
             }
         }
-        
         addr += size;
         if (addr > 0x300000000) break;
     }
-    
     free(buffer);
     return results;
 }
 
+NSArray* scanFloat(float targetValue, float tolerance, int maxResults) {
+    NSMutableArray *results = [NSMutableArray array];
+    task_t task = mach_task_self();
+    vm_address_t addr = 0;
+    vm_size_t size = 0;
+    struct vm_region_basic_info_64 info;
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t object_name = MACH_PORT_NULL;
+    uint8_t *buffer = malloc(0x10000);
+    
+    if (!buffer) return results;
+    
+    while (1) {
+        kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
+                                         (vm_region_info_t)&info, &count, &object_name);
+        if (kr != KERN_SUCCESS) break;
+        
+        if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE) &&
+            addr >= 0x100000000 && addr <= 0x300000000) {
+            
+            for (uintptr_t page = addr; page < addr + size; page += 0x10000) {
+                uintptr_t pageSize = (page + 0x10000 > addr + size) ? (addr + size - page) : 0x10000;
+                if (pageSize < 4) continue;
+                
+                vm_size_t read = 0;
+                kr = vm_read_overwrite(task, page, pageSize, (vm_address_t)buffer, &read);
+                if (kr != KERN_SUCCESS || read < 4) continue;
+                
+                for (uintptr_t offset = 0; offset + 4 <= pageSize; offset += 4) {
+                    float val = *(float*)(buffer + offset);
+                    if (fabs(val - targetValue) <= tolerance) {
+                        [results addObject:@(page + offset)];
+                        if (results.count >= maxResults) {
+                            free(buffer);
+                            return results;
+                        }
+                    }
+                }
+            }
+        }
+        addr += size;
+        if (addr > 0x300000000) break;
+    }
+    free(buffer);
+    return results;
+}
+
+// ===== ДАМП ПАМЯТИ =====
+NSData* memoryDump(uintptr_t addr, int size) {
+    uint8_t *buffer = malloc(size);
+    if (!buffer) return nil;
+    vm_size_t read = 0;
+    kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, size, (vm_address_t)buffer, &read);
+    if (kr != KERN_SUCCESS) {
+        free(buffer);
+        return nil;
+    }
+    NSData *data = [NSData dataWithBytes:buffer length:read];
+    free(buffer);
+    return data;
+}
+
+// ===== ПОЛУЧИТЬ СПИСОК РЕГИОНОВ ПАМЯТИ =====
+NSArray* getMemoryRegions() {
+    NSMutableArray *regions = [NSMutableArray array];
+    task_t task = mach_task_self();
+    vm_address_t addr = 0;
+    vm_size_t size = 0;
+    struct vm_region_basic_info_64 info;
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t object_name = MACH_PORT_NULL;
+    
+    while (1) {
+        kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
+                                         (vm_region_info_t)&info, &count, &object_name);
+        if (kr != KERN_SUCCESS) break;
+        
+        if ((info.protection & VM_PROT_READ) && addr >= 0x100000000 && addr <= 0x300000000) {
+            [regions addObject:@{
+                @"start": @(addr),
+                @"size": @(size),
+                @"protection": @(info.protection)
+            }];
+        }
+        addr += size;
+        if (addr > 0x300000000) break;
+    }
+    return regions;
+}
+
 // ===== ОБРАБОТКА КОМАНД =====
-NSString* processCommand(NSString *cmd) {
+NSString* handleCommand(NSString *cmd) {
     NSArray *parts = [cmd componentsSeparatedByString:@" "];
     NSString *command = [parts[0] uppercaseString];
     
     if ([command isEqualToString:@"PING"]) {
         return @"PONG";
     }
-    else if ([command isEqualToString:@"SCAN_ID"]) {
-        NSMutableArray *ids = scanIDs();
-        NSMutableString *response = [NSMutableString stringWithFormat:@"COUNT:%lu\n", (unsigned long)ids.count];
-        for (NSNumber *addr in ids) {
-            [response appendFormat:@"0x%llx\n", [addr unsignedLongLongValue]];
+    else if ([command isEqualToString:@"SCAN_INT"]) {
+        if (parts.count < 2) return @"ERROR: need value";
+        int value = [parts[1] intValue];
+        int max = (parts.count > 2) ? [parts[2] intValue] : 100;
+        NSArray *results = scanInt(value, max);
+        NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
+        for (NSNumber *addr in results) {
+            [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
         }
         return response;
     }
-    else if ([command isEqualToString:@"READ_INT"] && parts.count >= 2) {
+    else if ([command isEqualToString:@"SCAN_FLOAT"]) {
+        if (parts.count < 2) return @"ERROR: need value";
+        float value = [parts[1] floatValue];
+        float tolerance = (parts.count > 2) ? [parts[2] floatValue] : 0.001;
+        int max = (parts.count > 3) ? [parts[3] intValue] : 100;
+        NSArray *results = scanFloat(value, tolerance, max);
+        NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
+        for (NSNumber *addr in results) {
+            [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
+        }
+        return response;
+    }
+    else if ([command isEqualToString:@"READ_INT"]) {
+        if (parts.count < 2) return @"ERROR: need addr";
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
         int val = safeReadInt(addr);
-        return [NSString stringWithFormat:@"%d", val];
+        return [NSString stringWithFormat:@"INT %d", val];
     }
-    else if ([command isEqualToString:@"READ_PTR"] && parts.count >= 2) {
+    else if ([command isEqualToString:@"READ_PTR"]) {
+        if (parts.count < 2) return @"ERROR: need addr";
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
         uintptr_t val = safeReadPtr(addr);
-        return [NSString stringWithFormat:@"0x%llx", (unsigned long long)val];
+        return [NSString stringWithFormat:@"PTR 0x%lx", val];
     }
-    else if ([command isEqualToString:@"READ_FLOAT"] && parts.count >= 2) {
+    else if ([command isEqualToString:@"READ_FLOAT"]) {
+        if (parts.count < 2) return @"ERROR: need addr";
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
         float val = safeReadFloat(addr);
-        return [NSString stringWithFormat:@"%f", val];
+        return [NSString stringWithFormat:@"FLOAT %f", val];
     }
-    else if ([command isEqualToString:@"READ_BYTES"] && parts.count >= 3) {
+    else if ([command isEqualToString:@"READ_STRING"]) {
+        if (parts.count < 2) return @"ERROR: need addr";
+        uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
+        int maxLen = (parts.count > 2) ? [parts[2] intValue] : 64;
+        NSString *str = safeReadString(addr, maxLen);
+        return [NSString stringWithFormat:@"STRING %@", str];
+    }
+    else if ([command isEqualToString:@"WRITE_INT"]) {
+        if (parts.count < 3) return @"ERROR: need addr and value";
+        uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
+        int val = [parts[2] intValue];
+        BOOL success = safeWriteInt(addr, val);
+        return success ? @"OK" : @"ERROR: write failed";
+    }
+    else if ([command isEqualToString:@"WRITE_FLOAT"]) {
+        if (parts.count < 3) return @"ERROR: need addr and value";
+        uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
+        float val = [parts[2] floatValue];
+        BOOL success = safeWriteFloat(addr, val);
+        return success ? @"OK" : @"ERROR: write failed";
+    }
+    else if ([command isEqualToString:@"DUMP"]) {
+        if (parts.count < 3) return @"ERROR: need addr and size";
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
         int size = [parts[2] intValue];
-        if (size > 1024) size = 1024;
-        
-        uint8_t *buffer = malloc(size);
-        vm_size_t read = 0;
-        kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, size, (vm_address_t)buffer, &read);
-        
-        if (kr != KERN_SUCCESS || read < size) {
-            free(buffer);
-            return @"ERROR: Cannot read";
-        }
-        
-        NSMutableString *hex = [NSMutableString string];
-        for (int i = 0; i < read; i++) {
-            [hex appendFormat:@"%02X", buffer[i]];
-        }
-        free(buffer);
-        return hex;
+        NSData *data = memoryDump(addr, size);
+        if (!data) return @"ERROR: dump failed";
+        return [NSString stringWithFormat:@"DUMP_DATA %@", [data base64EncodedStringWithOptions:0]];
     }
-    else {
-        return @"ERROR: Unknown command";
+    else if ([command isEqualToString:@"REGIONS"]) {
+        NSArray *regions = getMemoryRegions();
+        NSMutableString *response = [NSMutableString stringWithFormat:@"REGIONS %lu", (unsigned long)regions.count];
+        for (NSDictionary *r in regions) {
+            [response appendFormat:@"\n0x%lx,%llu,%d", [r[@"start"] unsignedLongValue], [r[@"size"] unsignedLongLongValue], [r[@"protection"] intValue]];
+        }
+        return response;
     }
-}
-
-// ===== ПОТОК СЕРВЕРА =====
-void* serverThread(void *arg) {
-    int sock = (int)(intptr_t)arg;
     
-    while (serverRunning) {
-        struct sockaddr_in clientAddr;
-        socklen_t clientLen = sizeof(clientAddr);
-        int clientSock = accept(sock, (struct sockaddr*)&clientAddr, &clientLen);
-        
-        if (clientSock < 0) continue;
-        
-        char buffer[4096];
-        ssize_t bytes = recv(clientSock, buffer, sizeof(buffer) - 1, 0);
-        if (bytes > 0) {
-            buffer[bytes] = '\0';
-            NSString *cmd = [NSString stringWithUTF8String:buffer];
-            cmd = [cmd stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-            
-            addLogF(@"📥 Command: %@", cmd);
-            NSString *response = processCommand(cmd);
-            addLogF(@"📤 Response: %@", [response substringToIndex:MIN(100, response.length)]);
-            
-            const char *respC = [response UTF8String];
-            send(clientSock, respC, strlen(respC), 0);
-        }
-        close(clientSock);
-    }
-    return NULL;
+    return @"ERROR: unknown command";
 }
 
-// ===== ЗАПУСК СЕРВЕРА =====
+// ===== TCP СЕРВЕР =====
 void startServer() {
-    if (serverRunning) {
-        addLog(@"⚠️ Server already running");
-        return;
-    }
+    if (serverRunning) return;
     
     serverSocket = socket(AF_INET, SOCK_STREAM, 0);
     if (serverSocket < 0) {
-        addLog(@"❌ Failed to create socket");
+        addLog(@"❌ Не удалось создать сокет");
         return;
     }
     
-    int opt = 1;
-    setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    int reuse = 1;
+    setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
     
     struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(12345);
     addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(12345);
     
     if (bind(serverSocket, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        addLog(@"❌ Failed to bind port 12345");
+        addLog(@"❌ Не удалось привязать порт 12345");
         close(serverSocket);
+        serverSocket = -1;
         return;
     }
     
     if (listen(serverSocket, 5) < 0) {
-        addLog(@"❌ Failed to listen");
+        addLog(@"❌ Ошибка listen");
         close(serverSocket);
+        serverSocket = -1;
         return;
     }
     
     serverRunning = YES;
+    addLog(@"✅ Сервер запущен на порту 12345");
+    addLog(@"📡 IP: 192.168.1.65 (узнайте в настройках WiFi)");
     
-    pthread_t thread;
-    pthread_create(&thread, NULL, serverThread, (void*)(intptr_t)serverSocket);
-    pthread_detach(thread);
-    
-    addLog(@"✅ Server started on port 12345");
-    addLog(@"📱 iPhone IP: 192.168.1.65");
-    addLog(@"💻 Connect from PC: telnet 192.168.1.65 12345");
-}
-
-// ===== ОСТАНОВКА СЕРВЕРА =====
-void stopServer() {
-    if (!serverRunning) return;
-    serverRunning = NO;
-    close(serverSocket);
-    addLog(@"🛑 Server stopped");
-}
-
-// ===== КЛАСС-ОБРАБОТЧИК =====
-@interface MenuHandler : NSObject
-+ (void)onStartServer;
-+ (void)onStopServer;
-+ (void)onClear;
-+ (void)onCopy;
-+ (void)onClose;
-@end
-
-@implementation MenuHandler
-+ (void)onStartServer {
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
-        startServer();
+        while (serverRunning) {
+            struct sockaddr_in clientAddr;
+            socklen_t clientLen = sizeof(clientAddr);
+            int clientSocket = accept(serverSocket, (struct sockaddr*)&clientAddr, &clientLen);
+            if (clientSocket < 0) continue;
+            
+            char clientIP[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &clientAddr.sin_addr, clientIP, sizeof(clientIP));
+            addLog([NSString stringWithFormat:@"🔌 Подключён клиент: %s", clientIP]);
+            
+            char buffer[4096];
+            while (serverRunning) {
+                memset(buffer, 0, sizeof(buffer));
+                ssize_t received = recv(clientSocket, buffer, sizeof(buffer) - 1, 0);
+                if (received <= 0) break;
+                
+                NSString *cmd = [NSString stringWithUTF8String:buffer];
+                cmd = [cmd stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+                addLog([NSString stringWithFormat:@"📥 %@", cmd]);
+                
+                NSString *response = handleCommand(cmd);
+                response = [response stringByAppendingString:@"\n"];
+                const char *respData = [response UTF8String];
+                send(clientSocket, respData, strlen(respData), 0);
+                addLog([NSString stringWithFormat:@"📤 %@", [response substringToIndex:MIN(100, response.length)]]);
+            }
+            close(clientSocket);
+            addLog(@"🔌 Клиент отключён");
+        }
     });
 }
-+ (void)onStopServer {
-    stopServer();
-}
-+ (void)onClear {
-    logText = nil;
-    addLog(@"🗑 Log cleared");
-}
-+ (void)onCopy {
-    if (logView && logView.text.length > 0) {
-        UIPasteboard.generalPasteboard.string = logView.text;
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"✅" message:@"Copied" preferredStyle:UIAlertControllerStyleAlert];
-        UIWindow *k = nil;
-        for (UIScene *s in UIApplication.sharedApplication.connectedScenes) {
-            if ([s isKindOfClass:UIWindowScene.class]) {
-                for (UIWindow *w in ((UIWindowScene *)s).windows) {
-                    if (w.isKeyWindow) { k = w; break; }
-                }
-            }
-            if (k) break;
-        }
-        [k.rootViewController presentViewController:alert animated:YES completion:nil];
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-            [alert dismissViewControllerAnimated:YES completion:nil];
-        });
+
+void stopServer() {
+    serverRunning = NO;
+    if (serverSocket >= 0) {
+        close(serverSocket);
+        serverSocket = -1;
     }
+    addLog(@"🛑 Сервер остановлен");
 }
-+ (void)onClose {
-    if (win) {
-        win.hidden = YES;
-        win = nil;
-    }
-}
-@end
 
 // ===== МЕНЮ =====
 void createMenu() {
@@ -321,7 +391,7 @@ void createMenu() {
     }
     if (!key) return;
     
-    CGFloat w = 280, h = 300;
+    CGFloat w = 260, h = 200;
     CGFloat x = (key.bounds.size.width - w) / 2;
     CGFloat y = (key.bounds.size.height - h) / 2;
     
@@ -340,7 +410,7 @@ void createMenu() {
     title.font = [UIFont boldSystemFontOfSize:14];
     [win addSubview:title];
     
-    logView = [[UITextView alloc] initWithFrame:CGRectMake(8, 42, w-16, 150)];
+    logView = [[UITextView alloc] initWithFrame:CGRectMake(6, 42, w-12, 90)];
     logView.backgroundColor = UIColor.blackColor;
     logView.textColor = UIColor.greenColor;
     logView.font = [UIFont fontWithName:@"Courier" size:9];
@@ -348,46 +418,25 @@ void createMenu() {
     logView.layer.cornerRadius = 6;
     [win addSubview:logView];
     
-    CGFloat btnW = (w - 30) / 2;
-    
     UIButton *startBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    startBtn.frame = CGRectMake(10, 200, btnW, 38);
-    [startBtn setTitle:@"🚀 START" forState:UIControlStateNormal];
+    startBtn.frame = CGRectMake(10, 140, (w-30)/2, 32);
+    [startBtn setTitle:@"▶️ СТАРТ" forState:UIControlStateNormal];
     startBtn.backgroundColor = UIColor.systemGreenColor;
     [startBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     startBtn.layer.cornerRadius = 6;
-    [startBtn addTarget:[MenuHandler class] action:@selector(onStartServer) forControlEvents:UIControlEventTouchUpInside];
+    [startBtn addTarget:self action:@selector(startServer) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:startBtn];
     
     UIButton *stopBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    stopBtn.frame = CGRectMake(20 + btnW, 200, btnW, 38);
-    [stopBtn setTitle:@"🛑 STOP" forState:UIControlStateNormal];
+    stopBtn.frame = CGRectMake(20 + (w-30)/2, 140, (w-30)/2, 32);
+    [stopBtn setTitle:@"⏹️ СТОП" forState:UIControlStateNormal];
     stopBtn.backgroundColor = UIColor.systemRedColor;
     [stopBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     stopBtn.layer.cornerRadius = 6;
-    [stopBtn addTarget:[MenuHandler class] action:@selector(onStopServer) forControlEvents:UIControlEventTouchUpInside];
+    [stopBtn addTarget:self action:@selector(stopServer) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:stopBtn];
     
-    UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    copyBtn.frame = CGRectMake(10, 245, btnW, 34);
-    [copyBtn setTitle:@"📋 COPY" forState:UIControlStateNormal];
-    copyBtn.backgroundColor = UIColor.systemGrayColor;
-    [copyBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    copyBtn.layer.cornerRadius = 6;
-    [copyBtn addTarget:[MenuHandler class] action:@selector(onCopy) forControlEvents:UIControlEventTouchUpInside];
-    [win addSubview:copyBtn];
-    
-    UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(20 + btnW, 245, btnW, 34);
-    [closeBtn setTitle:@"❌ CLOSE" forState:UIControlStateNormal];
-    closeBtn.backgroundColor = UIColor.systemGrayColor;
-    [closeBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    closeBtn.layer.cornerRadius = 6;
-    [closeBtn addTarget:[MenuHandler class] action:@selector(onClose) forControlEvents:UIControlEventTouchUpInside];
-    [win addSubview:closeBtn];
-    
     [win makeKeyAndVisible];
-    addLog(@"✅ Ready! Press START to begin");
 }
 
 // ===== ПЛАВАЮЩАЯ КНОПКА =====
@@ -409,10 +458,10 @@ void createMenu() {
         self.userInteractionEnabled = YES;
         
         UILabel *l = [[UILabel alloc] initWithFrame:self.bounds];
-        l.text = @"🎯";
+        l.text = @"📡";
         l.textColor = UIColor.whiteColor;
         l.textAlignment = NSTextAlignmentCenter;
-        l.font = [UIFont boldSystemFontOfSize:26];
+        l.font = [UIFont boldSystemFontOfSize:24];
         [self addSubview:l];
         
         UIPanGestureRecognizer *p = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(drag:)];
@@ -457,7 +506,6 @@ void createMenu() {
         [self.w addSubview:b];
         
         b.onTap = ^{
-            logText = nil;
             createMenu();
         };
     }
