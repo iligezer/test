@@ -105,6 +105,16 @@ BOOL safeWriteFloat(uintptr_t addr, float val) {
     return kr == KERN_SUCCESS;
 }
 
+BOOL safeWritePtr(uintptr_t addr, uintptr_t val) {
+    kern_return_t kr = vm_write(mach_task_self(), addr, (vm_address_t)&val, 8);
+    return kr == KERN_SUCCESS;
+}
+
+BOOL safeWriteByte(uintptr_t addr, uint8_t val) {
+    kern_return_t kr = vm_write(mach_task_self(), addr, (vm_address_t)&val, 1);
+    return kr == KERN_SUCCESS;
+}
+
 // ===== СКАНИРОВАНИЕ ПАМЯТИ =====
 NSArray* scanInt(int targetValue, int maxResults) {
     NSMutableArray *results = [NSMutableArray array];
@@ -201,15 +211,21 @@ NSArray* scanFloat(float targetValue, float tolerance, int maxResults) {
 }
 
 NSData* memoryDump(uintptr_t addr, int size) {
-    if (size > 1024 * 1024) size = 1024 * 1024; // максимум 1 МБ
+    if (size > 1024 * 1024) size = 1024 * 1024;
     uint8_t *buffer = malloc(size);
     if (!buffer) return nil;
+    
     vm_size_t read = 0;
     kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, size, (vm_address_t)buffer, &read);
+    
     if (kr != KERN_SUCCESS) {
+        addLog([NSString stringWithFormat:@"❌ vm_read_overwrite error: %d", kr]);
         free(buffer);
         return nil;
     }
+    
+    addLog([NSString stringWithFormat:@"✅ Прочитано %lu байт по адресу 0x%lx", read, addr]);
+    
     NSData *data = [NSData dataWithBytes:buffer length:read];
     free(buffer);
     return data;
@@ -220,6 +236,8 @@ NSString* handleCommand(NSString *cmd) {
     NSArray *parts = [cmd componentsSeparatedByString:@" "];
     NSString *command = [parts[0] uppercaseString];
     
+    addLog([NSString stringWithFormat:@"🔧 handleCommand: %@", cmd]);
+    
     if ([command isEqualToString:@"PING"]) {
         return @"PONG";
     }
@@ -227,11 +245,13 @@ NSString* handleCommand(NSString *cmd) {
         if (parts.count < 2) return @"ERROR: need value";
         int value = [parts[1] intValue];
         int max = (parts.count > 2) ? [parts[2] intValue] : 500;
+        addLog([NSString stringWithFormat:@"🔍 SCAN_INT: value=%d, max=%d", value, max]);
         NSArray *results = scanInt(value, max);
         NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
         for (NSNumber *addr in results) {
             [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
         }
+        addLog([NSString stringWithFormat:@"✅ SCAN_INT завершён: %lu результатов", (unsigned long)results.count]);
         return response;
     }
     else if ([command isEqualToString:@"SCAN_FLOAT"]) {
@@ -239,41 +259,48 @@ NSString* handleCommand(NSString *cmd) {
         float value = [parts[1] floatValue];
         float tolerance = (parts.count > 2) ? [parts[2] floatValue] : 0.001;
         int max = (parts.count > 3) ? [parts[3] intValue] : 500;
+        addLog([NSString stringWithFormat:@"🔍 SCAN_FLOAT: value=%f, tolerance=%f, max=%d", value, tolerance, max]);
         NSArray *results = scanFloat(value, tolerance, max);
         NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
         for (NSNumber *addr in results) {
             [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
         }
+        addLog([NSString stringWithFormat:@"✅ SCAN_FLOAT завершён: %lu результатов", (unsigned long)results.count]);
         return response;
     }
     else if ([command isEqualToString:@"READ_INT"]) {
         if (parts.count < 2) return @"ERROR: need addr";
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
         int val = safeReadInt(addr);
+        addLog([NSString stringWithFormat:@"📖 READ_INT: addr=0x%lx, value=%d", addr, val]);
         return [NSString stringWithFormat:@"INT %d", val];
     }
     else if ([command isEqualToString:@"READ_FLOAT"]) {
         if (parts.count < 2) return @"ERROR: need addr";
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
         float val = safeReadFloat(addr);
+        addLog([NSString stringWithFormat:@"📖 READ_FLOAT: addr=0x%lx, value=%f", addr, val]);
         return [NSString stringWithFormat:@"FLOAT %f", val];
     }
     else if ([command isEqualToString:@"READ_PTR"]) {
         if (parts.count < 2) return @"ERROR: need addr";
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
         uintptr_t val = safeReadPtr(addr);
+        addLog([NSString stringWithFormat:@"📖 READ_PTR: addr=0x%lx, value=0x%lx", addr, val]);
         return [NSString stringWithFormat:@"PTR 0x%lx", val];
     }
     else if ([command isEqualToString:@"READ_BYTE"]) {
         if (parts.count < 2) return @"ERROR: need addr";
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
         uint8_t val = safeReadByte(addr);
+        addLog([NSString stringWithFormat:@"📖 READ_BYTE: addr=0x%lx, value=%d", addr, val]);
         return [NSString stringWithFormat:@"BYTE %d", val];
     }
     else if ([command isEqualToString:@"READ_SHORT"]) {
         if (parts.count < 2) return @"ERROR: need addr";
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
         uint16_t val = safeReadShort(addr);
+        addLog([NSString stringWithFormat:@"📖 READ_SHORT: addr=0x%lx, value=%d", addr, val]);
         return [NSString stringWithFormat:@"SHORT %d", val];
     }
     else if ([command isEqualToString:@"READ_STRING"]) {
@@ -281,6 +308,7 @@ NSString* handleCommand(NSString *cmd) {
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
         int maxLen = (parts.count > 2) ? [parts[2] intValue] : 64;
         NSString *str = safeReadString(addr, maxLen);
+        addLog([NSString stringWithFormat:@"📖 READ_STRING: addr=0x%lx, value=%@", addr, str]);
         return [NSString stringWithFormat:@"STRING %@", str];
     }
     else if ([command isEqualToString:@"WRITE_INT"]) {
@@ -288,6 +316,7 @@ NSString* handleCommand(NSString *cmd) {
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
         int val = [parts[2] intValue];
         BOOL success = safeWriteInt(addr, val);
+        addLog([NSString stringWithFormat:@"✍️ WRITE_INT: addr=0x%lx, value=%d, success=%d", addr, val, success]);
         return success ? @"OK" : @"ERROR: write failed";
     }
     else if ([command isEqualToString:@"WRITE_FLOAT"]) {
@@ -295,6 +324,23 @@ NSString* handleCommand(NSString *cmd) {
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
         float val = [parts[2] floatValue];
         BOOL success = safeWriteFloat(addr, val);
+        addLog([NSString stringWithFormat:@"✍️ WRITE_FLOAT: addr=0x%lx, value=%f, success=%d", addr, val, success]);
+        return success ? @"OK" : @"ERROR: write failed";
+    }
+    else if ([command isEqualToString:@"WRITE_PTR"]) {
+        if (parts.count < 3) return @"ERROR: need addr and value";
+        uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
+        uintptr_t val = strtoull([parts[2] UTF8String], NULL, 16);
+        BOOL success = safeWritePtr(addr, val);
+        addLog([NSString stringWithFormat:@"✍️ WRITE_PTR: addr=0x%lx, value=0x%lx, success=%d", addr, val, success]);
+        return success ? @"OK" : @"ERROR: write failed";
+    }
+    else if ([command isEqualToString:@"WRITE_BYTE"]) {
+        if (parts.count < 3) return @"ERROR: need addr and value";
+        uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
+        uint8_t val = [parts[2] intValue];
+        BOOL success = safeWriteByte(addr, val);
+        addLog([NSString stringWithFormat:@"✍️ WRITE_BYTE: addr=0x%lx, value=%d, success=%d", addr, val, success]);
         return success ? @"OK" : @"ERROR: write failed";
     }
     else if ([command isEqualToString:@"DUMP"]) {
@@ -302,12 +348,30 @@ NSString* handleCommand(NSString *cmd) {
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
         int size = [parts[2] intValue];
         if (size > 1048576) size = 1048576;
+        
+        addLog([NSString stringWithFormat:@"📡 DUMP запрос: addr=0x%lx, size=%d", addr, size]);
+        
         NSData *data = memoryDump(addr, size);
-        if (!data) return @"ERROR: dump failed";
+        if (!data) {
+            addLog(@"❌ memoryDump вернул nil");
+            return @"ERROR: dump failed";
+        }
+        
+        addLog([NSString stringWithFormat:@"✅ Получено %lu байт", (unsigned long)data.length]);
+        
         NSString *b64 = [data base64EncodedStringWithOptions:0];
+        addLog([NSString stringWithFormat:@"✅ Base64 длина: %lu", (unsigned long)b64.length]);
+        
+        if (b64.length > 50) {
+            addLog([NSString stringWithFormat:@"📤 Base64 начало: %@...", [b64 substringToIndex:50]]);
+        } else {
+            addLog([NSString stringWithFormat:@"📤 Base64: %@", b64]);
+        }
+        
         return [NSString stringWithFormat:@"DUMP_DATA %@", b64];
     }
     
+    addLog([NSString stringWithFormat:@"❌ Неизвестная команда: %@", command]);
     return @"ERROR: unknown command";
 }
 
@@ -352,7 +416,7 @@ void startServer() {
     NSString *ip = getIPAddress();
     addLog(@"✅ Сервер запущен на порту 12345");
     addLog([NSString stringWithFormat:@"📡 IP: %@", ip]);
-    addLog(@"💡 Подключитесь с ПК");
+    addLog(@"💡 Подключитесь с ПК: python client.py");
     
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
         while (serverRunning) {
