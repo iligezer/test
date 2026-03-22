@@ -1,17 +1,17 @@
 #import <UIKit/UIKit.h>
 #import <mach/mach.h>
+#import <sys/socket.h>
+#import <netinet/in.h>
+#import <arpa/inet.h>
+#import <pthread.h>
 
 // ===== ГЛОБАЛЬНЫЕ =====
 static UIWindow *win = nil;
 static UITextView *logView = nil;
 static NSMutableString *logText = nil;
-static BOOL isSearching = NO;
-static NSMutableArray *g_idAddresses = nil;
+static int serverSocket = -1;
+static BOOL serverRunning = NO;
 static int g_targetID = 71068432;
-static uintptr_t g_foundNetworkPlayer = 0;
-static uintptr_t g_foundTransform = 0;
-static float g_playerX = 0, g_playerY = 0, g_playerZ = 0;
-static uintptr_t g_quarkStruct = 0;
 
 void addLog(NSString *msg) {
     if (!logText) logText = [[NSMutableString alloc] init];
@@ -30,18 +30,14 @@ void addLogF(NSString *format, ...) {
     addLog(msg);
 }
 
-void clearLog() {
-    logText = nil;
-    addLog(@"🗑 Лог очищен");
-}
-
 // ===== БЕЗОПАСНОЕ ЧТЕНИЕ =====
 int safeReadInt(uintptr_t addr) {
     if (addr == 0) return 0;
     @try {
         int val = 0;
         vm_size_t read = 0;
-        vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, &read);
+        kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, &read);
+        if (kr != KERN_SUCCESS || read != 4) return 0;
         return val;
     } @catch (NSException *e) {
         return 0;
@@ -53,7 +49,8 @@ uintptr_t safeReadPtr(uintptr_t addr) {
     @try {
         uintptr_t val = 0;
         vm_size_t read = 0;
-        vm_read_overwrite(mach_task_self(), addr, 8, (vm_address_t)&val, &read);
+        kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 8, (vm_address_t)&val, &read);
+        if (kr != KERN_SUCCESS || read != 8) return 0;
         return val;
     } @catch (NSException *e) {
         return 0;
@@ -65,29 +62,17 @@ float safeReadFloat(uintptr_t addr) {
     @try {
         float val = 0;
         vm_size_t read = 0;
-        vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, &read);
+        kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 4, (vm_address_t)&val, &read);
+        if (kr != KERN_SUCCESS || read != 4) return 0;
         return val;
     } @catch (NSException *e) {
         return 0;
     }
 }
 
-BOOL isValidPosition(float x, float y, float z) {
-    if (x < -100 || x > 100) return NO;
-    if (y < -100 || y > 100) return NO;
-    if (z < -100 || z > 100) return NO;
-    if (fabs(x) < 0.01 && fabs(y) < 0.01 && fabs(z) < 0.01) return NO;
-    return YES;
-}
-
-// ===== ПОИСК NETWORKPLAYER ЧЕРЕЗ COORD Y =====
-void findNetworkPlayerByYCoord(uintptr_t quarkStruct) {
-    addLogF(@"\n🔍 ПОИСК NETWORKPLAYER ЧЕРЕЗ КООРДИНАТЫ Y");
-    addLogF(@"   QuarkStruct: 0x%lx", quarkStruct);
-    addLog(@"=================================");
-    
-    uintptr_t start = 0x140000000;
-    uintptr_t end = 0x200000000;
+// ===== СКАНИРОВАНИЕ ID =====
+NSMutableArray* scanIDs() {
+    NSMutableArray *results = [NSMutableArray array];
     int found = 0;
     
     task_t task = mach_task_self();
@@ -98,12 +83,7 @@ void findNetworkPlayerByYCoord(uintptr_t quarkStruct) {
     mach_port_t object_name = MACH_PORT_NULL;
     
     uint8_t *buffer = malloc(0x10000);
-    if (!buffer) {
-        addLog(@"❌ Ошибка памяти");
-        return;
-    }
-    
-    addLog(@"📊 Сканируем диапазон 0x140000000 - 0x200000000 в поисках float Y...");
+    if (!buffer) return results;
     
     while (1) {
         kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
@@ -111,107 +91,7 @@ void findNetworkPlayerByYCoord(uintptr_t quarkStruct) {
         if (kr != KERN_SUCCESS) break;
         
         if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE) &&
-            addr >= start && addr <= end) {
-            
-            for (uintptr_t page = addr; page < addr + size; page += 0x10000) {
-                uintptr_t pageSize = (page + 0x10000 > addr + size) ? (addr + size - page) : 0x10000;
-                if (pageSize < 12) continue;
-                
-                vm_size_t read = 0;
-                kern_return_t kr2 = vm_read_overwrite(task, page, pageSize, (vm_address_t)buffer, &read);
-                if (kr2 != KERN_SUCCESS || read < 12) continue;
-                
-                for (uintptr_t offset = 0; offset + 12 <= pageSize; offset += 4) {
-                    float y = *(float*)(buffer + offset);
-                    
-                    // Ищем Y в разумном диапазоне (высота игрока 0.5-5)
-                    if (y > 0.5 && y < 5.0) {
-                        uintptr_t coordAddr = page + offset;
-                        uintptr_t transform = coordAddr - 0x24;
-                        uintptr_t networkPlayer = transform - 0x38;
-                        
-                        if (networkPlayer < start || networkPlayer > end) continue;
-                        
-                        // Проверяем, указывает ли NetworkPlayer на нашу структуру
-                        uintptr_t checkQuark = safeReadPtr(networkPlayer + 0x1A8);
-                        if (checkQuark == quarkStruct) {
-                            found++;
-                            addLogF(@"\n🎯 НАЙДЕН NETWORKPLAYER!");
-                            addLogF(@"   Адрес Y: 0x%lx (%.2f)", coordAddr, y);
-                            addLogF(@"   Transform: 0x%lx", transform);
-                            addLogF(@"   NetworkPlayer: 0x%lx", networkPlayer);
-                            
-                            float x = safeReadFloat(transform + 0x20);
-                            float z = safeReadFloat(transform + 0x28);
-                            addLogF(@"   📍 КООРДИНАТЫ: X=%.2f Y=%.2f Z=%.2f", x, y, z);
-                            
-                            g_foundNetworkPlayer = networkPlayer;
-                            g_foundTransform = transform;
-                            g_playerX = x; g_playerY = y; g_playerZ = z;
-                            break;
-                        }
-                    }
-                }
-                if (found > 0) break;
-            }
-        }
-        if (found > 0) break;
-        addr += size;
-        if (addr > end) break;
-    }
-    
-    free(buffer);
-    
-    if (found > 0) {
-        addLogF(@"\n✅ ✅ ✅ УСПЕХ! ✅ ✅ ✅");
-        addLogF(@"🎯 NetworkPlayer: 0x%lx", g_foundNetworkPlayer);
-        addLogF(@"🎯 Transform: 0x%lx", g_foundTransform);
-        addLogF(@"🎯 КООРДИНАТЫ ИГРОКА: X=%.2f Y=%.2f Z=%.2f", g_playerX, g_playerY, g_playerZ);
-    } else {
-        addLog(@"\n❌ NetworkPlayer не найден");
-        addLog(@"💡 Возможные причины:");
-        addLog(@"   1. Диапазон поиска слишком узкий");
-        addLog(@"   2. Смещение QuarkPlayer не 0x1A8");
-        addLog(@"   3. Transform игрока не в диапазоне 0x140000000-0x200000000");
-    }
-}
-
-// ===== ПОИСК ID =====
-void findStructure() {
-    if (isSearching) {
-        addLog(@"⏳ Уже ищу");
-        return;
-    }
-    isSearching = YES;
-    addLog(@"🔍 ПОИСК ID");
-    addLog(@"=================================");
-    
-    g_idAddresses = [NSMutableArray array];
-    int foundMy = 0;
-    
-    task_t task = mach_task_self();
-    vm_address_t addr = 0;
-    vm_size_t size = 0;
-    struct vm_region_basic_info_64 info;
-    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-    mach_port_t object_name = MACH_PORT_NULL;
-    
-    uint8_t *buffer = malloc(0x10000);
-    if (!buffer) {
-        addLog(@"❌ Ошибка памяти");
-        isSearching = NO;
-        return;
-    }
-    
-    addLog(@"📊 Диапазон: 0x100000000 - 0x200000000");
-    
-    while (1) {
-        kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
-                                         (vm_region_info_t)&info, &count, &object_name);
-        if (kr != KERN_SUCCESS) break;
-        
-        if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE) &&
-            addr >= 0x100000000 && addr <= 0x200000000) {
+            addr >= 0x100000000 && addr <= 0x300000000) {
             
             for (uintptr_t page = addr; page < addr + size; page += 0x10000) {
                 uintptr_t pageSize = (page + 0x10000 > addr + size) ? (addr + size - page) : 0x10000;
@@ -223,129 +103,187 @@ void findStructure() {
                 
                 for (uintptr_t offset = 0; offset + 4 <= pageSize; offset += 8) {
                     int val = *(int*)(buffer + offset);
-                    
-                    if (val == g_targetID && foundMy < 500) {
-                        foundMy++;
-                        uintptr_t idAddr = page + offset;
-                        [g_idAddresses addObject:@(idAddr)];
-                        if (foundMy <= 100) {
-                            addLogF(@"[%d] 0x%lx", foundMy, idAddr);
-                        }
+                    if (val == g_targetID && found < 1000) {
+                        found++;
+                        [results addObject:@(page + offset)];
                     }
                 }
             }
         }
         
         addr += size;
-        if (addr > 0x200000000) break;
+        if (addr > 0x300000000) break;
     }
     
     free(buffer);
-    
-    addLogF(@"\n✅ Найдено ID: %lu", (unsigned long)g_idAddresses.count);
-    addLog(@"✅ ГОТОВО");
-    isSearching = NO;
+    return results;
 }
 
-// ===== ОТСЕИВАНИЕ =====
-void filterByDeath() {
-    if (g_idAddresses.count == 0) {
-        addLog(@"⚠️ Нет ID. Сначала нажмите ПОИСК");
-        return;
+// ===== ОБРАБОТКА КОМАНД =====
+NSString* processCommand(NSString *cmd) {
+    NSArray *parts = [cmd componentsSeparatedByString:@" "];
+    NSString *command = [parts[0] uppercaseString];
+    
+    if ([command isEqualToString:@"PING"]) {
+        return @"PONG";
     }
-    
-    addLog(@"🔍 ОТСЕИВАНИЕ (ИЩЕМ -1)");
-    addLog(@"=================================");
-    
-    NSMutableArray *newAddresses = [NSMutableArray array];
-    int foundMinusOne = 0;
-    uintptr_t foundStruct = 0;
-    
-    for (int i = 0; i < g_idAddresses.count; i++) {
-        uintptr_t addr = [g_idAddresses[i] unsignedLongLongValue];
-        int newVal = safeReadInt(addr);
-        
-        if (newVal == -1) {
-            [newAddresses addObject:@(addr)];
-            foundMinusOne++;
-            foundStruct = addr - 0x10;
-            addLogF(@"   ✅ -1: 0x%lx", addr);
-            break;
+    else if ([command isEqualToString:@"SCAN_ID"]) {
+        NSMutableArray *ids = scanIDs();
+        NSMutableString *response = [NSMutableString stringWithFormat:@"COUNT:%lu\n", (unsigned long)ids.count];
+        for (NSNumber *addr in ids) {
+            [response appendFormat:@"0x%lx\n", [addr unsignedLongLongValue]];
         }
+        return response;
     }
-    
-    g_idAddresses = newAddresses;
-    
-    addLogF(@"\n✅ Найдено -1: %d", foundMinusOne);
-    
-    if (foundMinusOne == 1 && foundStruct != 0) {
-        addLogF(@"\n🎯 СТРУКТУРА QUARKROOMPLAYER: 0x%lx", foundStruct);
-        g_quarkStruct = foundStruct;
-        findNetworkPlayerByYCoord(foundStruct);
-    } else {
-        addLog(@"⚠️ Нет адресов, ставших -1.");
+    else if ([command isEqualToString:@"READ_INT"] && parts.count >= 2) {
+        uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
+        int val = safeReadInt(addr);
+        return [NSString stringWithFormat:@"%d", val];
     }
-    
-    addLog(@"✅ ГОТОВО");
+    else if ([command isEqualToString:@"READ_PTR"] && parts.count >= 2) {
+        uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
+        uintptr_t val = safeReadPtr(addr);
+        return [NSString stringWithFormat:@"0x%lx", val];
+    }
+    else if ([command isEqualToString:@"READ_FLOAT"] && parts.count >= 2) {
+        uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
+        float val = safeReadFloat(addr);
+        return [NSString stringWithFormat:@"%f", val];
+    }
+    else if ([command isEqualToString:@"READ_BYTES"] && parts.count >= 3) {
+        uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
+        int size = [parts[2] intValue];
+        if (size > 1024) size = 1024;
+        
+        uint8_t *buffer = malloc(size);
+        vm_size_t read = 0;
+        kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, size, (vm_address_t)buffer, &read);
+        
+        if (kr != KERN_SUCCESS || read < size) {
+            free(buffer);
+            return @"ERROR: Cannot read";
+        }
+        
+        NSMutableString *hex = [NSMutableString string];
+        for (int i = 0; i < read; i++) {
+            [hex appendFormat:@"%02X", buffer[i]];
+        }
+        free(buffer);
+        return hex;
+    }
+    else {
+        return @"ERROR: Unknown command";
+    }
 }
 
-// ===== ПРОВЕРКА КООРДИНАТ =====
-void checkCoordinates() {
-    if (g_foundTransform == 0) {
-        addLog(@"⚠️ Сначала найдите координаты через ПОИСК → СМЕРТЬ → ОТСЕЯТЬ");
+// ===== ПОТОК СЕРВЕРА =====
+void* serverThread(void *arg) {
+    int sock = (int)(intptr_t)arg;
+    
+    while (serverRunning) {
+        struct sockaddr_in clientAddr;
+        socklen_t clientLen = sizeof(clientAddr);
+        int clientSock = accept(sock, (struct sockaddr*)&clientAddr, &clientLen);
+        
+        if (clientSock < 0) continue;
+        
+        char buffer[4096];
+        ssize_t bytes = recv(clientSock, buffer, sizeof(buffer) - 1, 0);
+        if (bytes > 0) {
+            buffer[bytes] = '\0';
+            NSString *cmd = [NSString stringWithUTF8String:buffer];
+            cmd = [cmd stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            
+            addLogF(@"📥 Command: %@", cmd);
+            NSString *response = processCommand(cmd);
+            addLogF(@"📤 Response: %@", [response substringToIndex:MIN(100, response.length)]);
+            
+            const char *respC = [response UTF8String];
+            send(clientSock, respC, strlen(respC), 0);
+        }
+        close(clientSock);
+    }
+    return NULL;
+}
+
+// ===== ЗАПУСК СЕРВЕРА =====
+void startServer() {
+    if (serverRunning) {
+        addLog(@"⚠️ Server already running");
         return;
     }
     
-    addLog(@"\n🔍 ПРОВЕРКА КООРДИНАТ (ПОСЛЕ ДВИЖЕНИЯ)");
-    addLog(@"=================================");
-    
-    float newX = safeReadFloat(g_foundTransform + 0x20);
-    float newY = safeReadFloat(g_foundTransform + 0x24);
-    float newZ = safeReadFloat(g_foundTransform + 0x28);
-    
-    addLogF(@"   Было: X=%.2f Y=%.2f Z=%.2f", g_playerX, g_playerY, g_playerZ);
-    addLogF(@"   Стало: X=%.2f Y=%.2f Z=%.2f", newX, newY, newZ);
-    
-    if (fabs(newX - g_playerX) > 0.1 || fabs(newY - g_playerY) > 0.1 || fabs(newZ - g_playerZ) > 0.1) {
-        addLog(@"   ✅ КООРДИНАТЫ ИЗМЕНИЛИСЬ! Это игрок.");
-        g_playerX = newX; g_playerY = newY; g_playerZ = newZ;
-        addLogF(@"   🎯 ТЕКУЩИЕ КООРДИНАТЫ: X=%.2f Y=%.2f Z=%.2f", g_playerX, g_playerY, g_playerZ);
-    } else {
-        addLog(@"   ⚠️ КООРДИНАТЫ НЕ ИЗМЕНИЛИСЬ.");
+    serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+    if (serverSocket < 0) {
+        addLog(@"❌ Failed to create socket");
+        return;
     }
+    
+    int opt = 1;
+    setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(12345);
+    addr.sin_addr.s_addr = INADDR_ANY;
+    
+    if (bind(serverSocket, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        addLog(@"❌ Failed to bind port 12345");
+        close(serverSocket);
+        return;
+    }
+    
+    if (listen(serverSocket, 5) < 0) {
+        addLog(@"❌ Failed to listen");
+        close(serverSocket);
+        return;
+    }
+    
+    serverRunning = YES;
+    
+    pthread_t thread;
+    pthread_create(&thread, NULL, serverThread, (void*)(intptr_t)serverSocket);
+    pthread_detach(thread);
+    
+    addLog(@"✅ Server started on port 12345");
+    addLog(@"📱 iPhone IP: 192.168.1.65");
+    addLog(@"💻 Connect from PC: telnet 192.168.1.65 12345");
+}
+
+// ===== ОСТАНОВКА СЕРВЕРА =====
+void stopServer() {
+    if (!serverRunning) return;
+    serverRunning = NO;
+    close(serverSocket);
+    addLog(@"🛑 Server stopped");
 }
 
 // ===== КЛАСС-ОБРАБОТЧИК =====
 @interface MenuHandler : NSObject
-+ (void)onSearch;
-+ (void)onFilter;
-+ (void)onCheck;
++ (void)onStartServer;
++ (void)onStopServer;
 + (void)onClear;
 + (void)onCopy;
 + (void)onClose;
 @end
 
 @implementation MenuHandler
-+ (void)onSearch {
++ (void)onStartServer {
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
-        findStructure();
+        startServer();
     });
 }
-+ (void)onFilter {
-    dispatch_async(dispatch_get_global_queue(0, 0), ^{
-        filterByDeath();
-    });
-}
-+ (void)onCheck {
-    checkCoordinates();
++ (void)onStopServer {
+    stopServer();
 }
 + (void)onClear {
-    clearLog();
+    logText = nil;
+    addLog(@"🗑 Log cleared");
 }
 + (void)onCopy {
     if (logView && logView.text.length > 0) {
         UIPasteboard.generalPasteboard.string = logView.text;
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"✅" message:@"Скопировано" preferredStyle:UIAlertControllerStyleAlert];
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"✅" message:@"Copied" preferredStyle:UIAlertControllerStyleAlert];
         UIWindow *k = nil;
         for (UIScene *s in UIApplication.sharedApplication.connectedScenes) {
             if ([s isKindOfClass:UIWindowScene.class]) {
@@ -383,7 +321,7 @@ void createMenu() {
     }
     if (!key) return;
     
-    CGFloat w = 280, h = 340;
+    CGFloat w = 280, h = 300;
     CGFloat x = (key.bounds.size.width - w) / 2;
     CGFloat y = (key.bounds.size.height - h) / 2;
     
@@ -396,13 +334,13 @@ void createMenu() {
     win.hidden = NO;
     
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, w, 28)];
-    title.text = @"🎯 ESP SCANNER v4.0";
+    title.text = @"🎯 MEMORY SERVER";
     title.textColor = UIColor.systemBlueColor;
     title.textAlignment = NSTextAlignmentCenter;
     title.font = [UIFont boldSystemFontOfSize:14];
     [win addSubview:title];
     
-    logView = [[UITextView alloc] initWithFrame:CGRectMake(8, 42, w-16, 180)];
+    logView = [[UITextView alloc] initWithFrame:CGRectMake(8, 42, w-16, 150)];
     logView.backgroundColor = UIColor.blackColor;
     logView.textColor = UIColor.greenColor;
     logView.font = [UIFont fontWithName:@"Courier" size:9];
@@ -412,54 +350,36 @@ void createMenu() {
     
     CGFloat btnW = (w - 30) / 2;
     
-    UIButton *searchBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    searchBtn.frame = CGRectMake(10, 235, btnW, 38);
-    [searchBtn setTitle:@"🔍 ПОИСК ID" forState:UIControlStateNormal];
-    searchBtn.backgroundColor = UIColor.systemBlueColor;
-    [searchBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    searchBtn.layer.cornerRadius = 6;
-    [searchBtn addTarget:[MenuHandler class] action:@selector(onSearch) forControlEvents:UIControlEventTouchUpInside];
-    [win addSubview:searchBtn];
+    UIButton *startBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    startBtn.frame = CGRectMake(10, 200, btnW, 38);
+    [startBtn setTitle:@"🚀 START" forState:UIControlStateNormal];
+    startBtn.backgroundColor = UIColor.systemGreenColor;
+    [startBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    startBtn.layer.cornerRadius = 6;
+    [startBtn addTarget:[MenuHandler class] action:@selector(onStartServer) forControlEvents:UIControlEventTouchUpInside];
+    [win addSubview:startBtn];
     
-    UIButton *filterBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    filterBtn.frame = CGRectMake(20 + btnW, 235, btnW, 38);
-    [filterBtn setTitle:@"💀 ОТСЕЯТЬ" forState:UIControlStateNormal];
-    filterBtn.backgroundColor = UIColor.systemRedColor;
-    [filterBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    filterBtn.layer.cornerRadius = 6;
-    [filterBtn addTarget:[MenuHandler class] action:@selector(onFilter) forControlEvents:UIControlEventTouchUpInside];
-    [win addSubview:filterBtn];
-    
-    UIButton *checkBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    checkBtn.frame = CGRectMake(10, 280, btnW, 34);
-    [checkBtn setTitle:@"📍 ПРОВЕРИТЬ" forState:UIControlStateNormal];
-    checkBtn.backgroundColor = UIColor.systemPurpleColor;
-    [checkBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    checkBtn.layer.cornerRadius = 6;
-    [checkBtn addTarget:[MenuHandler class] action:@selector(onCheck) forControlEvents:UIControlEventTouchUpInside];
-    [win addSubview:checkBtn];
+    UIButton *stopBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    stopBtn.frame = CGRectMake(20 + btnW, 200, btnW, 38);
+    [stopBtn setTitle:@"🛑 STOP" forState:UIControlStateNormal];
+    stopBtn.backgroundColor = UIColor.systemRedColor;
+    [stopBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    stopBtn.layer.cornerRadius = 6;
+    [stopBtn addTarget:[MenuHandler class] action:@selector(onStopServer) forControlEvents:UIControlEventTouchUpInside];
+    [win addSubview:stopBtn];
     
     UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    copyBtn.frame = CGRectMake(20 + btnW, 280, btnW, 34);
-    [copyBtn setTitle:@"📋 КОПИ" forState:UIControlStateNormal];
-    copyBtn.backgroundColor = UIColor.systemGreenColor;
+    copyBtn.frame = CGRectMake(10, 245, btnW, 34);
+    [copyBtn setTitle:@"📋 COPY" forState:UIControlStateNormal];
+    copyBtn.backgroundColor = UIColor.systemGrayColor;
     [copyBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     copyBtn.layer.cornerRadius = 6;
     [copyBtn addTarget:[MenuHandler class] action:@selector(onCopy) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:copyBtn];
     
-    UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    clearBtn.frame = CGRectMake(10, 321, btnW, 32);
-    [clearBtn setTitle:@"🗑 ОЧИСТИТЬ" forState:UIControlStateNormal];
-    clearBtn.backgroundColor = UIColor.systemOrangeColor;
-    [clearBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    clearBtn.layer.cornerRadius = 6;
-    [clearBtn addTarget:[MenuHandler class] action:@selector(onClear) forControlEvents:UIControlEventTouchUpInside];
-    [win addSubview:clearBtn];
-    
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(20 + btnW, 321, btnW, 32);
-    [closeBtn setTitle:@"❌ ЗАКРЫТЬ" forState:UIControlStateNormal];
+    closeBtn.frame = CGRectMake(20 + btnW, 245, btnW, 34);
+    [closeBtn setTitle:@"❌ CLOSE" forState:UIControlStateNormal];
     closeBtn.backgroundColor = UIColor.systemGrayColor;
     [closeBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     closeBtn.layer.cornerRadius = 6;
@@ -467,6 +387,7 @@ void createMenu() {
     [win addSubview:closeBtn];
     
     [win makeKeyAndVisible];
+    addLog(@"✅ Ready! Press START to begin");
 }
 
 // ===== ПЛАВАЮЩАЯ КНОПКА =====
@@ -550,6 +471,6 @@ __attribute__((constructor))
 static void init() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         app = [[App alloc] init];
-        NSLog(@"[ESP] Ready");
+        NSLog(@"[Memory Server] Ready");
     });
 }
