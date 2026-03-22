@@ -10,6 +10,7 @@ static NSMutableArray *g_idAddresses = nil;
 static NSMutableArray *g_idValues = nil;
 static NSMutableArray *g_candidates = nil;
 static int g_targetID = 71068432;
+static int g_maxPointersToCheck = 30;  // Ограничиваем количество указателей
 
 void addLog(NSString *msg) {
     if (!logText) logText = [[NSMutableString alloc] init];
@@ -80,46 +81,130 @@ BOOL isValidPosition(float x, float y, float z) {
     return YES;
 }
 
-// ===== БЫСТРЫЙ ПОИСК TRANSFORM (БЕЗ РЕКУРСИИ, ТОЛЬКО ПРЯМЫЕ УКАЗАТЕЛИ) =====
-void findDirectTransforms(uintptr_t structStart) {
-    g_candidates = [NSMutableArray array];
+// ===== ОБХОД ЦЕПОЧКИ УКАЗАТЕЛЕЙ (С ОГРАНИЧЕНИЯМИ) =====
+void scanPointerChain(uintptr_t startAddr, int depth, NSMutableString *path, NSMutableArray *results) {
+    if (depth > 4) return;  // Максимум 4 уровня
     
-    addLogF(@"\n📊 ПОИСК TRANSFORM В СТРУКТУРЕ 0x%lx", structStart);
-    addLog(@"=================================");
+    // Проверяем координаты по адресу +0x20
+    float x = safeReadFloat(startAddr + 0x20);
+    float y = safeReadFloat(startAddr + 0x24);
+    float z = safeReadFloat(startAddr + 0x28);
     
-    int found = 0;
-    // Проверяем только прямые указатели в структуре (от +0x20 до +0x100)
+    if (isValidPosition(x, y, z)) {
+        [results addObject:@{
+            @"path": [path copy],
+            @"transform": @(startAddr),
+            @"coordAddr": @(startAddr + 0x20),
+            @"x": @(x),
+            @"y": @(y),
+            @"z": @(z)
+        }];
+        return;
+    }
+    
+    // Собираем указатели вокруг (только в +0x20..+0x100, не весь диапазон)
+    NSMutableArray *pointers = [NSMutableArray array];
     for (int offset = 0x20; offset <= 0x100; offset += 8) {
-        uintptr_t ptr = safeReadPtr(structStart + offset);
-        if (ptr == 0) continue;
-        if (ptr < 0x100000000 || ptr > 0x200000000) continue;
-        
-        // Проверяем координаты по адресу ptr + 0x20
-        float x = safeReadFloat(ptr + 0x20);
-        float y = safeReadFloat(ptr + 0x24);
-        float z = safeReadFloat(ptr + 0x28);
-        
-        if (isValidPosition(x, y, z)) {
-            found++;
-            addLogF(@"\n🔹 TRANSFORM %d: 0x%lx (смещение +0x%02X)", found, ptr, offset);
-            addLogF(@"   📍 Координаты: X=%.2f Y=%.2f Z=%.2f", x, y, z);
-            
-            [g_candidates addObject:@{
-                @"transform": @(ptr),
-                @"coordAddr": @(ptr + 0x20),
-                @"x": @(x),
-                @"y": @(y),
-                @"z": @(z),
-                @"offset": @(offset)
+        uintptr_t ptr = safeReadPtr(startAddr + offset);
+        if (ptr != 0 && ptr > 0x100000000 && ptr < 0x200000000) {
+            [pointers addObject:@{
+                @"offset": @(offset),
+                @"value": @(ptr)
             }];
         }
     }
     
-    if (found == 0) {
-        addLog(@"❌ Transform не найден в прямых указателях структуры");
-    } else {
-        addLogF(@"\n✅ Найдено Transform: %d", found);
+    // Ограничиваем количество указателей для проверки
+    if (pointers.count > g_maxPointersToCheck) {
+        pointers = [pointers subarrayWithRange:NSMakeRange(0, g_maxPointersToCheck)];
     }
+    
+    for (NSDictionary *p in pointers) {
+        int offset = [p[@"offset"] intValue];
+        uintptr_t ptr = [p[@"value"] unsignedLongLongValue];
+        NSMutableString *newPath = [path mutableCopy];
+        [newPath appendFormat:@" → +0x%02X:0x%lx", offset, ptr];
+        scanPointerChain(ptr, depth + 1, newPath, results);
+    }
+}
+
+// ===== ПОИСК TRANSFORM =====
+void findTransforms(uintptr_t structStart) {
+    g_candidates = [NSMutableArray array];
+    
+    addLogF(@"\n📊 АНАЛИЗ СТРУКТУРЫ 0x%lx", structStart);
+    addLog(@"=================================");
+    
+    // Сначала проверяем прямые указатели в структуре
+    NSMutableArray *results = [NSMutableArray array];
+    NSMutableString *startPath = [NSMutableString stringWithFormat:@"📌 Структура 0x%lx", structStart];
+    
+    // Проверяем саму структуру
+    float x = safeReadFloat(structStart + 0x20);
+    float y = safeReadFloat(structStart + 0x24);
+    float z = safeReadFloat(structStart + 0x28);
+    if (isValidPosition(x, y, z)) {
+        [results addObject:@{
+            @"path": startPath,
+            @"transform": @(structStart),
+            @"coordAddr": @(structStart + 0x20),
+            @"x": @(x),
+            @"y": @(y),
+            @"z": @(z)
+        }];
+    }
+    
+    // Собираем указатели из структуры
+    NSMutableArray *pointers = [NSMutableArray array];
+    for (int offset = 0x20; offset <= 0x100; offset += 8) {
+        uintptr_t ptr = safeReadPtr(structStart + offset);
+        if (ptr != 0 && ptr > 0x100000000 && ptr < 0x200000000) {
+            [pointers addObject:@{
+                @"offset": @(offset),
+                @"value": @(ptr)
+            }];
+        }
+    }
+    
+    // Ограничиваем количество
+    if (pointers.count > g_maxPointersToCheck) {
+        pointers = [pointers subarrayWithRange:NSMakeRange(0, g_maxPointersToCheck)];
+    }
+    
+    addLogF(@"🔍 Найдено указателей: %lu", (unsigned long)pointers.count);
+    
+    for (NSDictionary *p in pointers) {
+        int offset = [p[@"offset"] intValue];
+        uintptr_t ptr = [p[@"value"] unsignedLongLongValue];
+        NSMutableString *path = [NSMutableString stringWithFormat:@"📌 Структура → +0x%02X:0x%lx", offset, ptr];
+        scanPointerChain(ptr, 1, path, results);
+    }
+    
+    if (results.count == 0) {
+        addLog(@"❌ Transform не найден");
+        return;
+    }
+    
+    addLog(@"✅ Найдены возможные Transform:");
+    for (int i = 0; i < results.count && i < 10; i++) {
+        NSDictionary *r = results[i];
+        addLogF(@"\n🔹 ВАРИАНТ %d:", i+1);
+        addLog([r[@"path"] description]);
+        addLogF(@"   Transform: 0x%lx", [r[@"transform"] unsignedLongLongValue]);
+        addLogF(@"   Координаты: X=%.2f Y=%.2f Z=%.2f", 
+                [r[@"x"] floatValue], [r[@"y"] floatValue], [r[@"z"] floatValue]);
+        
+        [g_candidates addObject:@{
+            @"path": r[@"path"],
+            @"transform": r[@"transform"],
+            @"coordAddr": r[@"coordAddr"],
+            @"x": r[@"x"],
+            @"y": r[@"y"],
+            @"z": r[@"z"]
+        }];
+    }
+    
+    addLogF(@"\n✅ Сохранено кандидатов: %lu", (unsigned long)g_candidates.count);
 }
 
 // ===== ПРОВЕРКА КАНДИДАТОВ =====
@@ -129,10 +214,11 @@ void checkCandidates() {
         return;
     }
     
-    addLog(@"\n🔍 ПРОВЕРКА (ПОСЛЕ ДВИЖЕНИЯ)");
+    addLog(@"\n🔍 ПРОВЕРКА КАНДИДАТОВ (ПОСЛЕ ДВИЖЕНИЯ)");
     addLog(@"=================================");
     
     int changedCount = 0;
+    NSMutableArray *validCandidates = [NSMutableArray array];
     
     for (int i = 0; i < g_candidates.count; i++) {
         NSDictionary *c = g_candidates[i];
@@ -146,6 +232,7 @@ void checkCandidates() {
         float newZ = safeReadFloat(coordAddr + 8);
         
         addLogF(@"\n📍 КАНДИДАТ %d:", i+1);
+        addLog([c[@"path"] description]);
         addLogF(@"   Transform: 0x%lx", [c[@"transform"] unsignedLongLongValue]);
         addLogF(@"   Было: X=%.2f Y=%.2f Z=%.2f", oldX, oldY, oldZ);
         addLogF(@"   Стало: X=%.2f Y=%.2f Z=%.2f", newX, newY, newZ);
@@ -153,6 +240,7 @@ void checkCandidates() {
         if (fabs(newX - oldX) > 0.1 || fabs(newY - oldY) > 0.1 || fabs(newZ - oldZ) > 0.1) {
             addLog(@"   ✅ ИЗМЕНИЛИСЬ! Это координаты игрока.");
             changedCount++;
+            [validCandidates addObject:c];
         } else {
             addLog(@"   ⚠️ НЕ ИЗМЕНИЛИСЬ.");
         }
@@ -161,19 +249,14 @@ void checkCandidates() {
     addLogF(@"\n✅ Изменилось: %d из %lu", changedCount, (unsigned long)g_candidates.count);
     
     if (changedCount == 1) {
-        for (NSDictionary *c in g_candidates) {
-            uintptr_t coordAddr = [c[@"coordAddr"] unsignedLongLongValue];
-            float newX = safeReadFloat(coordAddr);
-            float newY = safeReadFloat(coordAddr + 4);
-            float newZ = safeReadFloat(coordAddr + 8);
-            float oldX = [c[@"x"] floatValue];
-            if (fabs(newX - oldX) > 0.1) {
-                addLogF(@"\n🎯 НАЙДЕНЫ КООРДИНАТЫ ИГРОКА!");
-                addLogF(@"   Transform: 0x%lx", [c[@"transform"] unsignedLongLongValue]);
-                addLogF(@"   Координаты: X=%.2f Y=%.2f Z=%.2f", newX, newY, newZ);
-                break;
-            }
-        }
+        NSDictionary *c = validCandidates.firstObject;
+        addLogF(@"\n🎯 ЭТО КООРДИНАТЫ ИГРОКА!");
+        addLogF(@"   Transform: 0x%lx", [c[@"transform"] unsignedLongLongValue]);
+        addLogF(@"   Координаты: X=%.2f Y=%.2f Z=%.2f", 
+                [c[@"x"] floatValue], [c[@"y"] floatValue], [c[@"z"] floatValue]);
+        addLog([c[@"path"] description]);
+    } else if (changedCount > 1) {
+        addLog(@"\n⚠️ Найдено несколько динамических координат. Проверьте вручную.");
     }
 }
 
@@ -271,7 +354,7 @@ void filterByDeath() {
             foundMinusOne++;
             foundStruct = addr - 0x10;
             addLogF(@"   ✅ -1: 0x%lx", addr);
-            break; // Нашли первый -1, выходим
+            break;
         }
     }
     
@@ -281,7 +364,7 @@ void filterByDeath() {
     
     if (foundMinusOne == 1 && foundStruct != 0) {
         addLogF(@"\n🎯 СТРУКТУРА: 0x%lx", foundStruct);
-        findDirectTransforms(foundStruct);
+        findTransforms(foundStruct);
     } else {
         addLog(@"⚠️ Нет адресов, ставших -1.");
     }
@@ -329,7 +412,7 @@ void filterByDeath() {
         }
         [k.rootViewController presentViewController:alert animated:YES completion:nil];
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-            [alert dismissViewControllerAnimated:YES completion:nil];
+            [alert dismissViewControllerAnimated:YES completion:nil]);
         });
     }
 }
@@ -341,7 +424,7 @@ void filterByDeath() {
 }
 @end
 
-// ===== МЕНЮ (УМЕНЬШЕННОЕ) =====
+// ===== МЕНЮ =====
 void createMenu() {
     UIWindow *key = nil;
     for (UIScene *s in UIApplication.sharedApplication.connectedScenes) {
@@ -355,7 +438,7 @@ void createMenu() {
     }
     if (!key) return;
     
-    CGFloat w = 260, h = 280;
+    CGFloat w = 260, h = 300;
     CGFloat x = (key.bounds.size.width - w) / 2;
     CGFloat y = (key.bounds.size.height - h) / 2;
     
