@@ -8,6 +8,7 @@ static NSMutableString *logText = nil;
 static BOOL isSearching = NO;
 static NSMutableArray *g_idAddresses = nil;
 static NSMutableArray *g_idValues = nil;
+static NSMutableArray *g_candidates = nil;  // Сохраняем кандидатов на координаты
 static int g_targetID = 71068432;
 static int g_enemyID = 55471766;
 
@@ -72,148 +73,126 @@ float safeReadFloat(uintptr_t addr) {
     }
 }
 
-// ===== ДАМП СТРУКТУРЫ =====
-void dumpStructure(uintptr_t structStart) {
-    addLogF(@"\n📊 ДАМП СТРУКТУРЫ (0x%lx) ±200 байт", structStart);
+BOOL isValidPosition(float x, float y, float z) {
+    if (x < -100 || x > 100) return NO;
+    if (y < -100 || y > 100) return NO;
+    if (z < -100 || z > 100) return NO;
+    if (fabs(x) < 0.01 && fabs(y) < 0.01 && fabs(z) < 0.01) return NO;
+    return YES;
+}
+
+// ===== СОХРАНЕНИЕ КАНДИДАТОВ НА КООРДИНАТЫ =====
+void saveCandidates(uintptr_t structStart) {
+    g_candidates = [NSMutableArray array];
+    
+    addLogF(@"\n📊 СОХРАНЯЮ КАНДИДАТОВ ИЗ СТРУКТУРЫ 0x%lx", structStart);
     addLog(@"=================================");
     
     uintptr_t start = structStart - 0x80;
     uintptr_t end = structStart + 0x200;
     
-    addLog(@"\n🔹 I8 (8 байт) - указатели:");
+    // Собираем все указатели
+    NSMutableArray *pointers = [NSMutableArray array];
     for (uintptr_t addr = start; addr <= end; addr += 8) {
         uintptr_t val = safeReadPtr(addr);
         if (val != 0 && val > 0x100000000 && val < 0x200000000) {
-            addLogF(@"   0x%lx: 0x%lx", addr, val);
+            [pointers addObject:@{
+                @"addr": @(addr),
+                @"value": @(val)
+            }];
         }
     }
     
-    addLog(@"\n🔹 FLOAT (4 байта) - координаты:");
-    for (uintptr_t addr = start; addr <= end; addr += 4) {
-        float val = safeReadFloat(addr);
-        if (val > -100 && val < 100 && fabs(val) > 0.01) {
-            addLogF(@"   0x%lx: %.2f", addr, val);
-        }
-    }
-}
-
-// ===== АНАЛИЗ УКАЗАТЕЛЯ (ПЕРЕХОД ПО НЕМУ) =====
-void analyzePointer(uintptr_t ptrAddr, uintptr_t ptrValue) {
-    addLogF(@"\n🔍 АНАЛИЗ УКАЗАТЕЛЯ: 0x%lx -> 0x%lx", ptrAddr, ptrValue);
-    addLog(@"=================================");
-    
-    if (ptrValue < 0x100000000 || ptrValue > 0x200000000) {
-        addLog(@"   ⚠️ Адрес вне диапазона");
-        return;
-    }
-    
-    // Смотрим по адресу указателя +0x20 (координаты)
-    uintptr_t coordAddr = ptrValue + 0x20;
-    float x = safeReadFloat(coordAddr);
-    float y = safeReadFloat(coordAddr + 4);
-    float z = safeReadFloat(coordAddr + 8);
-    
-    addLogF(@"   📍 Смещение 0x20: X=%.2f Y=%.2f Z=%.2f", x, y, z);
-    
-    if (x > -100 && x < 100 && y > -100 && y < 100 && z > -100 && z < 100 &&
-        (fabs(x) > 0.01 || fabs(y) > 0.01 || fabs(z) > 0.01)) {
-        addLog(@"   ✅ ЭТО TRANSFORM! Координаты найдены.");
-    } else {
-        addLog(@"   ⚠️ Это не Transform (координаты не в диапазоне -100..100)");
-    }
-    
-    // Сканируем ±200 байт вокруг этого адреса
-    addLog(@"\n   🔍 СКАНИРУЕМ ±200 БАЙТ ВОКРУГ:");
-    uintptr_t scanStart = ptrValue - 0x80;
-    uintptr_t scanEnd = ptrValue + 0x200;
-    
-    addLog(@"   I8 (указатели):");
-    for (uintptr_t addr = scanStart; addr <= scanEnd; addr += 8) {
-        uintptr_t val = safeReadPtr(addr);
-        if (val != 0 && val > 0x100000000 && val < 0x200000000) {
-            addLogF(@"      0x%lx: 0x%lx", addr, val);
-        }
-    }
-    
-    addLog(@"   FLOAT (координаты):");
-    for (uintptr_t addr = scanStart; addr <= scanEnd; addr += 4) {
-        float val = safeReadFloat(addr);
-        if (val > -100 && val < 100 && fabs(val) > 0.01) {
-            addLogF(@"      0x%lx: %.2f", addr, val);
-        }
-    }
-}
-
-// ===== ОТСЕИВАНИЕ: ОСТАВЛЯЕМ ТОЛЬКО СТАВШИЕ -1 =====
-void filterByDeath() {
-    if (g_idAddresses.count == 0) {
-        addLog(@"⚠️ Нет сохраненных ID. Сначала нажмите ПОИСК");
-        return;
-    }
-    
-    addLog(@"🔍 ОТСЕИВАНИЕ ПО СМЕРТИ (ИЩЕМ -1)");
-    addLog(@"=================================");
-    
-    NSMutableArray *newAddresses = [NSMutableArray array];
-    NSMutableArray *newValues = [NSMutableArray array];
-    int foundMinusOne = 0;
-    uintptr_t foundStruct = 0;
-    
-    for (int i = 0; i < g_idAddresses.count; i++) {
-        uintptr_t addr = [g_idAddresses[i] unsignedLongLongValue];
-        int newVal = safeReadInt(addr);
+    // Для каждого указателя ищем координаты в его окружении
+    for (NSDictionary *p in pointers) {
+        uintptr_t ptr = [p[@"value"] unsignedLongLongValue];
         
-        if (newVal == -1) {
-            [newAddresses addObject:@(addr)];
-            [newValues addObject:@(newVal)];
-            foundMinusOne++;
-            foundStruct = addr - 0x10;
-            addLogF(@"   ✅ СТАЛ -1: 0x%lx", addr);
-        }
-    }
-    
-    g_idAddresses = newAddresses;
-    g_idValues = newValues;
-    
-    addLogF(@"\n✅ Найдено адресов, ставших -1: %d", foundMinusOne);
-    
-    if (foundMinusOne == 1 && foundStruct != 0) {
-        addLogF(@"\n🎯 НАЙДЕНА СТРУКТУРА: 0x%lx", foundStruct);
-        dumpStructure(foundStruct);
-        
-        // Собираем все I8 указатели из структуры и анализируем их
-        addLog(@"\n🔍 АНАЛИЗ ВСЕХ УКАЗАТЕЛЕЙ ИЗ СТРУКТУРЫ:");
-        uintptr_t start = foundStruct - 0x80;
-        uintptr_t end = foundStruct + 0x200;
-        
-        for (uintptr_t addr = start; addr <= end; addr += 8) {
-            uintptr_t val = safeReadPtr(addr);
-            if (val != 0 && val > 0x100000000 && val < 0x200000000) {
-                analyzePointer(addr, val);
+        // Сканируем ±200 байт вокруг указателя
+        for (int offset = -0x80; offset <= 0x200; offset += 4) {
+            uintptr_t testAddr = ptr + offset;
+            float x = safeReadFloat(testAddr);
+            float y = safeReadFloat(testAddr + 4);
+            float z = safeReadFloat(testAddr + 8);
+            
+            if (isValidPosition(x, y, z)) {
+                // Сохраняем кандидата
+                [g_candidates addObject:@{
+                    @"ptr": @(ptr),
+                    @"offset": @(offset),
+                    @"addr": @(testAddr),
+                    @"x": @(x),
+                    @"y": @(y),
+                    @"z": @(z)
+                }];
+                addLogF(@"   КАНДИДАТ: указатель 0x%lx +%d → 0x%lx (%.2f, %.2f, %.2f)", 
+                        ptr, offset, testAddr, x, y, z);
             }
         }
-    } else if (foundMinusOne > 1) {
-        addLogF(@"\n⚠️ Найдено %d адресов, ставших -1. Нужно повторить отсеивание.", foundMinusOne);
-    } else {
-        addLog(@"\n⚠️ Нет адресов, ставших -1. Возможно, вы не умирали.");
     }
     
-    addLog(@"✅ ГОТОВО");
+    addLogF(@"\n✅ Сохранено кандидатов: %lu", (unsigned long)g_candidates.count);
 }
 
-// ===== ПОИСК ВСЕХ ID =====
-void findAllIDs() {
+// ===== ПРОВЕРКА КАНДИДАТОВ (ПОСЛЕ ДВИЖЕНИЯ) =====
+void checkCandidates() {
+    if (g_candidates.count == 0) {
+        addLog(@"⚠️ Нет сохраненных кандидатов. Сначала нажмите ПОИСК СТРУКТУРЫ");
+        return;
+    }
+    
+    addLog(@"\n🔍 ПРОВЕРКА КАНДИДАТОВ (ПОСЛЕ ДВИЖЕНИЯ)");
+    addLog(@"=================================");
+    
+    int validCount = 0;
+    
+    for (int i = 0; i < g_candidates.count; i++) {
+        NSDictionary *c = g_candidates[i];
+        uintptr_t addr = [c[@"addr"] unsignedLongLongValue];
+        float oldX = [c[@"x"] floatValue];
+        float oldY = [c[@"y"] floatValue];
+        float oldZ = [c[@"z"] floatValue];
+        
+        float newX = safeReadFloat(addr);
+        float newY = safeReadFloat(addr + 4);
+        float newZ = safeReadFloat(addr + 8);
+        
+        addLogF(@"\n📍 КАНДИДАТ %d: 0x%lx", i+1, addr);
+        addLogF(@"   Было: X=%.2f Y=%.2f Z=%.2f", oldX, oldY, oldZ);
+        addLogF(@"   Стало: X=%.2f Y=%.2f Z=%.2f", newX, newY, newZ);
+        
+        // Проверяем, изменились ли координаты
+        if (fabs(newX - oldX) > 0.1 || fabs(newY - oldY) > 0.1 || fabs(newZ - oldZ) > 0.1) {
+            addLog(@"   ✅ ИЗМЕНИЛИСЬ! Это похоже на координаты игрока.");
+            validCount++;
+            
+            // Показываем информацию о Transform
+            uintptr_t transform = addr - 0x20;
+            addLogF(@"   Transform: 0x%lx", transform);
+            
+            // Ищем указатель на этот Transform в структуре
+            addLog(@"   Ищем указатель на этот Transform...");
+            // Здесь можно добавить поиск указателя, но пока выводим адрес
+        } else {
+            addLog(@"   ⚠️ НЕ ИЗМЕНИЛИСЬ. Это статичные координаты (объекты, декор).");
+        }
+    }
+    
+    addLogF(@"\n✅ Найдено динамических кандидатов: %d из %lu", validCount, (unsigned long)g_candidates.count);
+}
+
+// ===== ПОИСК СТРУКТУРЫ =====
+void findStructure() {
     if (isSearching) {
         addLog(@"⏳ Уже ищу");
         return;
     }
     isSearching = YES;
-    addLog(@"🔍 ПОИСК ВСЕХ ID");
+    addLog(@"🔍 ПОИСК СТРУКТУРЫ (ID = -1)");
     addLog(@"=================================");
     
     g_idAddresses = [NSMutableArray array];
     g_idValues = [NSMutableArray array];
-    int foundMy = 0, foundEnemy = 0;
+    int foundMy = 0;
     
     task_t task = mach_task_self();
     vm_address_t addr = 0;
@@ -255,14 +234,7 @@ void findAllIDs() {
                         uintptr_t idAddr = page + offset;
                         [g_idAddresses addObject:@(idAddr)];
                         [g_idValues addObject:@(val)];
-                        addLogF(@"[СВОЙ %d] ID: 0x%lx = %d", foundMy, idAddr, val);
-                    }
-                    else if (val == g_enemyID && foundEnemy < 200) {
-                        foundEnemy++;
-                        uintptr_t idAddr = page + offset;
-                        [g_idAddresses addObject:@(idAddr)];
-                        [g_idValues addObject:@(val)];
-                        addLogF(@"[ВРАГ %d] ID: 0x%lx = %d", foundEnemy, idAddr, val);
+                        addLogF(@"[ID %d] 0x%lx = %d", foundMy, idAddr, val);
                     }
                 }
             }
@@ -279,10 +251,56 @@ void findAllIDs() {
     isSearching = NO;
 }
 
+// ===== ОТСЕИВАНИЕ =====
+void filterByDeath() {
+    if (g_idAddresses.count == 0) {
+        addLog(@"⚠️ Нет сохраненных ID. Сначала нажмите ПОИСК");
+        return;
+    }
+    
+    addLog(@"🔍 ОТСЕИВАНИЕ (ИЩЕМ -1)");
+    addLog(@"=================================");
+    
+    NSMutableArray *newAddresses = [NSMutableArray array];
+    NSMutableArray *newValues = [NSMutableArray array];
+    int foundMinusOne = 0;
+    uintptr_t foundStruct = 0;
+    
+    for (int i = 0; i < g_idAddresses.count; i++) {
+        uintptr_t addr = [g_idAddresses[i] unsignedLongLongValue];
+        int newVal = safeReadInt(addr);
+        
+        if (newVal == -1) {
+            [newAddresses addObject:@(addr)];
+            [newValues addObject:@(newVal)];
+            foundMinusOne++;
+            foundStruct = addr - 0x10;
+            addLogF(@"   ✅ СТАЛ -1: 0x%lx", addr);
+        }
+    }
+    
+    g_idAddresses = newAddresses;
+    g_idValues = newValues;
+    
+    addLogF(@"\n✅ Найдено адресов, ставших -1: %d", foundMinusOne);
+    
+    if (foundMinusOne == 1 && foundStruct != 0) {
+        addLogF(@"\n🎯 НАЙДЕНА СТРУКТУРА: 0x%lx", foundStruct);
+        saveCandidates(foundStruct);
+    } else if (foundMinusOne > 1) {
+        addLogF(@"\n⚠️ Найдено %d адресов. Нужно повторить отсеивание.", foundMinusOne);
+    } else {
+        addLog(@"\n⚠️ Нет адресов, ставших -1.");
+    }
+    
+    addLog(@"✅ ГОТОВО");
+}
+
 // ===== КЛАСС-ОБРАБОТЧИК =====
 @interface MenuHandler : NSObject
 + (void)onSearch;
 + (void)onFilter;
++ (void)onCheck;
 + (void)onClear;
 + (void)onCopy;
 + (void)onClose;
@@ -291,11 +309,14 @@ void findAllIDs() {
 @implementation MenuHandler
 + (void)onSearch {
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
-        findAllIDs();
+        findStructure();
     });
 }
 + (void)onFilter {
     filterByDeath();
+}
++ (void)onCheck {
+    checkCandidates();
 }
 + (void)onClear { clearLog(); }
 + (void)onCopy {
@@ -339,7 +360,7 @@ void createMenu() {
     }
     if (!key) return;
     
-    CGFloat w = 280, h = 340;
+    CGFloat w = 280, h = 380;
     CGFloat x = (key.bounds.size.width - w) / 2;
     CGFloat y = (key.bounds.size.height - h) / 2;
     
@@ -358,7 +379,7 @@ void createMenu() {
     title.font = [UIFont boldSystemFontOfSize:14];
     [win addSubview:title];
     
-    logView = [[UITextView alloc] initWithFrame:CGRectMake(8, 42, w-16, 200)];
+    logView = [[UITextView alloc] initWithFrame:CGRectMake(8, 42, w-16, 220)];
     logView.backgroundColor = UIColor.blackColor;
     logView.textColor = UIColor.greenColor;
     logView.font = [UIFont fontWithName:@"Courier" size:10];
@@ -367,8 +388,8 @@ void createMenu() {
     [win addSubview:logView];
     
     UIButton *searchBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    searchBtn.frame = CGRectMake(15, 255, (w-45)/2, 38);
-    [searchBtn setTitle:@"🔍 ПОИСК" forState:UIControlStateNormal];
+    searchBtn.frame = CGRectMake(15, 275, (w-45)/2, 38);
+    [searchBtn setTitle:@"🔍 ПОИСК ID" forState:UIControlStateNormal];
     searchBtn.backgroundColor = UIColor.systemBlueColor;
     [searchBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     searchBtn.layer.cornerRadius = 8;
@@ -376,7 +397,7 @@ void createMenu() {
     [win addSubview:searchBtn];
     
     UIButton *filterBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    filterBtn.frame = CGRectMake(25 + (w-45)/2, 255, (w-45)/2, 38);
+    filterBtn.frame = CGRectMake(25 + (w-45)/2, 275, (w-45)/2, 38);
     [filterBtn setTitle:@"💀 ОТСЕЯТЬ" forState:UIControlStateNormal];
     filterBtn.backgroundColor = UIColor.systemRedColor;
     [filterBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
@@ -384,17 +405,35 @@ void createMenu() {
     [filterBtn addTarget:[MenuHandler class] action:@selector(onFilter) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:filterBtn];
     
+    UIButton *checkBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    checkBtn.frame = CGRectMake(15, 320, (w-45)/2, 38);
+    [checkBtn setTitle:@"📍 ПРОВЕРИТЬ" forState:UIControlStateNormal];
+    checkBtn.backgroundColor = UIColor.systemPurpleColor;
+    [checkBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    checkBtn.layer.cornerRadius = 8;
+    [checkBtn addTarget:[MenuHandler class] action:@selector(onCheck) forControlEvents:UIControlEventTouchUpInside];
+    [win addSubview:checkBtn];
+    
     UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    copyBtn.frame = CGRectMake(15, 300, (w-45)/2, 34);
+    copyBtn.frame = CGRectMake(25 + (w-45)/2, 320, (w-45)/2, 38);
     [copyBtn setTitle:@"📋 КОПИ" forState:UIControlStateNormal];
     copyBtn.backgroundColor = UIColor.systemGreenColor;
     [copyBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    copyBtn.layer.cornerRadius = 6;
+    copyBtn.layer.cornerRadius = 8;
     [copyBtn addTarget:[MenuHandler class] action:@selector(onCopy) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:copyBtn];
     
+    UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    clearBtn.frame = CGRectMake(15, 365, (w-45)/2, 34);
+    [clearBtn setTitle:@"🗑 ОЧИСТИТЬ" forState:UIControlStateNormal];
+    clearBtn.backgroundColor = UIColor.systemOrangeColor;
+    [clearBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    clearBtn.layer.cornerRadius = 6;
+    [clearBtn addTarget:[MenuHandler class] action:@selector(onClear) forControlEvents:UIControlEventTouchUpInside];
+    [win addSubview:clearBtn];
+    
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(25 + (w-45)/2, 300, (w-45)/2, 34);
+    closeBtn.frame = CGRectMake(25 + (w-45)/2, 365, (w-45)/2, 34);
     [closeBtn setTitle:@"❌ ЗАКРЫТЬ" forState:UIControlStateNormal];
     closeBtn.backgroundColor = UIColor.systemGrayColor;
     [closeBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
