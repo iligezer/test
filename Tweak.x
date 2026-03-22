@@ -3,6 +3,8 @@
 #import <arpa/inet.h>
 #import <sys/socket.h>
 #import <netinet/in.h>
+#import <ifaddrs.h>
+#import <net/if.h>
 
 // ===== ГЛОБАЛЬНЫЕ =====
 static int serverSocket = -1;
@@ -19,6 +21,29 @@ void addLog(NSString *msg) {
         if (logView) logView.text = logText;
         NSLog(@"[SERVER] %@", msg);
     });
+}
+
+// ===== ПОЛУЧИТЬ IP АДРЕС =====
+NSString* getIPAddress() {
+    NSString *address = @"error";
+    struct ifaddrs *interfaces = NULL;
+    struct ifaddrs *temp_addr = NULL;
+    int success = 0;
+    
+    success = getifaddrs(&interfaces);
+    if (success == 0) {
+        temp_addr = interfaces;
+        while(temp_addr != NULL) {
+            if(temp_addr->ifa_addr->sa_family == AF_INET) {
+                if([[NSString stringWithUTF8String:temp_addr->ifa_name] isEqualToString:@"en0"]) {
+                    address = [NSString stringWithUTF8String:inet_ntoa(((struct sockaddr_in *)temp_addr->ifa_addr)->sin_addr)];
+                }
+            }
+            temp_addr = temp_addr->ifa_next;
+        }
+    }
+    freeifaddrs(interfaces);
+    return address;
 }
 
 // ===== БЕЗОПАСНОЕ ЧТЕНИЕ ПАМЯТИ =====
@@ -62,11 +87,6 @@ BOOL safeWriteInt(uintptr_t addr, int val) {
 
 BOOL safeWriteFloat(uintptr_t addr, float val) {
     kern_return_t kr = vm_write(mach_task_self(), addr, (vm_address_t)&val, 4);
-    return kr == KERN_SUCCESS;
-}
-
-BOOL safeWritePtr(uintptr_t addr, uintptr_t val) {
-    kern_return_t kr = vm_write(mach_task_self(), addr, (vm_address_t)&val, 8);
     return kr == KERN_SUCCESS;
 }
 
@@ -165,7 +185,6 @@ NSArray* scanFloat(float targetValue, float tolerance, int maxResults) {
     return results;
 }
 
-// ===== ДАМП ПАМЯТИ =====
 NSData* memoryDump(uintptr_t addr, int size) {
     uint8_t *buffer = malloc(size);
     if (!buffer) return nil;
@@ -178,34 +197,6 @@ NSData* memoryDump(uintptr_t addr, int size) {
     NSData *data = [NSData dataWithBytes:buffer length:read];
     free(buffer);
     return data;
-}
-
-// ===== ПОЛУЧИТЬ СПИСОК РЕГИОНОВ ПАМЯТИ =====
-NSArray* getMemoryRegions() {
-    NSMutableArray *regions = [NSMutableArray array];
-    task_t task = mach_task_self();
-    vm_address_t addr = 0;
-    vm_size_t size = 0;
-    struct vm_region_basic_info_64 info;
-    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-    mach_port_t object_name = MACH_PORT_NULL;
-    
-    while (1) {
-        kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
-                                         (vm_region_info_t)&info, &count, &object_name);
-        if (kr != KERN_SUCCESS) break;
-        
-        if ((info.protection & VM_PROT_READ) && addr >= 0x100000000 && addr <= 0x300000000) {
-            [regions addObject:@{
-                @"start": @(addr),
-                @"size": @(size),
-                @"protection": @(info.protection)
-            }];
-        }
-        addr += size;
-        if (addr > 0x300000000) break;
-    }
-    return regions;
 }
 
 // ===== ОБРАБОТКА КОМАНД =====
@@ -257,13 +248,6 @@ NSString* handleCommand(NSString *cmd) {
         float val = safeReadFloat(addr);
         return [NSString stringWithFormat:@"FLOAT %f", val];
     }
-    else if ([command isEqualToString:@"READ_STRING"]) {
-        if (parts.count < 2) return @"ERROR: need addr";
-        uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
-        int maxLen = (parts.count > 2) ? [parts[2] intValue] : 64;
-        NSString *str = safeReadString(addr, maxLen);
-        return [NSString stringWithFormat:@"STRING %@", str];
-    }
     else if ([command isEqualToString:@"WRITE_INT"]) {
         if (parts.count < 3) return @"ERROR: need addr and value";
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
@@ -282,17 +266,10 @@ NSString* handleCommand(NSString *cmd) {
         if (parts.count < 3) return @"ERROR: need addr and size";
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
         int size = [parts[2] intValue];
+        if (size > 65536) size = 65536;
         NSData *data = memoryDump(addr, size);
         if (!data) return @"ERROR: dump failed";
         return [NSString stringWithFormat:@"DUMP_DATA %@", [data base64EncodedStringWithOptions:0]];
-    }
-    else if ([command isEqualToString:@"REGIONS"]) {
-        NSArray *regions = getMemoryRegions();
-        NSMutableString *response = [NSMutableString stringWithFormat:@"REGIONS %lu", (unsigned long)regions.count];
-        for (NSDictionary *r in regions) {
-            [response appendFormat:@"\n0x%lx,%llu,%d", [r[@"start"] unsignedLongValue], [r[@"size"] unsignedLongLongValue], [r[@"protection"] intValue]];
-        }
-        return response;
     }
     
     return @"ERROR: unknown command";
@@ -300,7 +277,10 @@ NSString* handleCommand(NSString *cmd) {
 
 // ===== TCP СЕРВЕР =====
 void startServer() {
-    if (serverRunning) return;
+    if (serverRunning) {
+        addLog(@"⚠️ Сервер уже запущен");
+        return;
+    }
     
     serverSocket = socket(AF_INET, SOCK_STREAM, 0);
     if (serverSocket < 0) {
@@ -332,8 +312,11 @@ void startServer() {
     }
     
     serverRunning = YES;
+    
+    NSString *ip = getIPAddress();
     addLog(@"✅ Сервер запущен на порту 12345");
-    addLog(@"📡 IP: 192.168.1.65 (узнайте в настройках WiFi)");
+    addLog([NSString stringWithFormat:@"📡 IP: %@", ip]);
+    addLog(@"💡 Подключитесь с ПК: python client.py");
     
     dispatch_async(dispatch_get_global_queue(0, 0), ^{
         while (serverRunning) {
@@ -391,7 +374,7 @@ void createMenu() {
     }
     if (!key) return;
     
-    CGFloat w = 260, h = 200;
+    CGFloat w = 260, h = 220;
     CGFloat x = (key.bounds.size.width - w) / 2;
     CGFloat y = (key.bounds.size.height - h) / 2;
     
@@ -404,13 +387,13 @@ void createMenu() {
     win.hidden = NO;
     
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, w, 28)];
-    title.text = @"🎯 MEMORY SERVER";
+    title.text = @"📡 MEMORY SERVER";
     title.textColor = UIColor.systemBlueColor;
     title.textAlignment = NSTextAlignmentCenter;
     title.font = [UIFont boldSystemFontOfSize:14];
     [win addSubview:title];
     
-    logView = [[UITextView alloc] initWithFrame:CGRectMake(6, 42, w-12, 90)];
+    logView = [[UITextView alloc] initWithFrame:CGRectMake(6, 42, w-12, 100)];
     logView.backgroundColor = UIColor.blackColor;
     logView.textColor = UIColor.greenColor;
     logView.font = [UIFont fontWithName:@"Courier" size:9];
@@ -418,23 +401,35 @@ void createMenu() {
     logView.layer.cornerRadius = 6;
     [win addSubview:logView];
     
+    CGFloat btnW = (w - 30) / 2;
+    
     UIButton *startBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    startBtn.frame = CGRectMake(10, 140, (w-30)/2, 32);
+    startBtn.frame = CGRectMake(10, 150, btnW, 32);
     [startBtn setTitle:@"▶️ СТАРТ" forState:UIControlStateNormal];
     startBtn.backgroundColor = UIColor.systemGreenColor;
     [startBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     startBtn.layer.cornerRadius = 6;
-    [startBtn addTarget:self action:@selector(startServer) forControlEvents:UIControlEventTouchUpInside];
+    [startBtn addTarget:[UIApplication sharedApplication] action:@selector(startServer) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:startBtn];
     
     UIButton *stopBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    stopBtn.frame = CGRectMake(20 + (w-30)/2, 140, (w-30)/2, 32);
+    stopBtn.frame = CGRectMake(20 + btnW, 150, btnW, 32);
     [stopBtn setTitle:@"⏹️ СТОП" forState:UIControlStateNormal];
     stopBtn.backgroundColor = UIColor.systemRedColor;
     [stopBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
     stopBtn.layer.cornerRadius = 6;
-    [stopBtn addTarget:self action:@selector(stopServer) forControlEvents:UIControlEventTouchUpInside];
+    [stopBtn addTarget:[UIApplication sharedApplication] action:@selector(stopServer) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:stopBtn];
+    
+    UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    closeBtn.frame = CGRectMake(w/2-35, 190, 70, 26);
+    [closeBtn setTitle:@"❌ ЗАКРЫТЬ" forState:UIControlStateNormal];
+    closeBtn.backgroundColor = UIColor.systemGrayColor;
+    [closeBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    closeBtn.layer.cornerRadius = 5;
+    closeBtn.titleLabel.font = [UIFont systemFontOfSize:12];
+    [closeBtn addTarget:win action:@selector(setHidden:) forControlEvents:UIControlEventTouchUpInside];
+    [win addSubview:closeBtn];
     
     [win makeKeyAndVisible];
 }
@@ -506,6 +501,7 @@ void createMenu() {
         [self.w addSubview:b];
         
         b.onTap = ^{
+            logText = nil;
             createMenu();
         };
     }
