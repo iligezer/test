@@ -133,7 +133,7 @@ void findAllIDs() {
         return;
     }
     
-    addLog(@"📊 Диапазон: 0x148000000 - 0x150000000");
+    addLog(@"📊 Диапазон: 0x100000000 - 0x200000000");
     
     while (1) {
         kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
@@ -141,7 +141,7 @@ void findAllIDs() {
         if (kr != KERN_SUCCESS) break;
         
         if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE) &&
-            addr >= 0x148000000 && addr <= 0x150000000) {
+            addr >= 0x100000000 && addr <= 0x200000000) {
             
             for (uintptr_t page = addr; page < addr + size; page += 0x1000) {
                 uintptr_t pageSize = (page + 0x1000 > addr + size) ? (addr + size - page) : 0x1000;
@@ -154,14 +154,14 @@ void findAllIDs() {
                 for (uintptr_t offset = 0; offset + 4 <= pageSize; offset += 8) {
                     int val = *(int*)(buffer + offset);
                     
-                    if (val == g_targetID && foundMy < 100) {
+                    if (val == g_targetID && foundMy < 200) {
                         foundMy++;
                         uintptr_t idAddr = page + offset;
                         [g_idAddresses addObject:@(idAddr)];
                         [g_idValues addObject:@(val)];
                         addLogF(@"[СВОЙ %d] ID: 0x%lx = %d", foundMy, idAddr, val);
                     }
-                    else if (val == g_enemyID && foundEnemy < 100) {
+                    else if (val == g_enemyID && foundEnemy < 200) {
                         foundEnemy++;
                         uintptr_t idAddr = page + offset;
                         [g_idAddresses addObject:@(idAddr)];
@@ -173,7 +173,7 @@ void findAllIDs() {
         }
         
         addr += size;
-        if (addr > 0x150000000) break;
+        if (addr > 0x200000000) break;
     }
     
     free(buffer);
@@ -202,27 +202,28 @@ void filterByDeath() {
         uintptr_t addr = [g_idAddresses[i] unsignedLongLongValue];
         int newVal = safeReadInt(addr);
         
-        if (newVal == -1) {
+        // Ищем любое изменение (не только -1, но и 0 или другое число)
+        if (newVal != [g_idValues[i] intValue]) {
             [newAddresses addObject:@(addr)];
             [newValues addObject:@(newVal)];
             changedCount++;
             foundStruct = addr - 0x10;
-            addLogF(@"   ✅ ОСТАВЛЕН: 0x%lx (стал -1)", addr);
+            addLogF(@"   ✅ ИЗМЕНИЛСЯ: 0x%lx: %d -> %d", addr, [g_idValues[i] intValue], newVal);
         }
     }
     
     g_idAddresses = newAddresses;
     g_idValues = newValues;
     
-    addLogF(@"\n✅ Изменилось на -1: %d, Осталось: %lu", changedCount, (unsigned long)g_idAddresses.count);
+    addLogF(@"\n✅ Изменилось: %d, Осталось: %lu", changedCount, (unsigned long)g_idAddresses.count);
     
     if (g_idAddresses.count == 1 && foundStruct != 0) {
         addLogF(@"\n🎯 НАЙДЕНА СТРУКТУРА: 0x%lx", foundStruct);
         dumpStructure(foundStruct);
     } else if (g_idAddresses.count > 1) {
-        addLog(@"\n⚠️ Осталось несколько адресов. Умрите еще раз и повторите отсеивание.");
+        addLog(@"\n⚠️ Осталось несколько адресов. Повторите действие еще раз.");
     } else {
-        addLog(@"\n⚠️ Нет адресов, изменившихся на -1. Возможно, вы не умирали или ищете не в том диапазоне.");
+        addLog(@"\n⚠️ Нет адресов, изменившихся. Возможно, вы не получали урон.");
     }
     
     addLog(@"✅ ГОТОВО");
