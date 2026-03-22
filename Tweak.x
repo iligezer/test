@@ -378,7 +378,7 @@ NSString* listModules(void) {
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
         
-        if (addr >= 0x100000000) {
+        if (addr >= 0x100000000 && addr <= 0x300000000) {
             [result appendFormat:@"0x%lx-0x%lx ", (unsigned long)addr, (unsigned long)(addr + size)];
             
             if (info.protection & VM_PROT_READ) [result appendString:@"r"];
@@ -388,12 +388,6 @@ NSString* listModules(void) {
             if (info.protection & VM_PROT_EXECUTE) [result appendString:@"x"];
             else [result appendString:@"-"];
             
-            // Пытаемся получить имя региона
-            char name[256] = {0};
-            uint32_t name_len = 256;
-            if (vm_region_64_get_name(task, addr, name, &name_len) == KERN_SUCCESS && name_len > 0) {
-                [result appendFormat:@" %s", name];
-            }
             [result appendString:@"\n"];
         }
         addr += size;
