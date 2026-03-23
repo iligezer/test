@@ -53,7 +53,7 @@ void findPlayers() {
     }
     
     if (!idAddr) {
-        addLog(@"❌ ID не найден");
+        addLog(@"❌ ID не найден");
         isSearching = NO;
         return;
     }
@@ -73,7 +73,7 @@ void findPlayers() {
     }
     
     if (!g_myTransform) {
-        addLog(@"❌ Transform не найден");
+        addLog(@"❌ Transform не найден");
         isSearching = NO;
         return;
     }
@@ -107,7 +107,7 @@ void findPlayers() {
 void showMenu() {
     UIViewController *root = [UIApplication sharedApplication].keyWindow.rootViewController;
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"ESP FINDER" message:logText preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"🔍 НАЙТИ" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+    [alert addAction:[UIAlertAction actionWithTitle:@"🔍 НАЙТИ" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
         logText = nil;
         addLog(@"Поиск...");
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
