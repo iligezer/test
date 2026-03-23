@@ -123,20 +123,28 @@ NSArray* scanIntRange(int targetValue, uintptr_t minAddr, uintptr_t maxAddr) {
     mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
     mach_port_t object_name = MACH_PORT_NULL;
     uint8_t *buffer = malloc(0x10000);
+    
     if (!buffer) return results;
+    
+    int regionCount = 0;
+    
     while (addr < maxAddr) {
         kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
+        
         if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
             uintptr_t scan_start = MAX(addr, minAddr);
             uintptr_t scan_end = MIN(addr + size, maxAddr);
+            
             for (uintptr_t page = scan_start; page < scan_end; page += 0x10000) {
                 uintptr_t pageSize = MIN(0x10000, scan_end - page);
                 if (pageSize < 4) continue;
+                
                 vm_size_t read = 0;
                 kr = vm_read_overwrite(task, page, pageSize, (vm_address_t)buffer, &read);
                 if (kr != KERN_SUCCESS || read < 4) continue;
+                
                 for (uintptr_t offset = 0; offset + 4 <= pageSize; offset += 4) {
                     int val = *(int*)(buffer + offset);
                     if (val == targetValue) {
@@ -145,6 +153,13 @@ NSArray* scanIntRange(int targetValue, uintptr_t minAddr, uintptr_t maxAddr) {
                 }
             }
         }
+        
+        regionCount++;
+        // Каждые 10 регионов делаем паузу, чтобы не нагружать CPU
+        if (regionCount % 10 == 0) {
+            usleep(1000); // 1 миллисекунда паузы
+        }
+        
         addr += size;
         if (addr > maxAddr) break;
     }
