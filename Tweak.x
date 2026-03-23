@@ -16,6 +16,7 @@ static UIWindow *win = nil;
 
 // Хранилище списков адресов
 static NSMutableDictionary *savedLists = nil;
+static NSMutableDictionary *savedValues = nil;  // Хранит значения для сравнения
 static NSMutableDictionary *listTimestamps = nil;
 static int nextListId = 1;
 
@@ -42,6 +43,7 @@ void cleanOldLists(void) {
     for (NSNumber *key in toRemove) {
         [savedLists removeObjectForKey:key];
         [listTimestamps removeObjectForKey:key];
+        if (savedValues) [savedValues removeObjectForKey:key];
         addLog([NSString stringWithFormat:@"🗑️ Auto-cleaned old list %d", [key intValue]]);
     }
 }
@@ -113,8 +115,8 @@ long long safeReadLong(uintptr_t addr) {
     return val;
 }
 
-// ===== СКАНИРОВАНИЕ =====
-NSArray* scanIntRange(int targetValue, uintptr_t minAddr, uintptr_t maxAddr) {
+// ===== СКАНИРОВАНИЕ С ШАГОМ =====
+NSArray* scanIntRangeStep(int targetValue, uintptr_t minAddr, uintptr_t maxAddr, int step) {
     NSMutableArray *results = [NSMutableArray array];
     task_t task = mach_task_self();
     vm_address_t addr = minAddr;
@@ -125,6 +127,64 @@ NSArray* scanIntRange(int targetValue, uintptr_t minAddr, uintptr_t maxAddr) {
     uint8_t *buffer = malloc(0x10000);
     
     if (!buffer) return results;
+    
+    int regionCount = 0;
+    
+    while (addr < maxAddr) {
+        kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
+                                         (vm_region_info_t)&info, &count, &object_name);
+        if (kr != KERN_SUCCESS) break;
+        
+        if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
+            uintptr_t scan_start = MAX(addr, minAddr);
+            uintptr_t scan_end = MIN(addr + size, maxAddr);
+            
+            for (uintptr_t page = scan_start; page < scan_end; page += 0x10000) {
+                uintptr_t pageSize = MIN(0x10000, scan_end - page);
+                if (pageSize < step) continue;
+                
+                vm_size_t read = 0;
+                kr = vm_read_overwrite(task, page, pageSize, (vm_address_t)buffer, &read);
+                if (kr != KERN_SUCCESS || read < step) continue;
+                
+                for (uintptr_t offset = 0; offset + step <= pageSize; offset += step) {
+                    int val = *(int*)(buffer + offset);
+                    if (val == targetValue) {
+                        [results addObject:@(page + offset)];
+                    }
+                }
+            }
+        }
+        
+        regionCount++;
+        // Пауза каждые 10 регионов для стабильности
+        if (regionCount % 10 == 0) {
+            usleep(1000); // 1 мс
+        }
+        
+        addr += size;
+        if (addr > maxAddr) break;
+    }
+    free(buffer);
+    return results;
+}
+
+NSArray* scanIntRange(int targetValue, uintptr_t minAddr, uintptr_t maxAddr) {
+    return scanIntRangeStep(targetValue, minAddr, maxAddr, 4);
+}
+
+NSArray* scanFloatRange(float targetValue, float tolerance, uintptr_t minAddr, uintptr_t maxAddr) {
+    NSMutableArray *results = [NSMutableArray array];
+    task_t task = mach_task_self();
+    vm_address_t addr = minAddr;
+    vm_size_t size = 0;
+    struct vm_region_basic_info_64 info;
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t object_name = MACH_PORT_NULL;
+    uint8_t *buffer = malloc(0x10000);
+    if (!buffer) return results;
+    
+    int regionCount = 0;
     
     while (addr < maxAddr) {
         kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
@@ -144,44 +204,6 @@ NSArray* scanIntRange(int targetValue, uintptr_t minAddr, uintptr_t maxAddr) {
                 if (kr != KERN_SUCCESS || read < 4) continue;
                 
                 for (uintptr_t offset = 0; offset + 4 <= pageSize; offset += 4) {
-                    int val = *(int*)(buffer + offset);
-                    if (val == targetValue) {
-                        [results addObject:@(page + offset)];
-                    }
-                }
-            }
-        }
-        addr += size;
-        if (addr > maxAddr) break;
-    }
-    free(buffer);
-    return results;
-}
-
-NSArray* scanFloatRange(float targetValue, float tolerance, uintptr_t minAddr, uintptr_t maxAddr) {
-    NSMutableArray *results = [NSMutableArray array];
-    task_t task = mach_task_self();
-    vm_address_t addr = minAddr;
-    vm_size_t size = 0;
-    struct vm_region_basic_info_64 info;
-    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-    mach_port_t object_name = MACH_PORT_NULL;
-    uint8_t *buffer = malloc(0x10000);
-    if (!buffer) return results;
-    while (addr < maxAddr) {
-        kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
-                                         (vm_region_info_t)&info, &count, &object_name);
-        if (kr != KERN_SUCCESS) break;
-        if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
-            uintptr_t scan_start = MAX(addr, minAddr);
-            uintptr_t scan_end = MIN(addr + size, maxAddr);
-            for (uintptr_t page = scan_start; page < scan_end; page += 0x10000) {
-                uintptr_t pageSize = MIN(0x10000, scan_end - page);
-                if (pageSize < 4) continue;
-                vm_size_t read = 0;
-                kr = vm_read_overwrite(task, page, pageSize, (vm_address_t)buffer, &read);
-                if (kr != KERN_SUCCESS || read < 4) continue;
-                for (uintptr_t offset = 0; offset + 4 <= pageSize; offset += 4) {
                     float val = *(float*)(buffer + offset);
                     if (fabs(val - targetValue) <= tolerance) {
                         [results addObject:@(page + offset)];
@@ -189,6 +211,10 @@ NSArray* scanFloatRange(float targetValue, float tolerance, uintptr_t minAddr, u
                 }
             }
         }
+        
+        regionCount++;
+        if (regionCount % 10 == 0) usleep(1000);
+        
         addr += size;
         if (addr > maxAddr) break;
     }
@@ -206,19 +232,26 @@ NSArray* scanLongRange(long long targetValue, uintptr_t minAddr, uintptr_t maxAd
     mach_port_t object_name = MACH_PORT_NULL;
     uint8_t *buffer = malloc(0x10000);
     if (!buffer) return results;
+    
+    int regionCount = 0;
+    
     while (addr < maxAddr) {
         kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
+        
         if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
             uintptr_t scan_start = MAX(addr, minAddr);
             uintptr_t scan_end = MIN(addr + size, maxAddr);
+            
             for (uintptr_t page = scan_start; page < scan_end; page += 0x10000) {
                 uintptr_t pageSize = MIN(0x10000, scan_end - page);
                 if (pageSize < 8) continue;
+                
                 vm_size_t read = 0;
                 kr = vm_read_overwrite(task, page, pageSize, (vm_address_t)buffer, &read);
                 if (kr != KERN_SUCCESS || read < 8) continue;
+                
                 for (uintptr_t offset = 0; offset + 8 <= pageSize; offset += 8) {
                     long long val = *(long long*)(buffer + offset);
                     if (val == targetValue) {
@@ -227,6 +260,10 @@ NSArray* scanLongRange(long long targetValue, uintptr_t minAddr, uintptr_t maxAd
                 }
             }
         }
+        
+        regionCount++;
+        if (regionCount % 10 == 0) usleep(1000);
+        
         addr += size;
         if (addr > maxAddr) break;
     }
@@ -244,19 +281,26 @@ NSArray* scanByteRange(char targetValue, uintptr_t minAddr, uintptr_t maxAddr) {
     mach_port_t object_name = MACH_PORT_NULL;
     uint8_t *buffer = malloc(0x10000);
     if (!buffer) return results;
+    
+    int regionCount = 0;
+    
     while (addr < maxAddr) {
         kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
+        
         if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
             uintptr_t scan_start = MAX(addr, minAddr);
             uintptr_t scan_end = MIN(addr + size, maxAddr);
+            
             for (uintptr_t page = scan_start; page < scan_end; page += 0x10000) {
                 uintptr_t pageSize = MIN(0x10000, scan_end - page);
                 if (pageSize < 1) continue;
+                
                 vm_size_t read = 0;
                 kr = vm_read_overwrite(task, page, pageSize, (vm_address_t)buffer, &read);
                 if (kr != KERN_SUCCESS || read < 1) continue;
+                
                 for (uintptr_t offset = 0; offset < pageSize; offset++) {
                     char val = *(char*)(buffer + offset);
                     if (val == targetValue) {
@@ -265,6 +309,10 @@ NSArray* scanByteRange(char targetValue, uintptr_t minAddr, uintptr_t maxAddr) {
                 }
             }
         }
+        
+        regionCount++;
+        if (regionCount % 10 == 0) usleep(1000);
+        
         addr += size;
         if (addr > maxAddr) break;
     }
@@ -282,19 +330,26 @@ NSArray* scanShortRange(short targetValue, uintptr_t minAddr, uintptr_t maxAddr)
     mach_port_t object_name = MACH_PORT_NULL;
     uint8_t *buffer = malloc(0x10000);
     if (!buffer) return results;
+    
+    int regionCount = 0;
+    
     while (addr < maxAddr) {
         kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
+        
         if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
             uintptr_t scan_start = MAX(addr, minAddr);
             uintptr_t scan_end = MIN(addr + size, maxAddr);
+            
             for (uintptr_t page = scan_start; page < scan_end; page += 0x10000) {
                 uintptr_t pageSize = MIN(0x10000, scan_end - page);
                 if (pageSize < 2) continue;
+                
                 vm_size_t read = 0;
                 kr = vm_read_overwrite(task, page, pageSize, (vm_address_t)buffer, &read);
                 if (kr != KERN_SUCCESS || read < 2) continue;
+                
                 for (uintptr_t offset = 0; offset + 2 <= pageSize; offset += 2) {
                     short val = *(short*)(buffer + offset);
                     if (val == targetValue) {
@@ -303,6 +358,10 @@ NSArray* scanShortRange(short targetValue, uintptr_t minAddr, uintptr_t maxAddr)
                 }
             }
         }
+        
+        regionCount++;
+        if (regionCount % 10 == 0) usleep(1000);
+        
         addr += size;
         if (addr > maxAddr) break;
     }
@@ -322,19 +381,26 @@ NSArray* scanStringRange(NSString *targetString, uintptr_t minAddr, uintptr_t ma
     NSData *targetData = [targetString dataUsingEncoding:NSUTF8StringEncoding];
     NSUInteger targetLen = targetData.length;
     if (!buffer || targetLen == 0) return results;
+    
+    int regionCount = 0;
+    
     while (addr < maxAddr) {
         kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
+        
         if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
             uintptr_t scan_start = MAX(addr, minAddr);
             uintptr_t scan_end = MIN(addr + size, maxAddr);
+            
             for (uintptr_t page = scan_start; page < scan_end; page += 0x10000) {
                 uintptr_t pageSize = MIN(0x10000, scan_end - page);
                 if (pageSize < targetLen) continue;
+                
                 vm_size_t read = 0;
                 kr = vm_read_overwrite(task, page, pageSize, (vm_address_t)buffer, &read);
                 if (kr != KERN_SUCCESS || read < targetLen) continue;
+                
                 NSData *pageData = [NSData dataWithBytes:buffer length:read];
                 NSRange range = [pageData rangeOfData:targetData options:0 range:NSMakeRange(0, read)];
                 if (range.location != NSNotFound) {
@@ -342,6 +408,10 @@ NSArray* scanStringRange(NSString *targetString, uintptr_t minAddr, uintptr_t ma
                 }
             }
         }
+        
+        regionCount++;
+        if (regionCount % 10 == 0) usleep(1000);
+        
         addr += size;
         if (addr > maxAddr) break;
     }
@@ -400,6 +470,7 @@ NSString* handleCommand(NSString *cmd) {
     if (!savedLists) {
         savedLists = [NSMutableDictionary dictionary];
         listTimestamps = [NSMutableDictionary dictionary];
+        savedValues = [NSMutableDictionary dictionary];
     }
     NSArray *parts = [cmd componentsSeparatedByString:@" "];
     NSString *command = [parts[0] uppercaseString];
@@ -493,17 +564,17 @@ NSString* handleCommand(NSString *cmd) {
         }
         return response;
     }
-    // ===== НЕИЗВЕСТНЫЙ ПОИСК С РУЧНЫМ ДИАПАЗОНОМ =====
+    // ===== НЕИЗВЕСТНЫЙ ПОИСК С ШАГОМ =====
     else if ([command isEqualToString:@"SCAN_UNKNOWN_RANGE"]) {
-        if (parts.count < 4) return @"ERROR: need min_addr, max_addr, type";
+        if (parts.count < 5) return @"ERROR: need min_addr, max_addr, type, step";
         uintptr_t minAddr = strtoull([parts[1] UTF8String], NULL, 16);
         uintptr_t maxAddr = strtoull([parts[2] UTF8String], NULL, 16);
         NSString *type = [parts[3] uppercaseString];
+        int step = [parts[4] intValue];
         
         NSArray *results = nil;
-        
         if ([type isEqualToString:@"INT"]) {
-            results = scanIntRange(0, minAddr, maxAddr);
+            results = scanIntRangeStep(0, minAddr, maxAddr, step);
         } else if ([type isEqualToString:@"FLOAT"]) {
             results = scanFloatRange(0, 100, minAddr, maxAddr);
         } else if ([type isEqualToString:@"LONG"]) {
@@ -513,11 +584,19 @@ NSString* handleCommand(NSString *cmd) {
         } else if ([type isEqualToString:@"SHORT"]) {
             results = scanShortRange(0, minAddr, maxAddr);
         } else {
-            results = scanIntRange(0, minAddr, maxAddr);
+            results = scanIntRangeStep(0, minAddr, maxAddr, step);
         }
         
         int listId = nextListId++;
         savedLists[@(listId)] = [results mutableCopy];
+        
+        // Сохраняем начальные значения для сравнения
+        for (NSNumber *addrNum in results) {
+            uintptr_t addr = [addrNum unsignedLongValue];
+            int val = safeReadInt(addr);
+            savedValues[addrNum] = @(val);
+        }
+        
         listTimestamps[@(listId)] = @([[NSDate date] timeIntervalSince1970]);
         
         NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %d %lu", listId, (unsigned long)results.count];
@@ -527,7 +606,125 @@ NSString* handleCommand(NSString *cmd) {
         }
         return response;
     }
-    // ===== ФИЛЬТРАЦИЯ =====
+    // ===== ФИЛЬТРЫ UNKNOWN SEARCH =====
+    else if ([command isEqualToString:@"FILTER_CHANGED"]) {
+        if (parts.count < 2) return @"ERROR: need list_id";
+        int listId = [parts[1] intValue];
+        NSMutableArray *list = savedLists[@(listId)];
+        if (!list) return @"ERROR: list not found";
+        
+        NSMutableArray *filtered = [NSMutableArray array];
+        
+        for (NSNumber *addrNum in list) {
+            uintptr_t addr = [addrNum unsignedLongValue];
+            int newVal = safeReadInt(addr);
+            NSNumber *oldValNum = savedValues[addrNum];
+            int oldVal = oldValNum ? [oldValNum intValue] : newVal;
+            
+            if (newVal != oldVal) {
+                [filtered addObject:addrNum];
+                savedValues[addrNum] = @(newVal);
+            }
+        }
+        
+        savedLists[@(listId)] = filtered;
+        
+        NSMutableString *response = [NSMutableString stringWithFormat:@"FILTERED %d %lu", listId, (unsigned long)filtered.count];
+        NSUInteger maxShow = MIN(500, filtered.count);
+        for (NSUInteger i = 0; i < maxShow; i++) {
+            [response appendFormat:@"\n0x%lx", [filtered[i] unsignedLongValue]];
+        }
+        return response;
+    }
+    else if ([command isEqualToString:@"FILTER_UNCHANGED"]) {
+        if (parts.count < 2) return @"ERROR: need list_id";
+        int listId = [parts[1] intValue];
+        NSMutableArray *list = savedLists[@(listId)];
+        if (!list) return @"ERROR: list not found";
+        
+        NSMutableArray *filtered = [NSMutableArray array];
+        
+        for (NSNumber *addrNum in list) {
+            uintptr_t addr = [addrNum unsignedLongValue];
+            int newVal = safeReadInt(addr);
+            NSNumber *oldValNum = savedValues[addrNum];
+            int oldVal = oldValNum ? [oldValNum intValue] : newVal;
+            
+            if (newVal == oldVal) {
+                [filtered addObject:addrNum];
+            } else {
+                savedValues[addrNum] = @(newVal);
+            }
+        }
+        
+        savedLists[@(listId)] = filtered;
+        
+        NSMutableString *response = [NSMutableString stringWithFormat:@"FILTERED %d %lu", listId, (unsigned long)filtered.count];
+        NSUInteger maxShow = MIN(500, filtered.count);
+        for (NSUInteger i = 0; i < maxShow; i++) {
+            [response appendFormat:@"\n0x%lx", [filtered[i] unsignedLongValue]];
+        }
+        return response;
+    }
+    else if ([command isEqualToString:@"FILTER_INCREASED"]) {
+        if (parts.count < 2) return @"ERROR: need list_id";
+        int listId = [parts[1] intValue];
+        NSMutableArray *list = savedLists[@(listId)];
+        if (!list) return @"ERROR: list not found";
+        
+        NSMutableArray *filtered = [NSMutableArray array];
+        
+        for (NSNumber *addrNum in list) {
+            uintptr_t addr = [addrNum unsignedLongValue];
+            int newVal = safeReadInt(addr);
+            NSNumber *oldValNum = savedValues[addrNum];
+            int oldVal = oldValNum ? [oldValNum intValue] : newVal;
+            
+            if (newVal > oldVal) {
+                [filtered addObject:addrNum];
+                savedValues[addrNum] = @(newVal);
+            }
+        }
+        
+        savedLists[@(listId)] = filtered;
+        
+        NSMutableString *response = [NSMutableString stringWithFormat:@"FILTERED %d %lu", listId, (unsigned long)filtered.count];
+        NSUInteger maxShow = MIN(500, filtered.count);
+        for (NSUInteger i = 0; i < maxShow; i++) {
+            [response appendFormat:@"\n0x%lx", [filtered[i] unsignedLongValue]];
+        }
+        return response;
+    }
+    else if ([command isEqualToString:@"FILTER_DECREASED"]) {
+        if (parts.count < 2) return @"ERROR: need list_id";
+        int listId = [parts[1] intValue];
+        NSMutableArray *list = savedLists[@(listId)];
+        if (!list) return @"ERROR: list not found";
+        
+        NSMutableArray *filtered = [NSMutableArray array];
+        
+        for (NSNumber *addrNum in list) {
+            uintptr_t addr = [addrNum unsignedLongValue];
+            int newVal = safeReadInt(addr);
+            NSNumber *oldValNum = savedValues[addrNum];
+            int oldVal = oldValNum ? [oldValNum intValue] : newVal;
+            
+            if (newVal < oldVal) {
+                [filtered addObject:addrNum];
+                savedValues[addrNum] = @(newVal);
+            }
+        }
+        
+        savedLists[@(listId)] = filtered;
+        
+        NSMutableString *response = [NSMutableString stringWithFormat:@"FILTERED %d %lu", listId, (unsigned long)filtered.count];
+        NSUInteger maxShow = MIN(500, filtered.count);
+        for (NSUInteger i = 0; i < maxShow; i++) {
+            [response appendFormat:@"\n0x%lx", [filtered[i] unsignedLongValue]];
+        }
+        return response;
+    }
+    // ===== ОСТАЛЬНЫЕ ФИЛЬТРЫ (по значению) =====
     else if ([command isEqualToString:@"FILTER_INT"]) {
         if (parts.count < 3) return @"ERROR: need list_id and value";
         int listId = [parts[1] intValue];
@@ -678,11 +875,19 @@ NSString* handleCommand(NSString *cmd) {
         int listId = [parts[1] intValue];
         [savedLists removeObjectForKey:@(listId)];
         [listTimestamps removeObjectForKey:@(listId)];
+        if (savedValues) {
+            NSMutableArray *toRemove = [NSMutableArray array];
+            for (NSNumber *key in savedValues) {
+                if ([key intValue] == listId) [toRemove addObject:key];
+            }
+            for (NSNumber *key in toRemove) [savedValues removeObjectForKey:key];
+        }
         return @"CLEARED";
     }
     else if ([command isEqualToString:@"CLEAR_ALL_LISTS"]) {
         [savedLists removeAllObjects];
         [listTimestamps removeAllObjects];
+        [savedValues removeAllObjects];
         nextListId = 1;
         return @"CLEARED";
     }
