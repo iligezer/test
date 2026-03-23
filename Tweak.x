@@ -7,6 +7,9 @@
 #import <net/if.h>
 #import <limits.h>
 
+// ===== ПРОТОТИПЫ ФУНКЦИЙ =====
+uintptr_t safeReadPtr(uintptr_t addr);
+
 // ===== ГЛОБАЛЬНЫЕ =====
 static int serverSocket = -1;
 static BOOL serverRunning = NO;
@@ -24,9 +27,6 @@ static NSMutableDictionary *savedShortValues = nil;
 static NSMutableDictionary *savedStringValues = nil;
 static NSMutableDictionary *listTimestamps = nil;
 static int nextListId = 1;
-
-// ===== ПРОТОТИПЫ =====
-uintptr_t safeReadPtr(uintptr_t addr);
 
 void addLog(NSString *msg) {
     if (!logText) logText = [[NSMutableString alloc] init];
@@ -128,6 +128,15 @@ long long safeReadLong(uintptr_t addr) {
     return val;
 }
 
+uintptr_t safeReadPtr(uintptr_t addr) {
+    if (addr == 0) return 0;
+    uintptr_t val = 0;
+    vm_size_t read = 0;
+    kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 8, (vm_address_t)&val, &read);
+    if (kr != KERN_SUCCESS || read != 8) return 0;
+    return val;
+}
+
 // ===== СКАНИРОВАНИЕ С ШАГОМ =====
 NSArray* scanIntRangeStep(int targetValue, uintptr_t minAddr, uintptr_t maxAddr, int step) {
     NSMutableArray *results = [NSMutableArray array];
@@ -148,7 +157,6 @@ NSArray* scanIntRangeStep(int targetValue, uintptr_t minAddr, uintptr_t maxAddr,
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
         
-        // Пропускаем слишком маленькие регионы
         if (size < 0x1000) {
             addr += size;
             continue;
@@ -176,9 +184,8 @@ NSArray* scanIntRangeStep(int targetValue, uintptr_t minAddr, uintptr_t maxAddr,
         }
         
         regionCount++;
-        // Пауза каждые 5 регионов для стабильности
         if (regionCount % 5 == 0) {
-            usleep(10000); // 10 мс
+            usleep(10000);
         }
         
         addr += size;
@@ -587,7 +594,6 @@ NSString* handleCommand(NSString *cmd) {
         int listId = nextListId++;
         savedLists[@(listId)] = [results mutableCopy];
         
-        // Сохраняем начальные значения в зависимости от типа
         for (NSNumber *addrNum in results) {
             uintptr_t addr = [addrNum unsignedLongValue];
             if ([type isEqualToString:@"INT"]) {
@@ -672,51 +678,6 @@ NSString* handleCommand(NSString *cmd) {
             [response appendFormat:@"\n0x%lx", [filtered[i] unsignedLongValue]];
         }
         return response;
-    }
-        // ===== ПОИСК ЦЕПОЧКИ УКАЗАТЕЛЕЙ =====
-    else if ([command isEqualToString:@"FIND_POINTER_CHAIN"]) {
-        if (parts.count < 3) return @"ERROR: need target_addr, max_depth";
-        uintptr_t targetAddr = strtoull([parts[1] UTF8String], NULL, 16);
-        int maxDepth = [parts[2] intValue];
-        
-        NSMutableArray *chain = [NSMutableArray array];
-        uintptr_t currentAddr = targetAddr;
-        
-        for (int depth = 0; depth < maxDepth; depth++) {
-            uintptr_t found = 0;
-            
-            // Сканируем память в поисках указателя на currentAddr
-            for (uintptr_t addr = 0x100000000; addr < 0x300000000; addr += 4) {
-                uintptr_t val = safeReadPtr(addr);
-                if (val == currentAddr) {
-                    found = addr;
-                    break;
-                }
-            }
-            
-            if (found != 0) {
-                [chain addObject:@(found)];
-                currentAddr = found;
-            } else {
-                break;
-            }
-        }
-        
-        NSMutableString *response = [NSMutableString stringWithFormat:@"POINTER_CHAIN %lu", (unsigned long)chain.count];
-        for (NSNumber *addr in chain) {
-            [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
-        }
-        return response;
-    }
-    
-    // ===== LIST_MODULES =====
-    else if ([command isEqualToString:@"LIST_MODULES"]) {
-        return listModules();
-    }
-    
-    // ===== ЧТЕНИЕ =====
-    else if ([command isEqualToString:@"READ_INT"]) {
-        // ...
     }
     else if ([command isEqualToString:@"FILTER_UNCHANGED"]) {
         if (parts.count < 3) return @"ERROR: need list_id and type";
@@ -1020,6 +981,40 @@ NSString* handleCommand(NSString *cmd) {
         }
         return response;
     }
+    // ===== ПОИСК ЦЕПОЧКИ УКАЗАТЕЛЕЙ =====
+    else if ([command isEqualToString:@"FIND_POINTER_CHAIN"]) {
+        if (parts.count < 3) return @"ERROR: need target_addr, max_depth";
+        uintptr_t targetAddr = strtoull([parts[1] UTF8String], NULL, 16);
+        int maxDepth = [parts[2] intValue];
+        
+        NSMutableArray *chain = [NSMutableArray array];
+        uintptr_t currentAddr = targetAddr;
+        
+        for (int depth = 0; depth < maxDepth; depth++) {
+            uintptr_t found = 0;
+            
+            for (uintptr_t addr = 0x100000000; addr < 0x300000000; addr += 4) {
+                uintptr_t val = safeReadPtr(addr);
+                if (val == currentAddr) {
+                    found = addr;
+                    break;
+                }
+            }
+            
+            if (found != 0) {
+                [chain addObject:@(found)];
+                currentAddr = found;
+            } else {
+                break;
+            }
+        }
+        
+        NSMutableString *response = [NSMutableString stringWithFormat:@"POINTER_CHAIN %lu", (unsigned long)chain.count];
+        for (NSNumber *addr in chain) {
+            [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
+        }
+        return response;
+    }
     // ===== УПРАВЛЕНИЕ СПИСКАМИ =====
     else if ([command isEqualToString:@"CLEAR_LIST"]) {
         if (parts.count < 2) return @"ERROR: need list_id";
@@ -1091,10 +1086,7 @@ NSString* handleCommand(NSString *cmd) {
     else if ([command isEqualToString:@"READ_PTR"]) {
         if (parts.count < 2) return @"ERROR: need addr";
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
-        uintptr_t val = 0;
-        vm_size_t read = 0;
-        kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 8, (vm_address_t)&val, &read);
-        if (kr != KERN_SUCCESS || read != 8) return @"PTR 0x0";
+        uintptr_t val = safeReadPtr(addr);
         return [NSString stringWithFormat:@"PTR 0x%lx", val];
     }
     else if ([command isEqualToString:@"READ_STRING"]) {
