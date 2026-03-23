@@ -45,7 +45,7 @@ NSString* getIPAddress(void) {
     return address;
 }
 
-// ===== БЕЗОПАСНОЕ ЧТЕНИЕ ПАМЯТИ =====
+// ===== БЕЗОПАСНОЕ ЧТЕНИЕ =====
 int safeReadInt(uintptr_t addr) {
     if (addr == 0) return 0;
     int val = 0;
@@ -100,7 +100,7 @@ long long safeReadLong(uintptr_t addr) {
     return val;
 }
 
-// ===== СКАНИРОВАНИЕ ПАМЯТИ (БЕЗ ЛИМИТА) =====
+// ===== СКАНИРОВАНИЕ (БЕЗ ЛИМИТА) =====
 NSArray* scanIntRange(int targetValue, uintptr_t minAddr, uintptr_t maxAddr) {
     NSMutableArray *results = [NSMutableArray array];
     task_t task = mach_task_self();
@@ -118,7 +118,6 @@ NSArray* scanIntRange(int targetValue, uintptr_t minAddr, uintptr_t maxAddr) {
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
         
-        // Сканируем только rw- регионы (быстро)
         if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
             uintptr_t scan_start = MAX(addr, minAddr);
             uintptr_t scan_end = MIN(addr + size, maxAddr);
@@ -133,51 +132,6 @@ NSArray* scanIntRange(int targetValue, uintptr_t minAddr, uintptr_t maxAddr) {
                 
                 for (uintptr_t offset = 0; offset + 4 <= pageSize; offset += 4) {
                     int val = *(int*)(buffer + offset);
-                    if (val == targetValue) {
-                        [results addObject:@(page + offset)];
-                        // БЕЗ ЛИМИТА — собираем всё
-                    }
-                }
-            }
-        }
-        addr += size;
-        if (addr > maxAddr) break;
-    }
-    free(buffer);
-    return results;
-}
-
-NSArray* scanLongRange(long long targetValue, uintptr_t minAddr, uintptr_t maxAddr) {
-    NSMutableArray *results = [NSMutableArray array];
-    task_t task = mach_task_self();
-    vm_address_t addr = minAddr;
-    vm_size_t size = 0;
-    struct vm_region_basic_info_64 info;
-    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-    mach_port_t object_name = MACH_PORT_NULL;
-    uint8_t *buffer = malloc(0x10000);
-    
-    if (!buffer) return results;
-    
-    while (addr < maxAddr) {
-        kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
-                                         (vm_region_info_t)&info, &count, &object_name);
-        if (kr != KERN_SUCCESS) break;
-        
-        if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
-            uintptr_t scan_start = MAX(addr, minAddr);
-            uintptr_t scan_end = MIN(addr + size, maxAddr);
-            
-            for (uintptr_t page = scan_start; page < scan_end; page += 0x10000) {
-                uintptr_t pageSize = MIN(0x10000, scan_end - page);
-                if (pageSize < 8) continue;
-                
-                vm_size_t read = 0;
-                kr = vm_read_overwrite(task, page, pageSize, (vm_address_t)buffer, &read);
-                if (kr != KERN_SUCCESS || read < 8) continue;
-                
-                for (uintptr_t offset = 0; offset + 8 <= pageSize; offset += 8) {
-                    long long val = *(long long*)(buffer + offset);
                     if (val == targetValue) {
                         [results addObject:@(page + offset)];
                     }
@@ -223,6 +177,50 @@ NSArray* scanFloatRange(float targetValue, float tolerance, uintptr_t minAddr, u
                 for (uintptr_t offset = 0; offset + 4 <= pageSize; offset += 4) {
                     float val = *(float*)(buffer + offset);
                     if (fabs(val - targetValue) <= tolerance) {
+                        [results addObject:@(page + offset)];
+                    }
+                }
+            }
+        }
+        addr += size;
+        if (addr > maxAddr) break;
+    }
+    free(buffer);
+    return results;
+}
+
+NSArray* scanLongRange(long long targetValue, uintptr_t minAddr, uintptr_t maxAddr) {
+    NSMutableArray *results = [NSMutableArray array];
+    task_t task = mach_task_self();
+    vm_address_t addr = minAddr;
+    vm_size_t size = 0;
+    struct vm_region_basic_info_64 info;
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t object_name = MACH_PORT_NULL;
+    uint8_t *buffer = malloc(0x10000);
+    
+    if (!buffer) return results;
+    
+    while (addr < maxAddr) {
+        kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
+                                         (vm_region_info_t)&info, &count, &object_name);
+        if (kr != KERN_SUCCESS) break;
+        
+        if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
+            uintptr_t scan_start = MAX(addr, minAddr);
+            uintptr_t scan_end = MIN(addr + size, maxAddr);
+            
+            for (uintptr_t page = scan_start; page < scan_end; page += 0x10000) {
+                uintptr_t pageSize = MIN(0x10000, scan_end - page);
+                if (pageSize < 8) continue;
+                
+                vm_size_t read = 0;
+                kr = vm_read_overwrite(task, page, pageSize, (vm_address_t)buffer, &read);
+                if (kr != KERN_SUCCESS || read < 8) continue;
+                
+                for (uintptr_t offset = 0; offset + 8 <= pageSize; offset += 8) {
+                    long long val = *(long long*)(buffer + offset);
+                    if (val == targetValue) {
                         [results addObject:@(page + offset)];
                     }
                 }
@@ -388,7 +386,7 @@ NSData* memoryDump(uintptr_t addr, int size) {
     return data;
 }
 
-// ===== ПОЛУЧЕНИЕ СПИСКА МОДУЛЕЙ =====
+// ===== СПИСОК МОДУЛЕЙ =====
 NSString* listModules(void) {
     NSMutableString *result = [NSMutableString string];
     task_t task = mach_task_self();
@@ -431,7 +429,6 @@ NSString* handleCommand(NSString *cmd) {
     if ([command isEqualToString:@"PING"]) {
         return @"PONG";
     }
-    // Без диапазона (для обратной совместимости)
     else if ([command isEqualToString:@"SCAN_BYTE"]) {
         if (parts.count < 2) return @"ERROR: need value";
         char value = (char)[parts[1] intValue];
@@ -483,123 +480,6 @@ NSString* handleCommand(NSString *cmd) {
         }
         return response;
     }
-    // С ДИАПАЗОНОМ
-    else if ([command isEqualToString:@"SCAN_BYTE_RANGE"]) {
-        if (parts.count < 4) return @"ERROR: need value, min, max";
-        char value = (char)[parts[1] intValue];
-        uintptr_t minAddr = strtoull([parts[2] UTF8String], NULL, 16);
-        uintptr_t maxAddr = strtoull([parts[3] UTF8String], NULL, 16);
-        NSArray *results = scanByteRange(value, minAddr, maxAddr);
-        NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
-        for (NSNumber *addr in results) {
-            [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
-        }
-        return response;
-    }
-    else if ([command isEqualToString:@"SCAN_SHORT_RANGE"]) {
-        if (parts.count < 4) return @"ERROR: need value, min, max";
-        short value = (short)[parts[1] intValue];
-        uintptr_t minAddr = strtoull([parts[2] UTF8String], NULL, 16);
-        uintptr_t maxAddr = strtoull([parts[3] UTF8String], NULL, 16);
-        NSArray *results = scanShortRange(value, minAddr, maxAddr);
-        NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
-        for (NSNumber *addr in results) {
-            [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
-        }
-        return response;
-    }
-    else if ([command isEqualToString:@"SCAN_INT_RANGE"]) {
-        if (parts.count < 4) return @"ERROR: need value, min, max";
-        int value = [parts[1] intValue];
-        uintptr_t minAddr = strtoull([parts[2] UTF8String], NULL, 16);
-        uintptr_t maxAddr = strtoull([parts[3] UTF8String], NULL, 16);
-        NSArray *results = scanIntRange(value, minAddr, maxAddr);
-        NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
-        for (NSNumber *addr in results) {
-            [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
-        }
-        return response;
-    }
-    else if ([command isEqualToString:@"SCAN_LONG_RANGE"]) {
-        if (parts.count < 4) return @"ERROR: need value, min, max";
-        long long value = strtoll([parts[1] UTF8String], NULL, 0);
-        uintptr_t minAddr = strtoull([parts[2] UTF8String], NULL, 16);
-        uintptr_t maxAddr = strtoull([parts[3] UTF8String], NULL, 16);
-        NSArray *results = scanLongRange(value, minAddr, maxAddr);
-        NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
-        for (NSNumber *addr in results) {
-            [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
-        }
-        return response;
-    }
-    else if ([command isEqualToString:@"SCAN_FLOAT_RANGE"]) {
-        if (parts.count < 5) return @"ERROR: need value, tolerance, min, max";
-        float value = [parts[1] floatValue];
-        float tolerance = [parts[2] floatValue];
-        uintptr_t minAddr = strtoull([parts[3] UTF8String], NULL, 16);
-        uintptr_t maxAddr = strtoull([parts[4] UTF8String], NULL, 16);
-        NSArray *results = scanFloatRange(value, tolerance, minAddr, maxAddr);
-        NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
-        for (NSNumber *addr in results) {
-            [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
-        }
-        return response;
-    }
-    // СКАНИРОВАНИЕ СТРОК
-    else if ([command isEqualToString:@"SCAN_STRING_RANGE"]) {
-        if (parts.count < 4) return @"ERROR: need value, min, max";
-        NSString *value = parts[1];
-        uintptr_t minAddr = strtoull([parts[2] UTF8String], NULL, 16);
-        uintptr_t maxAddr = strtoull([parts[3] UTF8String], NULL, 16);
-        NSArray *results = scanStringRange(value, minAddr, maxAddr);
-        NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
-        for (NSNumber *addr in results) {
-            [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
-        }
-        return response;
-    }
-    // LIST_MODULES
-    else if ([command isEqualToString:@"LIST_MODULES"]) {
-        return listModules();
-    }
-    // GET_MODULE
-    else if ([command isEqualToString:@"GET_MODULE"]) {
-        if (parts.count < 2) return @"ERROR: need module name";
-        NSString *moduleName = parts[1];
-        
-        task_t task = mach_task_self();
-        vm_address_t addr = 0;
-        vm_size_t size = 0;
-        struct vm_region_basic_info_64 info;
-        mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-        mach_port_t object_name = MACH_PORT_NULL;
-        
-        while (1) {
-            kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
-                                             (vm_region_info_t)&info, &count, &object_name);
-            if (kr != KERN_SUCCESS) break;
-            
-            if (addr >= 0x100000000) {
-                uint8_t *buffer = malloc(256);
-                if (buffer) {
-                    vm_size_t read = 0;
-                    kr = vm_read_overwrite(task, addr, 256, (vm_address_t)buffer, &read);
-                    if (kr == KERN_SUCCESS && read > 0) {
-                        NSString *dataStr = [[NSString alloc] initWithBytes:buffer length:read encoding:NSUTF8StringEncoding];
-                        if (dataStr && [dataStr containsString:moduleName]) {
-                            free(buffer);
-                            return [NSString stringWithFormat:@"MODULE 0x%lx 0x%lx", (unsigned long)addr, (unsigned long)(addr + size)];
-                        }
-                    }
-                    free(buffer);
-                }
-            }
-            addr += size;
-            if (addr > 0x300000000) break;
-        }
-        return @"ERROR: module not found";
-    }
-    // Чтение
     else if ([command isEqualToString:@"READ_BYTE"]) {
         if (parts.count < 2) return @"ERROR: need addr";
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
@@ -676,6 +556,9 @@ NSString* handleCommand(NSString *cmd) {
         
         NSString *b64 = [data base64EncodedStringWithOptions:0];
         return [NSString stringWithFormat:@"DUMP_DATA %@", b64];
+    }
+    else if ([command isEqualToString:@"LIST_MODULES"]) {
+        return listModules();
     }
     
     return @"ERROR: unknown command";
@@ -764,7 +647,7 @@ void stopServer(void) {
     addLog(@"🛑 Сервер остановлен");
 }
 
-// ===== ОБРАБОТЧИК КНОПОК =====
+// ===== КНОПКИ =====
 @interface ServerController : NSObject
 + (void)startServer;
 + (void)stopServer;
