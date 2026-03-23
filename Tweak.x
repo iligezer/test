@@ -100,8 +100,8 @@ long long safeReadLong(uintptr_t addr) {
     return val;
 }
 
-// ===== СКАНИРОВАНИЕ ПАМЯТИ =====
-NSArray* scanIntRange(int targetValue, uintptr_t minAddr, uintptr_t maxAddr, int maxResults) {
+// ===== СКАНИРОВАНИЕ ПАМЯТИ (БЕЗ ЛИМИТА) =====
+NSArray* scanIntRange(int targetValue, uintptr_t minAddr, uintptr_t maxAddr) {
     NSMutableArray *results = [NSMutableArray array];
     task_t task = mach_task_self();
     vm_address_t addr = minAddr;
@@ -118,7 +118,8 @@ NSArray* scanIntRange(int targetValue, uintptr_t minAddr, uintptr_t maxAddr, int
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
         
-        if (info.protection & VM_PROT_READ) {
+        // Сканируем только rw- регионы (быстро)
+        if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
             uintptr_t scan_start = MAX(addr, minAddr);
             uintptr_t scan_end = MIN(addr + size, maxAddr);
             
@@ -134,10 +135,7 @@ NSArray* scanIntRange(int targetValue, uintptr_t minAddr, uintptr_t maxAddr, int
                     int val = *(int*)(buffer + offset);
                     if (val == targetValue) {
                         [results addObject:@(page + offset)];
-                        if (results.count >= maxResults) {
-                            free(buffer);
-                            return results;
-                        }
+                        // БЕЗ ЛИМИТА — собираем всё
                     }
                 }
             }
@@ -149,7 +147,7 @@ NSArray* scanIntRange(int targetValue, uintptr_t minAddr, uintptr_t maxAddr, int
     return results;
 }
 
-NSArray* scanLongRange(long long targetValue, uintptr_t minAddr, uintptr_t maxAddr, int maxResults) {
+NSArray* scanLongRange(long long targetValue, uintptr_t minAddr, uintptr_t maxAddr) {
     NSMutableArray *results = [NSMutableArray array];
     task_t task = mach_task_self();
     vm_address_t addr = minAddr;
@@ -166,7 +164,7 @@ NSArray* scanLongRange(long long targetValue, uintptr_t minAddr, uintptr_t maxAd
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
         
-        if (info.protection & VM_PROT_READ) {
+        if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
             uintptr_t scan_start = MAX(addr, minAddr);
             uintptr_t scan_end = MIN(addr + size, maxAddr);
             
@@ -182,10 +180,6 @@ NSArray* scanLongRange(long long targetValue, uintptr_t minAddr, uintptr_t maxAd
                     long long val = *(long long*)(buffer + offset);
                     if (val == targetValue) {
                         [results addObject:@(page + offset)];
-                        if (results.count >= maxResults) {
-                            free(buffer);
-                            return results;
-                        }
                     }
                 }
             }
@@ -197,7 +191,7 @@ NSArray* scanLongRange(long long targetValue, uintptr_t minAddr, uintptr_t maxAd
     return results;
 }
 
-NSArray* scanFloatRange(float targetValue, float tolerance, uintptr_t minAddr, uintptr_t maxAddr, int maxResults) {
+NSArray* scanFloatRange(float targetValue, float tolerance, uintptr_t minAddr, uintptr_t maxAddr) {
     NSMutableArray *results = [NSMutableArray array];
     task_t task = mach_task_self();
     vm_address_t addr = minAddr;
@@ -214,7 +208,7 @@ NSArray* scanFloatRange(float targetValue, float tolerance, uintptr_t minAddr, u
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
         
-        if (info.protection & VM_PROT_READ) {
+        if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
             uintptr_t scan_start = MAX(addr, minAddr);
             uintptr_t scan_end = MIN(addr + size, maxAddr);
             
@@ -230,10 +224,6 @@ NSArray* scanFloatRange(float targetValue, float tolerance, uintptr_t minAddr, u
                     float val = *(float*)(buffer + offset);
                     if (fabs(val - targetValue) <= tolerance) {
                         [results addObject:@(page + offset)];
-                        if (results.count >= maxResults) {
-                            free(buffer);
-                            return results;
-                        }
                     }
                 }
             }
@@ -245,7 +235,7 @@ NSArray* scanFloatRange(float targetValue, float tolerance, uintptr_t minAddr, u
     return results;
 }
 
-NSArray* scanByteRange(char targetValue, uintptr_t minAddr, uintptr_t maxAddr, int maxResults) {
+NSArray* scanByteRange(char targetValue, uintptr_t minAddr, uintptr_t maxAddr) {
     NSMutableArray *results = [NSMutableArray array];
     task_t task = mach_task_self();
     vm_address_t addr = minAddr;
@@ -262,7 +252,7 @@ NSArray* scanByteRange(char targetValue, uintptr_t minAddr, uintptr_t maxAddr, i
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
         
-        if (info.protection & VM_PROT_READ) {
+        if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
             uintptr_t scan_start = MAX(addr, minAddr);
             uintptr_t scan_end = MIN(addr + size, maxAddr);
             
@@ -278,10 +268,6 @@ NSArray* scanByteRange(char targetValue, uintptr_t minAddr, uintptr_t maxAddr, i
                     char val = *(char*)(buffer + offset);
                     if (val == targetValue) {
                         [results addObject:@(page + offset)];
-                        if (results.count >= maxResults) {
-                            free(buffer);
-                            return results;
-                        }
                     }
                 }
             }
@@ -293,7 +279,7 @@ NSArray* scanByteRange(char targetValue, uintptr_t minAddr, uintptr_t maxAddr, i
     return results;
 }
 
-NSArray* scanShortRange(short targetValue, uintptr_t minAddr, uintptr_t maxAddr, int maxResults) {
+NSArray* scanShortRange(short targetValue, uintptr_t minAddr, uintptr_t maxAddr) {
     NSMutableArray *results = [NSMutableArray array];
     task_t task = mach_task_self();
     vm_address_t addr = minAddr;
@@ -310,7 +296,7 @@ NSArray* scanShortRange(short targetValue, uintptr_t minAddr, uintptr_t maxAddr,
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
         
-        if (info.protection & VM_PROT_READ) {
+        if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
             uintptr_t scan_start = MAX(addr, minAddr);
             uintptr_t scan_end = MIN(addr + size, maxAddr);
             
@@ -326,10 +312,6 @@ NSArray* scanShortRange(short targetValue, uintptr_t minAddr, uintptr_t maxAddr,
                     short val = *(short*)(buffer + offset);
                     if (val == targetValue) {
                         [results addObject:@(page + offset)];
-                        if (results.count >= maxResults) {
-                            free(buffer);
-                            return results;
-                        }
                     }
                 }
             }
@@ -341,8 +323,7 @@ NSArray* scanShortRange(short targetValue, uintptr_t minAddr, uintptr_t maxAddr,
     return results;
 }
 
-// Сканирование строк
-NSArray* scanStringRange(NSString *targetString, uintptr_t minAddr, uintptr_t maxAddr, int maxResults) {
+NSArray* scanStringRange(NSString *targetString, uintptr_t minAddr, uintptr_t maxAddr) {
     NSMutableArray *results = [NSMutableArray array];
     task_t task = mach_task_self();
     vm_address_t addr = minAddr;
@@ -361,7 +342,7 @@ NSArray* scanStringRange(NSString *targetString, uintptr_t minAddr, uintptr_t ma
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
         
-        if (info.protection & VM_PROT_READ) {
+        if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
             uintptr_t scan_start = MAX(addr, minAddr);
             uintptr_t scan_end = MIN(addr + size, maxAddr);
             
@@ -377,10 +358,6 @@ NSArray* scanStringRange(NSString *targetString, uintptr_t minAddr, uintptr_t ma
                 NSRange range = [pageData rangeOfData:targetData options:0 range:NSMakeRange(0, read)];
                 if (range.location != NSNotFound) {
                     [results addObject:@(page + range.location)];
-                    if (results.count >= maxResults) {
-                        free(buffer);
-                        return results;
-                    }
                 }
             }
         }
@@ -458,8 +435,7 @@ NSString* handleCommand(NSString *cmd) {
     else if ([command isEqualToString:@"SCAN_BYTE"]) {
         if (parts.count < 2) return @"ERROR: need value";
         char value = (char)[parts[1] intValue];
-        int max = (parts.count > 2) ? [parts[2] intValue] : 500;
-        NSArray *results = scanByteRange(value, 0x100000000, 0x300000000, max);
+        NSArray *results = scanByteRange(value, 0x100000000, 0x300000000);
         NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
         for (NSNumber *addr in results) {
             [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
@@ -469,8 +445,7 @@ NSString* handleCommand(NSString *cmd) {
     else if ([command isEqualToString:@"SCAN_SHORT"]) {
         if (parts.count < 2) return @"ERROR: need value";
         short value = (short)[parts[1] intValue];
-        int max = (parts.count > 2) ? [parts[2] intValue] : 500;
-        NSArray *results = scanShortRange(value, 0x100000000, 0x300000000, max);
+        NSArray *results = scanShortRange(value, 0x100000000, 0x300000000);
         NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
         for (NSNumber *addr in results) {
             [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
@@ -480,8 +455,7 @@ NSString* handleCommand(NSString *cmd) {
     else if ([command isEqualToString:@"SCAN_INT"]) {
         if (parts.count < 2) return @"ERROR: need value";
         int value = [parts[1] intValue];
-        int max = (parts.count > 2) ? [parts[2] intValue] : 500;
-        NSArray *results = scanIntRange(value, 0x100000000, 0x300000000, max);
+        NSArray *results = scanIntRange(value, 0x100000000, 0x300000000);
         NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
         for (NSNumber *addr in results) {
             [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
@@ -491,8 +465,7 @@ NSString* handleCommand(NSString *cmd) {
     else if ([command isEqualToString:@"SCAN_LONG"]) {
         if (parts.count < 2) return @"ERROR: need value";
         long long value = strtoll([parts[1] UTF8String], NULL, 0);
-        int max = (parts.count > 2) ? [parts[2] intValue] : 500;
-        NSArray *results = scanLongRange(value, 0x100000000, 0x300000000, max);
+        NSArray *results = scanLongRange(value, 0x100000000, 0x300000000);
         NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
         for (NSNumber *addr in results) {
             [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
@@ -503,8 +476,7 @@ NSString* handleCommand(NSString *cmd) {
         if (parts.count < 2) return @"ERROR: need value";
         float value = [parts[1] floatValue];
         float tolerance = (parts.count > 2) ? [parts[2] floatValue] : 0.001;
-        int max = (parts.count > 3) ? [parts[3] intValue] : 500;
-        NSArray *results = scanFloatRange(value, tolerance, 0x100000000, 0x300000000, max);
+        NSArray *results = scanFloatRange(value, tolerance, 0x100000000, 0x300000000);
         NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
         for (NSNumber *addr in results) {
             [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
@@ -517,8 +489,7 @@ NSString* handleCommand(NSString *cmd) {
         char value = (char)[parts[1] intValue];
         uintptr_t minAddr = strtoull([parts[2] UTF8String], NULL, 16);
         uintptr_t maxAddr = strtoull([parts[3] UTF8String], NULL, 16);
-        int max = (parts.count > 4) ? [parts[4] intValue] : 500;
-        NSArray *results = scanByteRange(value, minAddr, maxAddr, max);
+        NSArray *results = scanByteRange(value, minAddr, maxAddr);
         NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
         for (NSNumber *addr in results) {
             [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
@@ -530,8 +501,7 @@ NSString* handleCommand(NSString *cmd) {
         short value = (short)[parts[1] intValue];
         uintptr_t minAddr = strtoull([parts[2] UTF8String], NULL, 16);
         uintptr_t maxAddr = strtoull([parts[3] UTF8String], NULL, 16);
-        int max = (parts.count > 4) ? [parts[4] intValue] : 500;
-        NSArray *results = scanShortRange(value, minAddr, maxAddr, max);
+        NSArray *results = scanShortRange(value, minAddr, maxAddr);
         NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
         for (NSNumber *addr in results) {
             [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
@@ -543,8 +513,7 @@ NSString* handleCommand(NSString *cmd) {
         int value = [parts[1] intValue];
         uintptr_t minAddr = strtoull([parts[2] UTF8String], NULL, 16);
         uintptr_t maxAddr = strtoull([parts[3] UTF8String], NULL, 16);
-        int max = (parts.count > 4) ? [parts[4] intValue] : 500;
-        NSArray *results = scanIntRange(value, minAddr, maxAddr, max);
+        NSArray *results = scanIntRange(value, minAddr, maxAddr);
         NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
         for (NSNumber *addr in results) {
             [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
@@ -556,8 +525,7 @@ NSString* handleCommand(NSString *cmd) {
         long long value = strtoll([parts[1] UTF8String], NULL, 0);
         uintptr_t minAddr = strtoull([parts[2] UTF8String], NULL, 16);
         uintptr_t maxAddr = strtoull([parts[3] UTF8String], NULL, 16);
-        int max = (parts.count > 4) ? [parts[4] intValue] : 500;
-        NSArray *results = scanLongRange(value, minAddr, maxAddr, max);
+        NSArray *results = scanLongRange(value, minAddr, maxAddr);
         NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
         for (NSNumber *addr in results) {
             [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
@@ -570,8 +538,7 @@ NSString* handleCommand(NSString *cmd) {
         float tolerance = [parts[2] floatValue];
         uintptr_t minAddr = strtoull([parts[3] UTF8String], NULL, 16);
         uintptr_t maxAddr = strtoull([parts[4] UTF8String], NULL, 16);
-        int max = (parts.count > 5) ? [parts[5] intValue] : 500;
-        NSArray *results = scanFloatRange(value, tolerance, minAddr, maxAddr, max);
+        NSArray *results = scanFloatRange(value, tolerance, minAddr, maxAddr);
         NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
         for (NSNumber *addr in results) {
             [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
@@ -584,8 +551,7 @@ NSString* handleCommand(NSString *cmd) {
         NSString *value = parts[1];
         uintptr_t minAddr = strtoull([parts[2] UTF8String], NULL, 16);
         uintptr_t maxAddr = strtoull([parts[3] UTF8String], NULL, 16);
-        int max = (parts.count > 4) ? [parts[4] intValue] : 500;
-        NSArray *results = scanStringRange(value, minAddr, maxAddr, max);
+        NSArray *results = scanStringRange(value, minAddr, maxAddr);
         NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
         for (NSNumber *addr in results) {
             [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
@@ -687,7 +653,6 @@ NSString* handleCommand(NSString *cmd) {
             return @"ERROR: read failed";
         }
         
-        // Ищем конец строки
         NSUInteger len = 0;
         for (NSUInteger i = 0; i < read; i++) {
             if (buffer[i] == 0) break;
