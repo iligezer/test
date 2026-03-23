@@ -2,10 +2,8 @@
 #import <mach/mach.h>
 
 // ===== ГЛОБАЛЬНЫЕ =====
-static UIWindow *win = nil;
 static UITextView *logView = nil;
 static NSMutableString *logText = nil;
-static UIButton *findBtn = nil;
 static BOOL isSearching = NO;
 static uintptr_t g_myTransform = 0;
 static uintptr_t g_arrayStart = 0;
@@ -16,7 +14,6 @@ void addLog(NSString *msg) {
     [logText appendString:@"\n"];
     dispatch_async(dispatch_get_main_queue(), ^{
         if (logView) logView.text = logText;
-        // Автоскролл вниз
         if (logView.text.length > 0) {
             NSRange bottom = NSMakeRange(logView.text.length - 1, 1);
             [logView scrollRangeToVisible:bottom];
@@ -48,7 +45,6 @@ float readFloat(uintptr_t addr) {
     return val;
 }
 
-// ===== ПОИСК =====
 void findPlayers() {
     if (isSearching) return;
     isSearching = YES;
@@ -81,7 +77,6 @@ void findPlayers() {
     int isWasted = readInt(quark + 0x7A);
     addLog([NSString stringWithFormat:@"IsWasted: %d", isWasted]);
     
-    // Ищем NetworkPlayer
     addLog(@"\n🔍 ИЩУ NETWORKPLAYER...");
     int foundTransform = 0;
     for (int offset = 0x1A8; offset <= 0x1C0; offset += 8) {
@@ -109,7 +104,6 @@ void findPlayers() {
         return;
     }
     
-    // Находим начало массива
     addLog(@"\n🔍 ИЩУ НАЧАЛО МАССИВА...");
     uintptr_t start = g_myTransform;
     int steps = 0;
@@ -126,7 +120,6 @@ void findPlayers() {
     g_arrayStart = start;
     addLog([NSString stringWithFormat:@"✅ Начало массива: 0x%lx", g_arrayStart]);
     
-    // Сканируем игроков
     addLog(@"\n👥 ИГРОКИ НА КАРТЕ:");
     int enemyCount = 0;
     for (int i = 0; i < 100; i++) {
@@ -154,7 +147,6 @@ void setupUI() {
     UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
     if (!keyWindow) return;
     
-    // Плавающая кнопка 🎯
     UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
     btn.frame = CGRectMake(20, 80, 55, 55);
     btn.backgroundColor = [UIColor systemBlueColor];
@@ -162,10 +154,9 @@ void setupUI() {
     [btn setTitle:@"🎯" forState:UIControlStateNormal];
     [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     btn.titleLabel.font = [UIFont systemFontOfSize:26];
-    [btn addTarget:self action:@selector(onFindTap) forControlEvents:UIControlEventTouchUpInside];
+    [btn addTarget:btn action:@selector(onFindTap) forControlEvents:UIControlEventTouchUpInside];
     [keyWindow addSubview:btn];
     
-    // Кнопка очистки 🗑
     UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     clearBtn.frame = CGRectMake(20, 145, 55, 40);
     clearBtn.backgroundColor = [UIColor systemGrayColor];
@@ -173,10 +164,9 @@ void setupUI() {
     [clearBtn setTitle:@"🗑" forState:UIControlStateNormal];
     [clearBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     clearBtn.titleLabel.font = [UIFont systemFontOfSize:20];
-    [clearBtn addTarget:self action:@selector(onClearTap) forControlEvents:UIControlEventTouchUpInside];
+    [clearBtn addTarget:clearBtn action:@selector(onClearTap) forControlEvents:UIControlEventTouchUpInside];
     [keyWindow addSubview:clearBtn];
     
-    // Лог-окно
     UIView *logBg = [[UIView alloc] initWithFrame:CGRectMake(20, 195, keyWindow.frame.size.width - 40, keyWindow.frame.size.height - 215)];
     logBg.backgroundColor = [UIColor colorWithWhite:0 alpha:0.85];
     logBg.layer.cornerRadius = 12;
@@ -193,13 +183,13 @@ void setupUI() {
     addLog(@"Нажми 🎯 для поиска игроков");
 }
 
-void onFindTap() {
+void onFindTap(UIButton *sender) {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         findPlayers();
     });
 }
 
-void onClearTap() {
+void onClearTap(UIButton *sender) {
     logText = nil;
     addLog(@"🗑 Лог очищен");
     addLog(@"🎯 ESP FINDER READY");
