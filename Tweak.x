@@ -406,17 +406,21 @@ NSData* memoryDump(uintptr_t addr, int size) {
 
 // ===== ОБРАБОТКА КОМАНД =====
 NSString* handleCommand(NSString *cmd) {
-    if (!savedLists) {
-        savedLists = [NSMutableDictionary dictionary];
-        listTimestamps = [NSMutableDictionary dictionary];
-    }
-    
     NSArray *parts = [cmd componentsSeparatedByString:@" "];
     NSString *command = [parts[0] uppercaseString];
     
     if ([command isEqualToString:@"PING"]) {
         return @"PONG";
     }
+    // ... остальные команды (SCAN_INT, SCAN_FLOAT, READ_INT и т.д.)
+    
+    // ===== ДОБАВЬ ЭТОТ БЛОК ПЕРЕД ПОСЛЕДНИМ return =====
+    else if ([command isEqualToString:@"LIST_MODULES"]) {
+        return listModules();
+    }
+    
+    return @"ERROR: unknown command";
+}
     // ===== СКАНИРОВАНИЕ =====
     else if ([command isEqualToString:@"SCAN_INT"]) {
         if (parts.count < 2) return @"ERROR: need value";
