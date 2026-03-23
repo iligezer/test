@@ -670,6 +670,53 @@ NSString* handleCommand(NSString *cmd) {
         }
         return response;
     }
+    // ===== ПОИСК ЦЕПОЧКИ УКАЗАТЕЛЕЙ =====
+    else if ([command isEqualToString:@"FIND_POINTER_CHAIN"]) {
+        if (parts.count < 4) return @"ERROR: need target_addr, max_depth, max_offset";
+        uintptr_t targetAddr = strtoull([parts[1] UTF8String], NULL, 16);
+        int maxDepth = [parts[2] intValue];
+        int maxOffset = [parts[3] intValue];
+        
+        NSMutableArray *chain = [NSMutableArray array];
+        uintptr_t currentAddr = targetAddr;
+        
+        for (int depth = 0; depth < maxDepth; depth++) {
+            uintptr_t found = 0;
+            
+            // Сканируем память в поисках указателя на currentAddr
+            // Ограничиваем диапазон для скорости
+            for (uintptr_t addr = 0x100000000; addr < 0x300000000; addr += 4) {
+                uintptr_t val = safeReadPtr(addr);
+                if (val == currentAddr) {
+                    found = addr;
+                    break;
+                }
+            }
+            
+            if (found != 0) {
+                [chain addObject:@(found)];
+                currentAddr = found;
+            } else {
+                break;
+            }
+        }
+        
+        NSMutableString *response = [NSMutableString stringWithFormat:@"POINTER_CHAIN %lu", (unsigned long)chain.count];
+        for (NSNumber *addr in chain) {
+            [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
+        }
+        return response;
+    }
+    
+    // ===== LIST_MODULES =====
+    else if ([command isEqualToString:@"LIST_MODULES"]) {
+        return listModules();
+    }
+    
+    // ===== ЧТЕНИЕ =====
+    else if ([command isEqualToString:@"READ_INT"]) {
+        // ...
+    }
     else if ([command isEqualToString:@"FILTER_UNCHANGED"]) {
         if (parts.count < 3) return @"ERROR: need list_id and type";
         int listId = [parts[1] intValue];
