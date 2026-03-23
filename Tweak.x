@@ -5,6 +5,7 @@
 #import <netinet/in.h>
 #import <ifaddrs.h>
 #import <net/if.h>
+#import <limits.h>
 
 // ===== ГЛОБАЛЬНЫЕ =====
 static int serverSocket = -1;
@@ -12,6 +13,10 @@ static BOOL serverRunning = NO;
 static NSMutableString *logText = nil;
 static UITextView *logView = nil;
 static UIWindow *win = nil;
+
+// Хранилище списков адресов
+static NSMutableDictionary *savedLists = nil;
+static int nextListId = 1;
 
 void addLog(NSString *msg) {
     if (!logText) logText = [[NSMutableString alloc] init];
@@ -73,15 +78,6 @@ char safeReadByte(uintptr_t addr) {
     return val;
 }
 
-uintptr_t safeReadPtr(uintptr_t addr) {
-    if (addr == 0) return 0;
-    uintptr_t val = 0;
-    vm_size_t read = 0;
-    kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 8, (vm_address_t)&val, &read);
-    if (kr != KERN_SUCCESS || read != 8) return 0;
-    return val;
-}
-
 float safeReadFloat(uintptr_t addr) {
     if (addr == 0) return 0;
     float val = 0;
@@ -100,7 +96,7 @@ long long safeReadLong(uintptr_t addr) {
     return val;
 }
 
-// ===== СКАНИРОВАНИЕ (БЕЗ ЛИМИТА) =====
+// ===== СКАНИРОВАНИЕ (ВСЕ АДРЕСА) =====
 NSArray* scanIntRange(int targetValue, uintptr_t minAddr, uintptr_t maxAddr) {
     NSMutableArray *results = [NSMutableArray array];
     task_t task = mach_task_self();
@@ -386,86 +382,32 @@ NSData* memoryDump(uintptr_t addr, int size) {
     return data;
 }
 
-// ===== СПИСОК МОДУЛЕЙ =====
-NSString* listModules(void) {
-    NSMutableString *result = [NSMutableString string];
-    task_t task = mach_task_self();
-    vm_address_t addr = 0;
-    vm_size_t size = 0;
-    struct vm_region_basic_info_64 info;
-    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
-    mach_port_t object_name = MACH_PORT_NULL;
-    
-    [result appendString:@"MODULES\n"];
-    
-    while (1) {
-        kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
-                                         (vm_region_info_t)&info, &count, &object_name);
-        if (kr != KERN_SUCCESS) break;
-        
-        if (addr >= 0x100000000) {
-            [result appendFormat:@"0x%lx-0x%lx ", (unsigned long)addr, (unsigned long)(addr + size)];
-            
-            if (info.protection & VM_PROT_READ) [result appendString:@"r"];
-            else [result appendString:@"-"];
-            if (info.protection & VM_PROT_WRITE) [result appendString:@"w"];
-            else [result appendString:@"-"];
-            if (info.protection & VM_PROT_EXECUTE) [result appendString:@"x"];
-            else [result appendString:@"-"];
-            
-            [result appendString:@"\n"];
-        }
-        addr += size;
-        if (addr > 0x300000000) break;
-    }
-    return result;
-}
-
 // ===== ОБРАБОТКА КОМАНД =====
 NSString* handleCommand(NSString *cmd) {
+    if (!savedLists) {
+        savedLists = [NSMutableDictionary dictionary];
+    }
+    
     NSArray *parts = [cmd componentsSeparatedByString:@" "];
     NSString *command = [parts[0] uppercaseString];
     
     if ([command isEqualToString:@"PING"]) {
         return @"PONG";
     }
-    else if ([command isEqualToString:@"SCAN_BYTE"]) {
-        if (parts.count < 2) return @"ERROR: need value";
-        char value = (char)[parts[1] intValue];
-        NSArray *results = scanByteRange(value, 0x100000000, 0x300000000);
-        NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
-        for (NSNumber *addr in results) {
-            [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
-        }
-        return response;
-    }
-    else if ([command isEqualToString:@"SCAN_SHORT"]) {
-        if (parts.count < 2) return @"ERROR: need value";
-        short value = (short)[parts[1] intValue];
-        NSArray *results = scanShortRange(value, 0x100000000, 0x300000000);
-        NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
-        for (NSNumber *addr in results) {
-            [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
-        }
-        return response;
-    }
+    // ===== СКАНИРОВАНИЕ =====
     else if ([command isEqualToString:@"SCAN_INT"]) {
         if (parts.count < 2) return @"ERROR: need value";
         int value = [parts[1] intValue];
+        
         NSArray *results = scanIntRange(value, 0x100000000, 0x300000000);
-        NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
-        for (NSNumber *addr in results) {
-            [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
-        }
-        return response;
-    }
-    else if ([command isEqualToString:@"SCAN_LONG"]) {
-        if (parts.count < 2) return @"ERROR: need value";
-        long long value = strtoll([parts[1] UTF8String], NULL, 0);
-        NSArray *results = scanLongRange(value, 0x100000000, 0x300000000);
-        NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
-        for (NSNumber *addr in results) {
-            [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
+        
+        int listId = nextListId++;
+        savedLists[@(listId)] = [results mutableCopy];
+        
+        NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %d %lu", listId, (unsigned long)results.count];
+        NSUInteger maxShow = MIN(500, results.count);
+        for (NSUInteger i = 0; i < maxShow; i++) {
+            [response appendFormat:@"\n0x%lx", [results[i] unsignedLongValue]];
         }
         return response;
     }
@@ -473,12 +415,283 @@ NSString* handleCommand(NSString *cmd) {
         if (parts.count < 2) return @"ERROR: need value";
         float value = [parts[1] floatValue];
         float tolerance = (parts.count > 2) ? [parts[2] floatValue] : 0.001;
+        
         NSArray *results = scanFloatRange(value, tolerance, 0x100000000, 0x300000000);
-        NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
-        for (NSNumber *addr in results) {
-            [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
+        
+        int listId = nextListId++;
+        savedLists[@(listId)] = [results mutableCopy];
+        
+        NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %d %lu", listId, (unsigned long)results.count];
+        NSUInteger maxShow = MIN(500, results.count);
+        for (NSUInteger i = 0; i < maxShow; i++) {
+            [response appendFormat:@"\n0x%lx", [results[i] unsignedLongValue]];
         }
         return response;
+    }
+    else if ([command isEqualToString:@"SCAN_LONG"]) {
+        if (parts.count < 2) return @"ERROR: need value";
+        long long value = strtoll([parts[1] UTF8String], NULL, 0);
+        
+        NSArray *results = scanLongRange(value, 0x100000000, 0x300000000);
+        
+        int listId = nextListId++;
+        savedLists[@(listId)] = [results mutableCopy];
+        
+        NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %d %lu", listId, (unsigned long)results.count];
+        NSUInteger maxShow = MIN(500, results.count);
+        for (NSUInteger i = 0; i < maxShow; i++) {
+            [response appendFormat:@"\n0x%lx", [results[i] unsignedLongValue]];
+        }
+        return response;
+    }
+    else if ([command isEqualToString:@"SCAN_BYTE"]) {
+        if (parts.count < 2) return @"ERROR: need value";
+        char value = (char)[parts[1] intValue];
+        
+        NSArray *results = scanByteRange(value, 0x100000000, 0x300000000);
+        
+        int listId = nextListId++;
+        savedLists[@(listId)] = [results mutableCopy];
+        
+        NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %d %lu", listId, (unsigned long)results.count];
+        NSUInteger maxShow = MIN(500, results.count);
+        for (NSUInteger i = 0; i < maxShow; i++) {
+            [response appendFormat:@"\n0x%lx", [results[i] unsignedLongValue]];
+        }
+        return response;
+    }
+    else if ([command isEqualToString:@"SCAN_SHORT"]) {
+        if (parts.count < 2) return @"ERROR: need value";
+        short value = (short)[parts[1] intValue];
+        
+        NSArray *results = scanShortRange(value, 0x100000000, 0x300000000);
+        
+        int listId = nextListId++;
+        savedLists[@(listId)] = [results mutableCopy];
+        
+        NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %d %lu", listId, (unsigned long)results.count];
+        NSUInteger maxShow = MIN(500, results.count);
+        for (NSUInteger i = 0; i < maxShow; i++) {
+            [response appendFormat:@"\n0x%lx", [results[i] unsignedLongValue]];
+        }
+        return response;
+    }
+    else if ([command isEqualToString:@"SCAN_STRING"]) {
+        if (parts.count < 2) return @"ERROR: need value";
+        NSString *value = parts[1];
+        
+        NSArray *results = scanStringRange(value, 0x100000000, 0x300000000);
+        
+        int listId = nextListId++;
+        savedLists[@(listId)] = [results mutableCopy];
+        
+        NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %d %lu", listId, (unsigned long)results.count];
+        NSUInteger maxShow = MIN(500, results.count);
+        for (NSUInteger i = 0; i < maxShow; i++) {
+            [response appendFormat:@"\n0x%lx", [results[i] unsignedLongValue]];
+        }
+        return response;
+    }
+    // ===== ФИЛЬТРАЦИЯ =====
+    else if ([command isEqualToString:@"FILTER_INT"]) {
+        if (parts.count < 3) return @"ERROR: need list_id and value";
+        int listId = [parts[1] intValue];
+        int targetValue = [parts[2] intValue];
+        
+        NSMutableArray *list = savedLists[@(listId)];
+        if (!list) return @"ERROR: list not found";
+        
+        NSMutableArray *filtered = [NSMutableArray array];
+        for (NSNumber *addrNum in list) {
+            uintptr_t addr = [addrNum unsignedLongValue];
+            int val = safeReadInt(addr);
+            if (val == targetValue) {
+                [filtered addObject:addrNum];
+            }
+        }
+        
+        savedLists[@(listId)] = filtered;
+        
+        NSMutableString *response = [NSMutableString stringWithFormat:@"FILTERED %d %lu", listId, (unsigned long)filtered.count];
+        NSUInteger maxShow = MIN(500, filtered.count);
+        for (NSUInteger i = 0; i < maxShow; i++) {
+            [response appendFormat:@"\n0x%lx", [filtered[i] unsignedLongValue]];
+        }
+        return response;
+    }
+    else if ([command isEqualToString:@"FILTER_FLOAT"]) {
+        if (parts.count < 3) return @"ERROR: need list_id and value";
+        int listId = [parts[1] intValue];
+        float targetValue = [parts[2] floatValue];
+        float tolerance = (parts.count > 3) ? [parts[3] floatValue] : 0.001;
+        
+        NSMutableArray *list = savedLists[@(listId)];
+        if (!list) return @"ERROR: list not found";
+        
+        NSMutableArray *filtered = [NSMutableArray array];
+        for (NSNumber *addrNum in list) {
+            uintptr_t addr = [addrNum unsignedLongValue];
+            float val = safeReadFloat(addr);
+            if (fabs(val - targetValue) <= tolerance) {
+                [filtered addObject:addrNum];
+            }
+        }
+        
+        savedLists[@(listId)] = filtered;
+        
+        NSMutableString *response = [NSMutableString stringWithFormat:@"FILTERED %d %lu", listId, (unsigned long)filtered.count];
+        NSUInteger maxShow = MIN(500, filtered.count);
+        for (NSUInteger i = 0; i < maxShow; i++) {
+            [response appendFormat:@"\n0x%lx", [filtered[i] unsignedLongValue]];
+        }
+        return response;
+    }
+    else if ([command isEqualToString:@"FILTER_LONG"]) {
+        if (parts.count < 3) return @"ERROR: need list_id and value";
+        int listId = [parts[1] intValue];
+        long long targetValue = strtoll([parts[2] UTF8String], NULL, 0);
+        
+        NSMutableArray *list = savedLists[@(listId)];
+        if (!list) return @"ERROR: list not found";
+        
+        NSMutableArray *filtered = [NSMutableArray array];
+        for (NSNumber *addrNum in list) {
+            uintptr_t addr = [addrNum unsignedLongValue];
+            long long val = safeReadLong(addr);
+            if (val == targetValue) {
+                [filtered addObject:addrNum];
+            }
+        }
+        
+        savedLists[@(listId)] = filtered;
+        
+        NSMutableString *response = [NSMutableString stringWithFormat:@"FILTERED %d %lu", listId, (unsigned long)filtered.count];
+        NSUInteger maxShow = MIN(500, filtered.count);
+        for (NSUInteger i = 0; i < maxShow; i++) {
+            [response appendFormat:@"\n0x%lx", [filtered[i] unsignedLongValue]];
+        }
+        return response;
+    }
+    else if ([command isEqualToString:@"FILTER_BYTE"]) {
+        if (parts.count < 3) return @"ERROR: need list_id and value";
+        int listId = [parts[1] intValue];
+        char targetValue = (char)[parts[2] intValue];
+        
+        NSMutableArray *list = savedLists[@(listId)];
+        if (!list) return @"ERROR: list not found";
+        
+        NSMutableArray *filtered = [NSMutableArray array];
+        for (NSNumber *addrNum in list) {
+            uintptr_t addr = [addrNum unsignedLongValue];
+            char val = safeReadByte(addr);
+            if (val == targetValue) {
+                [filtered addObject:addrNum];
+            }
+        }
+        
+        savedLists[@(listId)] = filtered;
+        
+        NSMutableString *response = [NSMutableString stringWithFormat:@"FILTERED %d %lu", listId, (unsigned long)filtered.count];
+        NSUInteger maxShow = MIN(500, filtered.count);
+        for (NSUInteger i = 0; i < maxShow; i++) {
+            [response appendFormat:@"\n0x%lx", [filtered[i] unsignedLongValue]];
+        }
+        return response;
+    }
+    else if ([command isEqualToString:@"FILTER_SHORT"]) {
+        if (parts.count < 3) return @"ERROR: need list_id and value";
+        int listId = [parts[1] intValue];
+        short targetValue = (short)[parts[2] intValue];
+        
+        NSMutableArray *list = savedLists[@(listId)];
+        if (!list) return @"ERROR: list not found";
+        
+        NSMutableArray *filtered = [NSMutableArray array];
+        for (NSNumber *addrNum in list) {
+            uintptr_t addr = [addrNum unsignedLongValue];
+            short val = safeReadShort(addr);
+            if (val == targetValue) {
+                [filtered addObject:addrNum];
+            }
+        }
+        
+        savedLists[@(listId)] = filtered;
+        
+        NSMutableString *response = [NSMutableString stringWithFormat:@"FILTERED %d %lu", listId, (unsigned long)filtered.count];
+        NSUInteger maxShow = MIN(500, filtered.count);
+        for (NSUInteger i = 0; i < maxShow; i++) {
+            [response appendFormat:@"\n0x%lx", [filtered[i] unsignedLongValue]];
+        }
+        return response;
+    }
+    else if ([command isEqualToString:@"FILTER_STRING"]) {
+        if (parts.count < 3) return @"ERROR: need list_id and value";
+        int listId = [parts[1] intValue];
+        NSString *targetValue = parts[2];
+        
+        NSMutableArray *list = savedLists[@(listId)];
+        if (!list) return @"ERROR: list not found";
+        
+        NSMutableArray *filtered = [NSMutableArray array];
+        for (NSNumber *addrNum in list) {
+            uintptr_t addr = [addrNum unsignedLongValue];
+            char buffer[256] = {0};
+            vm_size_t read = 0;
+            kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 255, (vm_address_t)buffer, &read);
+            if (kr == KERN_SUCCESS && read > 0) {
+                NSString *str = [NSString stringWithUTF8String:buffer];
+                if (str && [str containsString:targetValue]) {
+                    [filtered addObject:addrNum];
+                }
+            }
+        }
+        
+        savedLists[@(listId)] = filtered;
+        
+        NSMutableString *response = [NSMutableString stringWithFormat:@"FILTERED %d %lu", listId, (unsigned long)filtered.count];
+        NSUInteger maxShow = MIN(500, filtered.count);
+        for (NSUInteger i = 0; i < maxShow; i++) {
+            [response appendFormat:@"\n0x%lx", [filtered[i] unsignedLongValue]];
+        }
+        return response;
+    }
+    // ===== УПРАВЛЕНИЕ СПИСКАМИ =====
+    else if ([command isEqualToString:@"CLEAR_LIST"]) {
+        if (parts.count < 2) return @"ERROR: need list_id";
+        int listId = [parts[1] intValue];
+        [savedLists removeObjectForKey:@(listId)];
+        return @"CLEARED";
+    }
+    else if ([command isEqualToString:@"CLEAR_ALL_LISTS"]) {
+        [savedLists removeAllObjects];
+        nextListId = 1;
+        return @"CLEARED";
+    }
+    else if ([command isEqualToString:@"GET_LIST_COUNT"]) {
+        if (parts.count < 2) return @"ERROR: need list_id";
+        int listId = [parts[1] intValue];
+        NSArray *list = savedLists[@(listId)];
+        if (!list) return @"COUNT 0";
+        return [NSString stringWithFormat:@"COUNT %lu", (unsigned long)list.count];
+    }
+    // ===== ЧТЕНИЕ =====
+    else if ([command isEqualToString:@"READ_INT"]) {
+        if (parts.count < 2) return @"ERROR: need addr";
+        uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
+        int val = safeReadInt(addr);
+        return [NSString stringWithFormat:@"INT %d", val];
+    }
+    else if ([command isEqualToString:@"READ_FLOAT"]) {
+        if (parts.count < 2) return @"ERROR: need addr";
+        uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
+        float val = safeReadFloat(addr);
+        return [NSString stringWithFormat:@"FLOAT %f", val];
+    }
+    else if ([command isEqualToString:@"READ_LONG"]) {
+        if (parts.count < 2) return @"ERROR: need addr";
+        uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
+        long long val = safeReadLong(addr);
+        return [NSString stringWithFormat:@"LONG %lld", val];
     }
     else if ([command isEqualToString:@"READ_BYTE"]) {
         if (parts.count < 2) return @"ERROR: need addr";
@@ -492,28 +705,13 @@ NSString* handleCommand(NSString *cmd) {
         short val = safeReadShort(addr);
         return [NSString stringWithFormat:@"SHORT %d", val];
     }
-    else if ([command isEqualToString:@"READ_INT"]) {
-        if (parts.count < 2) return @"ERROR: need addr";
-        uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
-        int val = safeReadInt(addr);
-        return [NSString stringWithFormat:@"INT %d", val];
-    }
-    else if ([command isEqualToString:@"READ_LONG"]) {
-        if (parts.count < 2) return @"ERROR: need addr";
-        uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
-        long long val = safeReadLong(addr);
-        return [NSString stringWithFormat:@"LONG %lld", val];
-    }
-    else if ([command isEqualToString:@"READ_FLOAT"]) {
-        if (parts.count < 2) return @"ERROR: need addr";
-        uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
-        float val = safeReadFloat(addr);
-        return [NSString stringWithFormat:@"FLOAT %f", val];
-    }
     else if ([command isEqualToString:@"READ_PTR"]) {
         if (parts.count < 2) return @"ERROR: need addr";
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
-        uintptr_t val = safeReadPtr(addr);
+        uintptr_t val = 0;
+        vm_size_t read = 0;
+        kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, 8, (vm_address_t)&val, &read);
+        if (kr != KERN_SUCCESS || read != 8) return @"PTR 0x0";
         return [NSString stringWithFormat:@"PTR 0x%lx", val];
     }
     else if ([command isEqualToString:@"READ_STRING"]) {
@@ -556,9 +754,6 @@ NSString* handleCommand(NSString *cmd) {
         
         NSString *b64 = [data base64EncodedStringWithOptions:0];
         return [NSString stringWithFormat:@"DUMP_DATA %@", b64];
-    }
-    else if ([command isEqualToString:@"LIST_MODULES"]) {
-        return listModules();
     }
     
     return @"ERROR: unknown command";
