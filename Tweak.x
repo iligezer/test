@@ -16,6 +16,7 @@ static UIWindow *win = nil;
 
 // Хранилище списков адресов
 static NSMutableDictionary *savedLists = nil;
+static NSMutableDictionary *listTimestamps = nil;  // Время создания списков
 static int nextListId = 1;
 
 void addLog(NSString *msg) {
@@ -26,6 +27,27 @@ void addLog(NSString *msg) {
         if (logView) logView.text = logText;
         NSLog(@"[SERVER] %@", msg);
     });
+}
+
+// Очистка старых списков (старше 5 минут)
+void cleanOldLists(void) {
+    if (!savedLists || !listTimestamps) return;
+    
+    NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
+    NSMutableArray *toRemove = [NSMutableArray array];
+    
+    for (NSNumber *key in listTimestamps) {
+        NSTimeInterval timestamp = [listTimestamps[key] doubleValue];
+        if (now - timestamp > 300) { // 5 минут
+            [toRemove addObject:key];
+        }
+    }
+    
+    for (NSNumber *key in toRemove) {
+        [savedLists removeObjectForKey:key];
+        [listTimestamps removeObjectForKey:key];
+        addLog([NSString stringWithFormat:@"🗑️ Auto-cleaned old list %d", [key intValue]]);
+    }
 }
 
 NSString* getIPAddress(void) {
@@ -386,6 +408,7 @@ NSData* memoryDump(uintptr_t addr, int size) {
 NSString* handleCommand(NSString *cmd) {
     if (!savedLists) {
         savedLists = [NSMutableDictionary dictionary];
+        listTimestamps = [NSMutableDictionary dictionary];
     }
     
     NSArray *parts = [cmd componentsSeparatedByString:@" "];
@@ -403,6 +426,7 @@ NSString* handleCommand(NSString *cmd) {
         
         int listId = nextListId++;
         savedLists[@(listId)] = [results mutableCopy];
+        listTimestamps[@(listId)] = @([[NSDate date] timeIntervalSince1970]);
         
         NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %d %lu", listId, (unsigned long)results.count];
         NSUInteger maxShow = MIN(500, results.count);
@@ -420,6 +444,7 @@ NSString* handleCommand(NSString *cmd) {
         
         int listId = nextListId++;
         savedLists[@(listId)] = [results mutableCopy];
+        listTimestamps[@(listId)] = @([[NSDate date] timeIntervalSince1970]);
         
         NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %d %lu", listId, (unsigned long)results.count];
         NSUInteger maxShow = MIN(500, results.count);
@@ -436,6 +461,7 @@ NSString* handleCommand(NSString *cmd) {
         
         int listId = nextListId++;
         savedLists[@(listId)] = [results mutableCopy];
+        listTimestamps[@(listId)] = @([[NSDate date] timeIntervalSince1970]);
         
         NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %d %lu", listId, (unsigned long)results.count];
         NSUInteger maxShow = MIN(500, results.count);
@@ -452,6 +478,7 @@ NSString* handleCommand(NSString *cmd) {
         
         int listId = nextListId++;
         savedLists[@(listId)] = [results mutableCopy];
+        listTimestamps[@(listId)] = @([[NSDate date] timeIntervalSince1970]);
         
         NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %d %lu", listId, (unsigned long)results.count];
         NSUInteger maxShow = MIN(500, results.count);
@@ -468,6 +495,7 @@ NSString* handleCommand(NSString *cmd) {
         
         int listId = nextListId++;
         savedLists[@(listId)] = [results mutableCopy];
+        listTimestamps[@(listId)] = @([[NSDate date] timeIntervalSince1970]);
         
         NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %d %lu", listId, (unsigned long)results.count];
         NSUInteger maxShow = MIN(500, results.count);
@@ -484,6 +512,7 @@ NSString* handleCommand(NSString *cmd) {
         
         int listId = nextListId++;
         savedLists[@(listId)] = [results mutableCopy];
+        listTimestamps[@(listId)] = @([[NSDate date] timeIntervalSince1970]);
         
         NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %d %lu", listId, (unsigned long)results.count];
         NSUInteger maxShow = MIN(500, results.count);
@@ -511,6 +540,7 @@ NSString* handleCommand(NSString *cmd) {
         }
         
         savedLists[@(listId)] = filtered;
+        listTimestamps[@(listId)] = @([[NSDate date] timeIntervalSince1970]);
         
         NSMutableString *response = [NSMutableString stringWithFormat:@"FILTERED %d %lu", listId, (unsigned long)filtered.count];
         NSUInteger maxShow = MIN(500, filtered.count);
@@ -538,6 +568,7 @@ NSString* handleCommand(NSString *cmd) {
         }
         
         savedLists[@(listId)] = filtered;
+        listTimestamps[@(listId)] = @([[NSDate date] timeIntervalSince1970]);
         
         NSMutableString *response = [NSMutableString stringWithFormat:@"FILTERED %d %lu", listId, (unsigned long)filtered.count];
         NSUInteger maxShow = MIN(500, filtered.count);
@@ -564,6 +595,7 @@ NSString* handleCommand(NSString *cmd) {
         }
         
         savedLists[@(listId)] = filtered;
+        listTimestamps[@(listId)] = @([[NSDate date] timeIntervalSince1970]);
         
         NSMutableString *response = [NSMutableString stringWithFormat:@"FILTERED %d %lu", listId, (unsigned long)filtered.count];
         NSUInteger maxShow = MIN(500, filtered.count);
@@ -590,6 +622,7 @@ NSString* handleCommand(NSString *cmd) {
         }
         
         savedLists[@(listId)] = filtered;
+        listTimestamps[@(listId)] = @([[NSDate date] timeIntervalSince1970]);
         
         NSMutableString *response = [NSMutableString stringWithFormat:@"FILTERED %d %lu", listId, (unsigned long)filtered.count];
         NSUInteger maxShow = MIN(500, filtered.count);
@@ -616,6 +649,7 @@ NSString* handleCommand(NSString *cmd) {
         }
         
         savedLists[@(listId)] = filtered;
+        listTimestamps[@(listId)] = @([[NSDate date] timeIntervalSince1970]);
         
         NSMutableString *response = [NSMutableString stringWithFormat:@"FILTERED %d %lu", listId, (unsigned long)filtered.count];
         NSUInteger maxShow = MIN(500, filtered.count);
@@ -647,6 +681,7 @@ NSString* handleCommand(NSString *cmd) {
         }
         
         savedLists[@(listId)] = filtered;
+        listTimestamps[@(listId)] = @([[NSDate date] timeIntervalSince1970]);
         
         NSMutableString *response = [NSMutableString stringWithFormat:@"FILTERED %d %lu", listId, (unsigned long)filtered.count];
         NSUInteger maxShow = MIN(500, filtered.count);
@@ -660,10 +695,12 @@ NSString* handleCommand(NSString *cmd) {
         if (parts.count < 2) return @"ERROR: need list_id";
         int listId = [parts[1] intValue];
         [savedLists removeObjectForKey:@(listId)];
+        [listTimestamps removeObjectForKey:@(listId)];
         return @"CLEARED";
     }
     else if ([command isEqualToString:@"CLEAR_ALL_LISTS"]) {
         [savedLists removeAllObjects];
+        [listTimestamps removeAllObjects];
         nextListId = 1;
         return @"CLEARED";
     }
@@ -796,6 +833,14 @@ void startServer(void) {
     }
     
     serverRunning = YES;
+    
+    // Запускаем фоновую очистку старых списков
+    dispatch_async(dispatch_get_global_queue(0, 0), ^{
+        while (serverRunning) {
+            sleep(60); // Раз в минуту
+            cleanOldLists();
+        }
+    });
     
     NSString *ip = getIPAddress();
     addLog(@"✅ Сервер запущен на порту 12345");
