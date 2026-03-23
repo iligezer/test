@@ -100,7 +100,7 @@ long long safeReadLong(uintptr_t addr) {
     return val;
 }
 
-// ===== СКАНИРОВАНИЕ ПАМЯТИ С ДИАПАЗОНОМ =====
+// ===== СКАНИРОВАНИЕ ПАМЯТИ =====
 NSArray* scanIntRange(int targetValue, uintptr_t minAddr, uintptr_t maxAddr, int maxResults) {
     NSMutableArray *results = [NSMutableArray array];
     task_t task = mach_task_self();
@@ -118,7 +118,6 @@ NSArray* scanIntRange(int targetValue, uintptr_t minAddr, uintptr_t maxAddr, int
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
         
-        // Сканируем все читаемые регионы (убрана проверка на VM_PROT_WRITE)
         if (info.protection & VM_PROT_READ) {
             uintptr_t scan_start = MAX(addr, minAddr);
             uintptr_t scan_end = MIN(addr + size, maxAddr);
@@ -167,7 +166,6 @@ NSArray* scanLongRange(long long targetValue, uintptr_t minAddr, uintptr_t maxAd
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
         
-        // Сканируем все читаемые регионы (убрана проверка на VM_PROT_WRITE)
         if (info.protection & VM_PROT_READ) {
             uintptr_t scan_start = MAX(addr, minAddr);
             uintptr_t scan_end = MIN(addr + size, maxAddr);
@@ -216,7 +214,6 @@ NSArray* scanFloatRange(float targetValue, float tolerance, uintptr_t minAddr, u
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
         
-        // Сканируем все читаемые регионы (убрана проверка на VM_PROT_WRITE)
         if (info.protection & VM_PROT_READ) {
             uintptr_t scan_start = MAX(addr, minAddr);
             uintptr_t scan_end = MIN(addr + size, maxAddr);
@@ -265,7 +262,6 @@ NSArray* scanByteRange(char targetValue, uintptr_t minAddr, uintptr_t maxAddr, i
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
         
-        // Сканируем все читаемые регионы (убрана проверка на VM_PROT_WRITE)
         if (info.protection & VM_PROT_READ) {
             uintptr_t scan_start = MAX(addr, minAddr);
             uintptr_t scan_end = MIN(addr + size, maxAddr);
@@ -314,7 +310,6 @@ NSArray* scanShortRange(short targetValue, uintptr_t minAddr, uintptr_t maxAddr,
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
         
-        // Сканируем все читаемые регионы (убрана проверка на VM_PROT_WRITE)
         if (info.protection & VM_PROT_READ) {
             uintptr_t scan_start = MAX(addr, minAddr);
             uintptr_t scan_end = MIN(addr + size, maxAddr);
@@ -335,6 +330,56 @@ NSArray* scanShortRange(short targetValue, uintptr_t minAddr, uintptr_t maxAddr,
                             free(buffer);
                             return results;
                         }
+                    }
+                }
+            }
+        }
+        addr += size;
+        if (addr > maxAddr) break;
+    }
+    free(buffer);
+    return results;
+}
+
+// Сканирование строк
+NSArray* scanStringRange(NSString *targetString, uintptr_t minAddr, uintptr_t maxAddr, int maxResults) {
+    NSMutableArray *results = [NSMutableArray array];
+    task_t task = mach_task_self();
+    vm_address_t addr = minAddr;
+    vm_size_t size = 0;
+    struct vm_region_basic_info_64 info;
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t object_name = MACH_PORT_NULL;
+    uint8_t *buffer = malloc(0x10000);
+    NSData *targetData = [targetString dataUsingEncoding:NSUTF8StringEncoding];
+    NSUInteger targetLen = targetData.length;
+    
+    if (!buffer || targetLen == 0) return results;
+    
+    while (addr < maxAddr) {
+        kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
+                                         (vm_region_info_t)&info, &count, &object_name);
+        if (kr != KERN_SUCCESS) break;
+        
+        if (info.protection & VM_PROT_READ) {
+            uintptr_t scan_start = MAX(addr, minAddr);
+            uintptr_t scan_end = MIN(addr + size, maxAddr);
+            
+            for (uintptr_t page = scan_start; page < scan_end; page += 0x10000) {
+                uintptr_t pageSize = MIN(0x10000, scan_end - page);
+                if (pageSize < targetLen) continue;
+                
+                vm_size_t read = 0;
+                kr = vm_read_overwrite(task, page, pageSize, (vm_address_t)buffer, &read);
+                if (kr != KERN_SUCCESS || read < targetLen) continue;
+                
+                NSData *pageData = [NSData dataWithBytes:buffer length:read];
+                NSRange range = [pageData rangeOfData:targetData options:0 range:NSMakeRange(0, read)];
+                if (range.location != NSNotFound) {
+                    [results addObject:@(page + range.location)];
+                    if (results.count >= maxResults) {
+                        free(buffer);
+                        return results;
                     }
                 }
             }
@@ -533,6 +578,20 @@ NSString* handleCommand(NSString *cmd) {
         }
         return response;
     }
+    // СКАНИРОВАНИЕ СТРОК
+    else if ([command isEqualToString:@"SCAN_STRING_RANGE"]) {
+        if (parts.count < 4) return @"ERROR: need value, min, max";
+        NSString *value = parts[1];
+        uintptr_t minAddr = strtoull([parts[2] UTF8String], NULL, 16);
+        uintptr_t maxAddr = strtoull([parts[3] UTF8String], NULL, 16);
+        int max = (parts.count > 4) ? [parts[4] intValue] : 500;
+        NSArray *results = scanStringRange(value, minAddr, maxAddr, max);
+        NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %lu", (unsigned long)results.count];
+        for (NSNumber *addr in results) {
+            [response appendFormat:@"\n0x%lx", [addr unsignedLongValue]];
+        }
+        return response;
+    }
     // LIST_MODULES
     else if ([command isEqualToString:@"LIST_MODULES"]) {
         return listModules();
@@ -555,7 +614,6 @@ NSString* handleCommand(NSString *cmd) {
             if (kr != KERN_SUCCESS) break;
             
             if (addr >= 0x100000000) {
-                // Читаем первые 256 байт региона и ищем имя модуля
                 uint8_t *buffer = malloc(256);
                 if (buffer) {
                     vm_size_t read = 0;
@@ -611,6 +669,36 @@ NSString* handleCommand(NSString *cmd) {
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
         uintptr_t val = safeReadPtr(addr);
         return [NSString stringWithFormat:@"PTR 0x%lx", val];
+    }
+    else if ([command isEqualToString:@"READ_STRING"]) {
+        if (parts.count < 2) return @"ERROR: need addr";
+        uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
+        int maxLen = (parts.count > 2) ? [parts[2] intValue] : 64;
+        if (maxLen > 1024) maxLen = 1024;
+        
+        uint8_t *buffer = malloc(maxLen);
+        if (!buffer) return @"ERROR: malloc failed";
+        
+        vm_size_t read = 0;
+        kern_return_t kr = vm_read_overwrite(mach_task_self(), addr, maxLen, (vm_address_t)buffer, &read);
+        
+        if (kr != KERN_SUCCESS) {
+            free(buffer);
+            return @"ERROR: read failed";
+        }
+        
+        // Ищем конец строки
+        NSUInteger len = 0;
+        for (NSUInteger i = 0; i < read; i++) {
+            if (buffer[i] == 0) break;
+            len++;
+        }
+        
+        NSString *str = [[NSString alloc] initWithBytes:buffer length:len encoding:NSUTF8StringEncoding];
+        free(buffer);
+        
+        if (!str) str = @"";
+        return [NSString stringWithFormat:@"STRING %@", str];
     }
     else if ([command isEqualToString:@"DUMP"]) {
         if (parts.count < 3) return @"ERROR: need addr and size";
