@@ -126,8 +126,6 @@ NSArray* scanIntRange(int targetValue, uintptr_t minAddr, uintptr_t maxAddr) {
     
     if (!buffer) return results;
     
-    int regionCount = 0;
-    
     while (addr < maxAddr) {
         kern_return_t kr = vm_region_64(task, &addr, &size, VM_REGION_BASIC_INFO_64,
                                          (vm_region_info_t)&info, &count, &object_name);
@@ -153,13 +151,6 @@ NSArray* scanIntRange(int targetValue, uintptr_t minAddr, uintptr_t maxAddr) {
                 }
             }
         }
-        
-        regionCount++;
-        // Каждые 10 регионов делаем паузу, чтобы не нагружать CPU
-        if (regionCount % 10 == 0) {
-            usleep(1000); // 1 миллисекунда паузы
-        }
-        
         addr += size;
         if (addr > maxAddr) break;
     }
@@ -495,6 +486,40 @@ NSString* handleCommand(NSString *cmd) {
         int listId = nextListId++;
         savedLists[@(listId)] = [results mutableCopy];
         listTimestamps[@(listId)] = @([[NSDate date] timeIntervalSince1970]);
+        NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %d %lu", listId, (unsigned long)results.count];
+        NSUInteger maxShow = MIN(500, results.count);
+        for (NSUInteger i = 0; i < maxShow; i++) {
+            [response appendFormat:@"\n0x%lx", [results[i] unsignedLongValue]];
+        }
+        return response;
+    }
+    // ===== НЕИЗВЕСТНЫЙ ПОИСК С РУЧНЫМ ДИАПАЗОНОМ =====
+    else if ([command isEqualToString:@"SCAN_UNKNOWN_RANGE"]) {
+        if (parts.count < 4) return @"ERROR: need min_addr, max_addr, type";
+        uintptr_t minAddr = strtoull([parts[1] UTF8String], NULL, 16);
+        uintptr_t maxAddr = strtoull([parts[2] UTF8String], NULL, 16);
+        NSString *type = [parts[3] uppercaseString];
+        
+        NSArray *results = nil;
+        
+        if ([type isEqualToString:@"INT"]) {
+            results = scanIntRange(0, minAddr, maxAddr);
+        } else if ([type isEqualToString:@"FLOAT"]) {
+            results = scanFloatRange(0, 100, minAddr, maxAddr);
+        } else if ([type isEqualToString:@"LONG"]) {
+            results = scanLongRange(0, minAddr, maxAddr);
+        } else if ([type isEqualToString:@"BYTE"]) {
+            results = scanByteRange(0, minAddr, maxAddr);
+        } else if ([type isEqualToString:@"SHORT"]) {
+            results = scanShortRange(0, minAddr, maxAddr);
+        } else {
+            results = scanIntRange(0, minAddr, maxAddr);
+        }
+        
+        int listId = nextListId++;
+        savedLists[@(listId)] = [results mutableCopy];
+        listTimestamps[@(listId)] = @([[NSDate date] timeIntervalSince1970]);
+        
         NSMutableString *response = [NSMutableString stringWithFormat:@"RESULTS %d %lu", listId, (unsigned long)results.count];
         NSUInteger maxShow = MIN(500, results.count);
         for (NSUInteger i = 0; i < maxShow; i++) {
