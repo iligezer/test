@@ -118,7 +118,8 @@ NSArray* scanIntRange(int targetValue, uintptr_t minAddr, uintptr_t maxAddr, int
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
         
-        if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
+        // Сканируем все читаемые регионы (убрана проверка на VM_PROT_WRITE)
+        if (info.protection & VM_PROT_READ) {
             uintptr_t scan_start = MAX(addr, minAddr);
             uintptr_t scan_end = MIN(addr + size, maxAddr);
             
@@ -166,7 +167,8 @@ NSArray* scanLongRange(long long targetValue, uintptr_t minAddr, uintptr_t maxAd
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
         
-        if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
+        // Сканируем все читаемые регионы (убрана проверка на VM_PROT_WRITE)
+        if (info.protection & VM_PROT_READ) {
             uintptr_t scan_start = MAX(addr, minAddr);
             uintptr_t scan_end = MIN(addr + size, maxAddr);
             
@@ -214,7 +216,8 @@ NSArray* scanFloatRange(float targetValue, float tolerance, uintptr_t minAddr, u
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
         
-        if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
+        // Сканируем все читаемые регионы (убрана проверка на VM_PROT_WRITE)
+        if (info.protection & VM_PROT_READ) {
             uintptr_t scan_start = MAX(addr, minAddr);
             uintptr_t scan_end = MIN(addr + size, maxAddr);
             
@@ -262,7 +265,8 @@ NSArray* scanByteRange(char targetValue, uintptr_t minAddr, uintptr_t maxAddr, i
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
         
-        if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
+        // Сканируем все читаемые регионы (убрана проверка на VM_PROT_WRITE)
+        if (info.protection & VM_PROT_READ) {
             uintptr_t scan_start = MAX(addr, minAddr);
             uintptr_t scan_end = MIN(addr + size, maxAddr);
             
@@ -310,7 +314,8 @@ NSArray* scanShortRange(short targetValue, uintptr_t minAddr, uintptr_t maxAddr,
                                          (vm_region_info_t)&info, &count, &object_name);
         if (kr != KERN_SUCCESS) break;
         
-        if ((info.protection & VM_PROT_READ) && (info.protection & VM_PROT_WRITE)) {
+        // Сканируем все читаемые регионы (убрана проверка на VM_PROT_WRITE)
+        if (info.protection & VM_PROT_READ) {
             uintptr_t scan_start = MAX(addr, minAddr);
             uintptr_t scan_end = MIN(addr + size, maxAddr);
             
