@@ -670,12 +670,11 @@ NSString* handleCommand(NSString *cmd) {
         }
         return response;
     }
-    // ===== ПОИСК ЦЕПОЧКИ УКАЗАТЕЛЕЙ =====
+        // ===== ПОИСК ЦЕПОЧКИ УКАЗАТЕЛЕЙ =====
     else if ([command isEqualToString:@"FIND_POINTER_CHAIN"]) {
-        if (parts.count < 4) return @"ERROR: need target_addr, max_depth, max_offset";
+        if (parts.count < 3) return @"ERROR: need target_addr, max_depth";
         uintptr_t targetAddr = strtoull([parts[1] UTF8String], NULL, 16);
         int maxDepth = [parts[2] intValue];
-        int maxOffset = [parts[3] intValue];
         
         NSMutableArray *chain = [NSMutableArray array];
         uintptr_t currentAddr = targetAddr;
@@ -684,7 +683,6 @@ NSString* handleCommand(NSString *cmd) {
             uintptr_t found = 0;
             
             // Сканируем память в поисках указателя на currentAddr
-            // Ограничиваем диапазон для скорости
             for (uintptr_t addr = 0x100000000; addr < 0x300000000; addr += 4) {
                 uintptr_t val = safeReadPtr(addr);
                 if (val == currentAddr) {
