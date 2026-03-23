@@ -25,6 +25,9 @@ static NSMutableDictionary *savedStringValues = nil;
 static NSMutableDictionary *listTimestamps = nil;
 static int nextListId = 1;
 
+// ===== ПРОТОТИПЫ =====
+uintptr_t safeReadPtr(uintptr_t addr);
+
 void addLog(NSString *msg) {
     if (!logText) logText = [[NSMutableString alloc] init];
     [logText appendString:msg];
