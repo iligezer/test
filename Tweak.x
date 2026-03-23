@@ -2,7 +2,6 @@
 #import <mach/mach.h>
 
 // ===== ГЛОБАЛЬНЫЕ =====
-static UITextView *logView = nil;
 static NSMutableString *logText = nil;
 static BOOL isSearching = NO;
 static uintptr_t g_myTransform = 0;
@@ -12,13 +11,6 @@ void addLog(NSString *msg) {
     if (!logText) logText = [[NSMutableString alloc] init];
     [logText appendString:msg];
     [logText appendString:@"\n"];
-    dispatch_async(dispatch_get_main_queue(), ^{
-        if (logView) logView.text = logText;
-        if (logView.text.length > 0) {
-            NSRange bottom = NSMakeRange(logView.text.length - 1, 1);
-            [logView scrollRangeToVisible:bottom];
-        }
-    });
 }
 
 uintptr_t readPtr(uintptr_t addr) {
@@ -48,19 +40,14 @@ float readFloat(uintptr_t addr) {
 void findPlayers() {
     if (isSearching) return;
     isSearching = YES;
-    addLog(@"🔍 ПОИСК ID 71068432...");
+    addLog(@"🔍 ПОИСК ID...");
     
     uintptr_t idAddr = 0;
-    int scanned = 0;
     for (uintptr_t addr = 0x110000000; addr < 0x180000000; addr += 4) {
-        scanned++;
-        if (scanned % 500000 == 0) {
-            addLog([NSString stringWithFormat:@"   Сканирую 0x%lx...", addr]);
-        }
         int val = readInt(addr);
         if (val == 71068432) {
             idAddr = addr;
-            addLog([NSString stringWithFormat:@"✅ ID найден: 0x%lx", idAddr]);
+            addLog([NSString stringWithFormat:@"✅ ID: 0x%lx", idAddr]);
             break;
         }
     }
@@ -72,55 +59,35 @@ void findPlayers() {
     }
     
     uintptr_t quark = idAddr - 0x10;
-    addLog([NSString stringWithFormat:@"QuarkRoomPlayer: 0x%lx", quark]);
-    
-    int isWasted = readInt(quark + 0x7A);
-    addLog([NSString stringWithFormat:@"IsWasted: %d", isWasted]);
-    
-    addLog(@"\n🔍 ИЩУ NETWORKPLAYER...");
-    int foundTransform = 0;
     for (int offset = 0x1A8; offset <= 0x1C0; offset += 8) {
         uintptr_t network = quark - offset;
         uintptr_t transform = readPtr(network + 0x58);
         if (transform > 0x100000000) {
-            float x = readFloat(transform);
             float y = readFloat(transform + 4);
-            float z = readFloat(transform + 8);
             if (y > 0.5 && y < 20) {
-                addLog([NSString stringWithFormat:@"✅ Найден! Смещение 0x%x", offset]);
-                addLog([NSString stringWithFormat:@"   NetworkPlayer: 0x%lx", network]);
-                addLog([NSString stringWithFormat:@"   Transform: 0x%lx", transform]);
-                addLog([NSString stringWithFormat:@"   Координаты: X=%.2f Y=%.2f Z=%.2f", x, y, z]);
+                addLog([NSString stringWithFormat:@"✅ Transform: 0x%lx", transform]);
                 g_myTransform = transform;
-                foundTransform = 1;
                 break;
             }
         }
     }
     
-    if (!foundTransform) {
+    if (!g_myTransform) {
         addLog(@"❌ Transform не найден");
         isSearching = NO;
         return;
     }
     
-    addLog(@"\n🔍 ИЩУ НАЧАЛО МАССИВА...");
     uintptr_t start = g_myTransform;
-    int steps = 0;
     while (1) {
         uintptr_t test = start - 0x20;
         float y = readFloat(test + 4);
         if (y < -100 || y > 100) break;
         start = test;
-        steps++;
-        if (steps % 10 == 0) {
-            addLog([NSString stringWithFormat:@"   Проверено %d шагов...", steps]);
-        }
     }
     g_arrayStart = start;
-    addLog([NSString stringWithFormat:@"✅ Начало массива: 0x%lx", g_arrayStart]);
+    addLog([NSString stringWithFormat:@"✅ Массив: 0x%lx", g_arrayStart]);
     
-    addLog(@"\n👥 ИГРОКИ НА КАРТЕ:");
     int enemyCount = 0;
     for (int i = 0; i < 100; i++) {
         uintptr_t addr = g_arrayStart + i * 0x20;
@@ -128,76 +95,50 @@ void findPlayers() {
         float y = readFloat(addr + 4);
         float z = readFloat(addr + 8);
         
-        if (y > 0.5 && y < 20 && x > -200 && x < 200 && z > -200 && z < 200) {
-            if (addr == g_myTransform) {
-                addLog([NSString stringWithFormat:@"   🎯 ТЫ: X=%.1f Y=%.1f Z=%.1f", x, y, z]);
-            } else {
-                addLog([NSString stringWithFormat:@"   👤 ВРАГ: X=%.1f Y=%.1f Z=%.1f", x, y, z]);
+        if (y > 0.5 && y < 20 && x > -200 && x < 200) {
+            if (addr != g_myTransform) {
                 enemyCount++;
             }
         }
     }
-    addLog([NSString stringWithFormat:@"\n✅ Найдено врагов: %d", enemyCount]);
-    addLog(@"\n🎯 ГОТОВО!");
+    addLog([NSString stringWithFormat:@"✅ Врагов: %d", enemyCount]);
     isSearching = NO;
 }
 
-// ===== КНОПКИ =====
-void setupUI() {
-    UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
-    if (!keyWindow) return;
-    
-    UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
-    btn.frame = CGRectMake(20, 80, 55, 55);
-    btn.backgroundColor = [UIColor systemBlueColor];
-    btn.layer.cornerRadius = 27.5;
-    [btn setTitle:@"🎯" forState:UIControlStateNormal];
-    [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    btn.titleLabel.font = [UIFont systemFontOfSize:26];
-    [btn addTarget:btn action:@selector(onFindTap) forControlEvents:UIControlEventTouchUpInside];
-    [keyWindow addSubview:btn];
-    
-    UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    clearBtn.frame = CGRectMake(20, 145, 55, 40);
-    clearBtn.backgroundColor = [UIColor systemGrayColor];
-    clearBtn.layer.cornerRadius = 8;
-    [clearBtn setTitle:@"🗑" forState:UIControlStateNormal];
-    [clearBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    clearBtn.titleLabel.font = [UIFont systemFontOfSize:20];
-    [clearBtn addTarget:clearBtn action:@selector(onClearTap) forControlEvents:UIControlEventTouchUpInside];
-    [keyWindow addSubview:clearBtn];
-    
-    UIView *logBg = [[UIView alloc] initWithFrame:CGRectMake(20, 195, keyWindow.frame.size.width - 40, keyWindow.frame.size.height - 215)];
-    logBg.backgroundColor = [UIColor colorWithWhite:0 alpha:0.85];
-    logBg.layer.cornerRadius = 12;
-    [keyWindow addSubview:logBg];
-    
-    logView = [[UITextView alloc] initWithFrame:CGRectMake(8, 5, logBg.frame.size.width - 16, logBg.frame.size.height - 10)];
-    logView.backgroundColor = [UIColor clearColor];
-    logView.textColor = [UIColor whiteColor];
-    logView.font = [UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightRegular];
-    logView.editable = NO;
-    [logBg addSubview:logView];
-    
-    addLog(@"🎯 ESP FINDER READY");
-    addLog(@"Нажми 🎯 для поиска игроков");
-}
-
-void onFindTap(UIButton *sender) {
-    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        findPlayers();
-    });
-}
-
-void onClearTap(UIButton *sender) {
-    logText = nil;
-    addLog(@"🗑 Лог очищен");
-    addLog(@"🎯 ESP FINDER READY");
-    addLog(@"Нажми 🎯 для поиска игроков");
+void showMenu() {
+    UIViewController *root = [UIApplication sharedApplication].keyWindow.rootViewController;
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"ESP FINDER" message:logText preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"🔍 НАЙТИ" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        logText = nil;
+        addLog(@"Поиск...");
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+            findPlayers();
+            dispatch_async(dispatch_get_main_queue(), ^{
+                showMenu();
+            });
+        });
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"📋 КОПИ" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
+        pasteboard.string = logText;
+    }]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"ЗАКРЫТЬ" style:UIAlertActionStyleCancel handler:nil]];
+    [root presentViewController:alert animated:YES completion:nil];
 }
 
 __attribute__((constructor)) void init() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        setupUI();
+        UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
+        if (!keyWindow) return;
+        
+        UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
+        btn.frame = CGRectMake(20, 80, 55, 55);
+        btn.backgroundColor = [UIColor systemBlueColor];
+        btn.layer.cornerRadius = 27.5;
+        [btn setTitle:@"🎯" forState:UIControlStateNormal];
+        [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        btn.titleLabel.font = [UIFont systemFontOfSize:26];
+        [btn addTarget:self action:@selector(showMenu) forControlEvents:UIControlEventTouchUpInside];
+        [keyWindow addSubview:btn];
     });
 }
