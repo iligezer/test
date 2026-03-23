@@ -93,7 +93,6 @@ void findPlayers() {
         uintptr_t addr = g_arrayStart + i * 0x20;
         float x = readFloat(addr);
         float y = readFloat(addr + 4);
-        float z = readFloat(addr + 8);
         
         if (y > 0.5 && y < 20 && x > -200 && x < 200) {
             if (addr != g_myTransform) {
@@ -138,7 +137,7 @@ __attribute__((constructor)) void init() {
         [btn setTitle:@"🎯" forState:UIControlStateNormal];
         [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
         btn.titleLabel.font = [UIFont systemFontOfSize:26];
-        [btn addTarget:self action:@selector(showMenu) forControlEvents:UIControlEventTouchUpInside];
+        [btn addTarget:btn action:@selector(showMenu) forControlEvents:UIControlEventTouchUpInside];
         [keyWindow addSubview:btn];
     });
 }
