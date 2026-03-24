@@ -72,6 +72,7 @@ uintptr_t getBaseAddress(void) {
     for (uint32_t i = 0; i < count; i++) {
         const char *name = _dyld_get_image_name(i);
         if (name && strstr(name, "UnityFramework") != NULL) {
+            addLogF(@"📦 Found UnityFramework at index %d", i);
             return (uintptr_t)_dyld_get_image_header(i);
         }
     }
@@ -109,9 +110,13 @@ float safeReadFloat(uintptr_t addr) {
 uintptr_t callFunction(uintptr_t addr) {
     if (addr == 0) return 0;
     @try {
+        addLogF(@"🔧 Calling function at 0x%lx", addr);
         uintptr_t (*func)() = (uintptr_t(*)())addr;
-        return func();
+        uintptr_t result = func();
+        addLogF(@"   Result: 0x%lx", result);
+        return result;
     } @catch (NSException *e) {
+        addLogF(@"❌ Exception calling function: %@", e);
         return 0;
     }
 }
@@ -119,20 +124,30 @@ uintptr_t callFunction(uintptr_t addr) {
 uintptr_t callFunctionWithArg(uintptr_t addr, uintptr_t arg) {
     if (addr == 0) return 0;
     @try {
+        addLogF(@"🔧 Calling function at 0x%lx with arg 0x%lx", addr, arg);
         uintptr_t (*func)(uintptr_t) = (uintptr_t(*)(uintptr_t))addr;
-        return func(arg);
+        uintptr_t result = func(arg);
+        addLogF(@"   Result: 0x%lx", result);
+        return result;
     } @catch (NSException *e) {
+        addLogF(@"❌ Exception calling function: %@", e);
         return 0;
     }
 }
 
 Vector3 callGetPosition(uintptr_t addr, uintptr_t transform) {
     Vector3 result = {0, 0, 0};
-    if (addr == 0 || transform == 0) return result;
+    if (addr == 0 || transform == 0) {
+        addLogF(@"⚠️ callGetPosition: addr=0x%lx transform=0x%lx", addr, transform);
+        return result;
+    }
     @try {
+        addLogF(@"🔧 Calling get_position at 0x%lx with transform 0x%lx", addr, transform);
         void (*func)(uintptr_t, Vector3*) = (void(*)(uintptr_t, Vector3*))addr;
         func(transform, &result);
+        addLogF(@"   Result: (%.2f, %.2f, %.2f)", result.x, result.y, result.z);
     } @catch (NSException *e) {
+        addLogF(@"❌ Exception calling get_position: %@", e);
         result.x = 0; result.y = 0; result.z = 0;
     }
     return result;
@@ -141,6 +156,9 @@ Vector3 callGetPosition(uintptr_t addr, uintptr_t transform) {
 // ===== ПОЛУЧЕНИЕ КООРДИНАТ =====
 Vector3 getLocalPlayerPosition(void) {
     Vector3 result = {0, 0, 0};
+    
+    addLog(@"========================================");
+    addLog(@"🔍 getLocalPlayerPosition START");
     
     // 1. Получить базовый адрес
     if (g_baseAddress == 0) {
@@ -157,35 +175,38 @@ Vector3 getLocalPlayerPosition(void) {
     uintptr_t addrGetTransform = g_baseAddress + 0x44B9D00;
     uintptr_t addrGetPosition = g_baseAddress + 0x44CEED0;
     
+    addLogF(@"📍 get_PlayerController: 0x%lx", addrGetPlayerController);
+    addLogF(@"📍 get_transform: 0x%lx", addrGetTransform);
+    addLogF(@"📍 get_position: 0x%lx", addrGetPosition);
+    
     // 3. Получить локального игрока
+    addLog(@"🔧 Calling get_PlayerController...");
     uintptr_t localPlayer = callFunction(addrGetPlayerController);
     if (localPlayer == 0) {
         addLog(@"⚠️ get_PlayerController вернул 0");
         return result;
     }
     g_localPlayer = localPlayer;
+    addLogF(@"✅ localPlayer: 0x%lx", localPlayer);
     
     // 4. Получить Transform
+    addLog(@"🔧 Calling get_transform...");
     uintptr_t transform = callFunctionWithArg(addrGetTransform, localPlayer);
     if (transform == 0) {
         addLog(@"⚠️ get_transform вернул 0");
         return result;
     }
     g_transform = transform;
+    addLogF(@"✅ transform: 0x%lx", transform);
     
     // 5. Получить координаты
+    addLog(@"🔧 Calling get_position...");
     result = callGetPosition(addrGetPosition, transform);
     
+    addLogF(@"🎯 КООРДИНАТЫ: X=%.2f Y=%.2f Z=%.2f", result.x, result.y, result.z);
+    addLog(@"========================================");
+    
     return result;
-}
-
-// ===== ОТПРАВКА КООРДИНАТ НА ПК =====
-void sendCoordinatesToPC(int clientSocket) {
-    Vector3 pos = getLocalPlayerPosition();
-    NSString *response = [NSString stringWithFormat:@"COORDS %.2f %.2f %.2f\n", pos.x, pos.y, pos.z];
-    const char *data = [response UTF8String];
-    send(clientSocket, data, strlen(data), 0);
-    addLogF(@"📤 Отправлено: X=%.2f Y=%.2f Z=%.2f", pos.x, pos.y, pos.z);
 }
 
 // ===== ОБРАБОТКА КОМАНД =====
@@ -312,14 +333,30 @@ void stopServer(void) {
     }
 }
 + (void)testESP {
+    addLog(@"🔘 TEST ESP button pressed");
     Vector3 pos = getLocalPlayerPosition();
-    NSString *msg = [NSString stringWithFormat:@"X: %.2f\nY: %.2f\nZ: %.2f\n\nBase: 0x%lx\nPlayer: 0x%lx\nTransform: 0x%lx", 
-                     pos.x, pos.y, pos.z, g_baseAddress, g_localPlayer, g_transform];
+    
+    NSString *msg = [NSString stringWithFormat:
+                     @"🎯 ESP TEST RESULTS\n\n"
+                     @"Base Address: 0x%lx\n"
+                     @"Local Player: 0x%lx\n"
+                     @"Transform: 0x%lx\n\n"
+                     @"Coordinates:\n"
+                     @"X = %.2f\n"
+                     @"Y = %.2f\n"
+                     @"Z = %.2f\n\n"
+                     @"%@",
+                     g_baseAddress, g_localPlayer, g_transform,
+                     pos.x, pos.y, pos.z,
+                     (pos.x == 0 && pos.y == 0 && pos.z == 0) ? @"⚠️ COORDINATES ARE ZERO!" : @"✅ ESP WORKING!"];
     
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🎯 ESP TEST" 
                                                                    message:msg 
                                                             preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"COPY" style:UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
+        UIPasteboard.generalPasteboard.string = msg;
+    }]];
     
     UIWindow *key = nil;
     for (UIScene *s in UIApplication.sharedApplication.connectedScenes) {
@@ -348,7 +385,7 @@ void createMenu(void) {
     }
     if (!key) return;
     
-    CGFloat w = 280, h = 280;
+    CGFloat w = 280, h = 320;
     CGFloat x = (key.bounds.size.width - w) / 2;
     CGFloat y = (key.bounds.size.height - h) / 2;
     
@@ -361,13 +398,13 @@ void createMenu(void) {
     win.hidden = NO;
     
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, w, 28)];
-    title.text = @"🎯 ESP SERVER";
+    title.text = @"🎯 ESP SERVER v2.0";
     title.textColor = UIColor.systemBlueColor;
     title.textAlignment = NSTextAlignmentCenter;
     title.font = [UIFont boldSystemFontOfSize:14];
     [win addSubview:title];
     
-    logView = [[UITextView alloc] initWithFrame:CGRectMake(6, 42, w-12, 120)];
+    logView = [[UITextView alloc] initWithFrame:CGRectMake(6, 42, w-12, 140)];
     logView.backgroundColor = UIColor.blackColor;
     logView.textColor = UIColor.greenColor;
     logView.font = [UIFont fontWithName:@"Courier" size:9];
@@ -378,7 +415,7 @@ void createMenu(void) {
     CGFloat btnW = (w - 30) / 2;
     
     UIButton *testBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    testBtn.frame = CGRectMake(10, 170, btnW, 38);
+    testBtn.frame = CGRectMake(10, 190, btnW, 38);
     [testBtn setTitle:@"🎯 TEST ESP" forState:UIControlStateNormal];
     testBtn.backgroundColor = UIColor.systemPurpleColor;
     [testBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
@@ -387,7 +424,7 @@ void createMenu(void) {
     [win addSubview:testBtn];
     
     UIButton *startBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    startBtn.frame = CGRectMake(20 + btnW, 170, btnW, 38);
+    startBtn.frame = CGRectMake(20 + btnW, 190, btnW, 38);
     [startBtn setTitle:@"▶️ СТАРТ" forState:UIControlStateNormal];
     startBtn.backgroundColor = UIColor.systemGreenColor;
     [startBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
@@ -396,7 +433,7 @@ void createMenu(void) {
     [win addSubview:startBtn];
     
     UIButton *stopBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    stopBtn.frame = CGRectMake(10, 215, btnW, 38);
+    stopBtn.frame = CGRectMake(10, 235, btnW, 38);
     [stopBtn setTitle:@"⏹️ СТОП" forState:UIControlStateNormal];
     stopBtn.backgroundColor = UIColor.systemRedColor;
     [stopBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
@@ -405,7 +442,7 @@ void createMenu(void) {
     [win addSubview:stopBtn];
     
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(20 + btnW, 215, btnW, 38);
+    closeBtn.frame = CGRectMake(20 + btnW, 235, btnW, 38);
     [closeBtn setTitle:@"❌ ЗАКРЫТЬ" forState:UIControlStateNormal];
     closeBtn.backgroundColor = UIColor.systemGrayColor;
     [closeBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
@@ -413,14 +450,30 @@ void createMenu(void) {
     [closeBtn addTarget:[ServerController class] action:@selector(closeMenu) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:closeBtn];
     
+    UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    clearBtn.frame = CGRectMake(w/2-35, 280, 70, 28);
+    [clearBtn setTitle:@"🗑 CLEAR" forState:UIControlStateNormal];
+    clearBtn.backgroundColor = UIColor.systemOrangeColor;
+    [clearBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    clearBtn.layer.cornerRadius = 5;
+    clearBtn.titleLabel.font = [UIFont systemFontOfSize:11];
+    [clearBtn addTarget:self action:@selector(clearLog) forControlEvents:UIControlEventTouchUpInside];
+    [win addSubview:clearBtn];
+    
     [win makeKeyAndVisible];
     
     // Предварительная инициализация
+    addLog(@"========================================");
+    addLog(@"🎯 ESP SERVER v2.0 STARTED");
+    addLog(@"========================================");
+    
     g_baseAddress = getBaseAddress();
     if (g_baseAddress != 0) {
-        addLogF(@"✅ Base: 0x%lx", g_baseAddress);
+        addLogF(@"✅ Base address: 0x%lx", g_baseAddress);
+        addLog(@"✅ Ready! Press TEST ESP");
     } else {
-        addLog(@"⚠️ Base address not found");
+        addLog(@"⚠️ Base address not found!");
+        addLog(@"💡 Make sure you're in a match");
     }
 }
 
@@ -490,6 +543,7 @@ void createMenu(void) {
         self.w.btn = b;
         [self.w addSubview:b];
         
+        __weak typeof(self) weak = self;
         b.onTap = ^{
             logText = nil;
             createMenu();
