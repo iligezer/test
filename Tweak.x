@@ -44,6 +44,29 @@ void addLogF(NSString *format, ...) {
     addLog(msg);
 }
 
+// ===== ПОЛУЧЕНИЕ IP АДРЕСА =====
+NSString* getIPAddress(void) {
+    NSString *address = @"error";
+    struct ifaddrs *interfaces = NULL;
+    struct ifaddrs *temp_addr = NULL;
+    int success = 0;
+    
+    success = getifaddrs(&interfaces);
+    if (success == 0) {
+        temp_addr = interfaces;
+        while(temp_addr != NULL) {
+            if(temp_addr->ifa_addr->sa_family == AF_INET) {
+                if([[NSString stringWithUTF8String:temp_addr->ifa_name] isEqualToString:@"en0"]) {
+                    address = [NSString stringWithUTF8String:inet_ntoa(((struct sockaddr_in *)temp_addr->ifa_addr)->sin_addr)];
+                }
+            }
+            temp_addr = temp_addr->ifa_next;
+        }
+    }
+    freeifaddrs(interfaces);
+    return address;
+}
+
 // ===== ПОЛУЧЕНИЕ БАЗОВОГО АДРЕСА =====
 uintptr_t getBaseAddress(void) {
     uint32_t count = _dyld_image_count();
@@ -184,14 +207,6 @@ NSString* handleCommand(NSString *cmd) {
         if (g_baseAddress == 0) g_baseAddress = getBaseAddress();
         return [NSString stringWithFormat:@"BASE 0x%lx", g_baseAddress];
     }
-    else if ([command isEqualToString:@"SCAN_INT"]) {
-        if (parts.count < 2) return @"ERROR: need value";
-        int value = [parts[1] intValue];
-        int max = (parts.count > 2) ? [parts[2] intValue] : 500;
-        // SCAN_INT в твике уже есть, используем существующую функцию
-        // Здесь нужно вызвать существующую scanInt
-        return @"SCAN_INT not implemented in this snippet";
-    }
     
     return @"ERROR: unknown command";
 }
@@ -234,7 +249,7 @@ void startServer(void) {
     
     serverRunning = YES;
     
-    NSString *ip = [self getIPAddress];
+    NSString *ip = getIPAddress();
     addLog(@"✅ Сервер запущен на порту 12345");
     addLogF(@"📡 IP: %@", ip);
     addLog(@"💡 Подключитесь с ПК");
@@ -260,18 +275,10 @@ void startServer(void) {
                 NSString *cmd = [NSString stringWithUTF8String:buffer];
                 cmd = [cmd stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
                 
-                // Автоматическая отправка координат каждые 0.5 сек
-                if ([cmd isEqualToString:@"STREAM_ON"]) {
-                    while (serverRunning) {
-                        sendCoordinatesToPC(clientSocket);
-                        [NSThread sleepForTimeInterval:0.5];
-                    }
-                } else {
-                    NSString *response = handleCommand(cmd);
-                    response = [response stringByAppendingString:@"\n"];
-                    const char *respData = [response UTF8String];
-                    send(clientSocket, respData, strlen(respData), 0);
-                }
+                NSString *response = handleCommand(cmd);
+                response = [response stringByAppendingString:@"\n"];
+                const char *respData = [response UTF8String];
+                send(clientSocket, respData, strlen(respData), 0);
             }
             close(clientSocket);
             addLog(@"🔌 Клиент отключён");
@@ -286,28 +293,6 @@ void stopServer(void) {
         serverSocket = -1;
     }
     addLog(@"🛑 Сервер остановлен");
-}
-
-NSString* getIPAddress(void) {
-    NSString *address = @"error";
-    struct ifaddrs *interfaces = NULL;
-    struct ifaddrs *temp_addr = NULL;
-    int success = 0;
-    
-    success = getifaddrs(&interfaces);
-    if (success == 0) {
-        temp_addr = interfaces;
-        while(temp_addr != NULL) {
-            if(temp_addr->ifa_addr->sa_family == AF_INET) {
-                if([[NSString stringWithUTF8String:temp_addr->ifa_name] isEqualToString:@"en0"]) {
-                    address = [NSString stringWithUTF8String:inet_ntoa(((struct sockaddr_in *)temp_addr->ifa_addr)->sin_addr)];
-                }
-            }
-            temp_addr = temp_addr->ifa_next;
-        }
-    }
-    freeifaddrs(interfaces);
-    return address;
 }
 
 // ===== ОБРАБОТЧИК КНОПОК =====
