@@ -43,6 +43,11 @@ void addLogF(NSString *format, ...) {
     addLog(msg);
 }
 
+void clearLog(void) {
+    logText = nil;
+    addLog(@"🗑 Лог очищен");
+}
+
 // ===== ПОЛУЧЕНИЕ IP АДРЕСА =====
 NSString* getIPAddress(void) {
     NSString *address = @"error";
@@ -320,12 +325,14 @@ void stopServer(void) {
 + (void)startServer;
 + (void)stopServer;
 + (void)testESP;
++ (void)clearLog;
 + (void)closeMenu;
 @end
 
 @implementation ServerController
 + (void)startServer { startServer(); }
 + (void)stopServer { stopServer(); }
++ (void)clearLog { clearLog(); }
 + (void)closeMenu {
     if (win) {
         win.hidden = YES;
@@ -441,24 +448,24 @@ void createMenu(void) {
     [stopBtn addTarget:[ServerController class] action:@selector(stopServer) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:stopBtn];
     
+    UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    clearBtn.frame = CGRectMake(20 + btnW, 235, btnW, 38);
+    [clearBtn setTitle:@"🗑 ОЧИСТИТЬ" forState:UIControlStateNormal];
+    clearBtn.backgroundColor = UIColor.systemOrangeColor;
+    [clearBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+    clearBtn.layer.cornerRadius = 6;
+    [clearBtn addTarget:[ServerController class] action:@selector(clearLog) forControlEvents:UIControlEventTouchUpInside];
+    [win addSubview:clearBtn];
+    
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    closeBtn.frame = CGRectMake(20 + btnW, 235, btnW, 38);
+    closeBtn.frame = CGRectMake(w/2-35, 280, 70, 28);
     [closeBtn setTitle:@"❌ ЗАКРЫТЬ" forState:UIControlStateNormal];
     closeBtn.backgroundColor = UIColor.systemGrayColor;
     [closeBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    closeBtn.layer.cornerRadius = 6;
+    closeBtn.layer.cornerRadius = 5;
+    closeBtn.titleLabel.font = [UIFont systemFontOfSize:11];
     [closeBtn addTarget:[ServerController class] action:@selector(closeMenu) forControlEvents:UIControlEventTouchUpInside];
     [win addSubview:closeBtn];
-    
-    UIButton *clearBtn = [UIButton buttonWithType:UIButtonTypeSystem];
-    clearBtn.frame = CGRectMake(w/2-35, 280, 70, 28);
-    [clearBtn setTitle:@"🗑 CLEAR" forState:UIControlStateNormal];
-    clearBtn.backgroundColor = UIColor.systemOrangeColor;
-    [clearBtn setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
-    clearBtn.layer.cornerRadius = 5;
-    clearBtn.titleLabel.font = [UIFont systemFontOfSize:11];
-    [clearBtn addTarget:self action:@selector(clearLog) forControlEvents:UIControlEventTouchUpInside];
-    [win addSubview:clearBtn];
     
     [win makeKeyAndVisible];
     
@@ -543,7 +550,6 @@ void createMenu(void) {
         self.w.btn = b;
         [self.w addSubview:b];
         
-        __weak typeof(self) weak = self;
         b.onTap = ^{
             logText = nil;
             createMenu();
