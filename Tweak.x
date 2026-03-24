@@ -176,11 +176,25 @@ uintptr_t callFunction(uintptr_t addr) {
         return 0;
     }
     
-    // Проверяем, что адрес читаемый
-    uintptr_t test = safeReadPtr(addr);
-    if (test == 0 && addr > 0x100000000) {
-        addLogF(@"⚠️ CALL_FUNC: address 0x%lx may be invalid (read test returned 0)", addr);
-        // Всё равно пробуем вызвать, но с защитой
+    // Проверяем, что адрес находится в исполняемой памяти
+    vm_address_t test_addr = addr;
+    vm_size_t size = 0;
+    struct vm_region_basic_info_64 info;
+    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+    mach_port_t object_name = MACH_PORT_NULL;
+    
+    kern_return_t kr = vm_region_64(mach_task_self(), &test_addr, &size, 
+                                     VM_REGION_BASIC_INFO_64,
+                                     (vm_region_info_t)&info, &count, &object_name);
+    
+    if (kr != KERN_SUCCESS) {
+        addLogF(@"⚠️ CALL_FUNC: cannot get memory info for 0x%lx", addr);
+        return 0;
+    }
+    
+    if (!(info.protection & VM_PROT_EXECUTE)) {
+        addLogF(@"⚠️ CALL_FUNC: address 0x%lx is not executable", addr);
+        return 0;
     }
     
     @try {
@@ -191,22 +205,6 @@ uintptr_t callFunction(uintptr_t addr) {
         return 0;
     }
 }
-
-uintptr_t callFunctionWithArg(uintptr_t addr, uintptr_t arg) {
-    if (addr == 0) {
-        addLogF(@"⚠️ CALL_FUNC_ARG: address is NULL");
-        return 0;
-    }
-    
-    @try {
-        uintptr_t (*func)(uintptr_t) = (uintptr_t(*)(uintptr_t))addr;
-        return func(arg);
-    } @catch (NSException *e) {
-        addLogF(@"❌ Exception in CALL_FUNC_ARG at 0x%lx: %@", addr, e);
-        return 0;
-    }
-}
-
 uintptr_t callFunctionWithTwoArgs(uintptr_t addr, uintptr_t arg1, uintptr_t arg2) {
     if (addr == 0) return 0;
     @try {
