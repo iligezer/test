@@ -20,7 +20,6 @@ static BOOL serverRunning = NO;
 static NSMutableString *logText = nil;
 static UITextView *logView = nil;
 static UIWindow *win = nil;
-static Vector3 g_lastPosition = {0, 0, 0};
 static uintptr_t g_baseAddress = 0;
 static uintptr_t g_localPlayer = 0;
 static uintptr_t g_transform = 0;
