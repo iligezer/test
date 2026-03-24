@@ -7,6 +7,7 @@
 #import <net/if.h>
 #import <limits.h>
 #import <dlfcn.h>
+#import <mach-o/dyld.h>
 
 // ===== ПРОТОТИПЫ ФУНКЦИЙ =====
 uintptr_t safeReadPtr(uintptr_t addr);
@@ -234,11 +235,12 @@ uintptr_t findSymbol(const char* symbolName) {
         const struct mach_header* header = _dyld_get_image_header(i);
         const char* name = _dyld_get_image_name(i);
         
-        // Пропускаем системные библиотеки
+        // Пропускаем системные библиотеки для скорости
         if (strstr(name, "/usr/lib/") || strstr(name, "/System/")) {
             continue;
         }
         
+        // Пробуем открыть модуль
         void* handle = dlopen(name, RTLD_LAZY);
         if (handle) {
             void* sym = dlsym(handle, symbolName);
@@ -257,7 +259,7 @@ uintptr_t findSymbol(const char* symbolName) {
     return 0;
 }
 
-// ===== СКАНИРОВАНИЕ С ШАГОМ (сохранено из оригинального кода) =====
+// ===== СКАНИРОВАНИЕ С ШАГОМ =====
 NSArray* scanIntRangeStep(int targetValue, uintptr_t minAddr, uintptr_t maxAddr, int step) {
     NSMutableArray *results = [NSMutableArray array];
     task_t task = mach_task_self();
@@ -693,7 +695,7 @@ NSString* handleCommand(NSString *cmd) {
         return @"ERROR: write failed";
     }
     
-    // ===== ОСТАЛЬНЫЕ КОМАНДЫ (из оригинального кода) =====
+    // ===== СКАНИРОВАНИЕ =====
     else if ([command isEqualToString:@"SCAN_INT"]) {
         if (parts.count < 2) return @"ERROR: need value";
         int value = [parts[1] intValue];
@@ -765,6 +767,8 @@ NSString* handleCommand(NSString *cmd) {
         }
         return response;
     }
+    
+    // ===== НЕИЗВЕСТНЫЙ ПОИСК С ШАГОМ =====
     else if ([command isEqualToString:@"SCAN_UNKNOWN_RANGE"]) {
         if (parts.count < 5) return @"ERROR: need min_addr, max_addr, type, step";
         uintptr_t minAddr = strtoull([parts[1] UTF8String], NULL, 16);
@@ -815,6 +819,8 @@ NSString* handleCommand(NSString *cmd) {
         }
         return response;
     }
+    
+    // ===== ФИЛЬТРЫ UNKNOWN SEARCH =====
     else if ([command isEqualToString:@"FILTER_CHANGED"]) {
         if (parts.count < 3) return @"ERROR: need list_id and type";
         int listId = [parts[1] intValue];
@@ -1060,6 +1066,8 @@ NSString* handleCommand(NSString *cmd) {
         }
         return response;
     }
+    
+    // ===== ФИЛЬТРЫ ПО ЗНАЧЕНИЮ =====
     else if ([command isEqualToString:@"FILTER_INT"]) {
         if (parts.count < 3) return @"ERROR: need list_id and value";
         int listId = [parts[1] intValue];
@@ -1176,6 +1184,8 @@ NSString* handleCommand(NSString *cmd) {
         }
         return response;
     }
+    
+    // ===== ПОИСК ЦЕПОЧКИ УКАЗАТЕЛЕЙ =====
     else if ([command isEqualToString:@"FIND_POINTER_CHAIN"]) {
         if (parts.count < 3) return @"ERROR: need target_addr, max_depth";
         uintptr_t targetAddr = strtoull([parts[1] UTF8String], NULL, 16);
@@ -1209,6 +1219,8 @@ NSString* handleCommand(NSString *cmd) {
         }
         return response;
     }
+    
+    // ===== УПРАВЛЕНИЕ СПИСКАМИ =====
     else if ([command isEqualToString:@"CLEAR_LIST"]) {
         if (parts.count < 2) return @"ERROR: need list_id";
         int listId = [parts[1] intValue];
@@ -1241,9 +1253,13 @@ NSString* handleCommand(NSString *cmd) {
         if (!list) return @"COUNT 0";
         return [NSString stringWithFormat:@"COUNT %lu", (unsigned long)list.count];
     }
+    
+    // ===== LIST_MODULES =====
     else if ([command isEqualToString:@"LIST_MODULES"]) {
         return listModules();
     }
+    
+    // ===== ЧТЕНИЕ =====
     else if ([command isEqualToString:@"READ_INT"]) {
         if (parts.count < 2) return @"ERROR: need addr";
         uintptr_t addr = strtoull([parts[1] UTF8String], NULL, 16);
