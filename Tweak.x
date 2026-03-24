@@ -9,6 +9,10 @@
 #import <dlfcn.h>
 #import <mach-o/dyld.h>
 
+// Подавляем предупреждения о неиспользуемых переменных
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+
 // ===== ПРОТОТИПЫ ФУНКЦИЙ =====
 uintptr_t safeReadPtr(uintptr_t addr);
 void addLogF(NSString *format, ...);
@@ -232,7 +236,6 @@ uintptr_t findSymbol(const char* symbolName) {
     // Ищем в загруженных модулях
     uint32_t count = _dyld_image_count();
     for (uint32_t i = 0; i < count; i++) {
-        const struct mach_header* header = _dyld_get_image_header(i);
         const char* name = _dyld_get_image_name(i);
         
         // Пропускаем системные библиотеки для скорости
