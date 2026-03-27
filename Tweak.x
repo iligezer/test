@@ -29,13 +29,14 @@ uintptr_t getBase() {
     return 0;
 }
 
+// Структура Vector3 с тегом struct
 struct Vector3 {
     float x, y, z;
 };
 
 // Получить позицию игрока
-Vector3 GetPlayerPosition() {
-    Vector3 result = {0, 0, 0};
+struct Vector3 GetPlayerPosition() {
+    struct Vector3 result = {0, 0, 0};
     
     uintptr_t base = getBase();
     if (base == 0) {
@@ -211,7 +212,7 @@ Vector3 GetPlayerPosition() {
 
 - (void)checkCoordinates {
     NSLog(@"[ESP] ========== CHECK COORDINATES ==========");
-    Vector3 pos = GetPlayerPosition();
+    struct Vector3 pos = GetPlayerPosition();
     
     NSString *message;
     if (pos.x == 0 && pos.y == 0 && pos.z == 0) {
