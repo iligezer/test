@@ -48,16 +48,20 @@ struct Vector3 GetPlayerPosition() {
     return result;
 }
 
-// ==================== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ====================
+// ==================== КЛАСС МЕНЮ ====================
+
+@interface TestMenu : NSObject
++ (void)setup;
+@end
+
+@implementation TestMenu
 
 static UIView *menuContainer = nil;
 static UIButton *menuButton = nil;
 static UILabel *coordLabel = nil;
 static BOOL isMenuVisible = NO;
 
-// ==================== ФУНКЦИИ МЕНЮ ====================
-
-static void showAlert(NSString *title, NSString *message) {
++ (void)showAlert:(NSString *)title message:(NSString *)message {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:title 
                                                                    message:message 
                                                             preferredStyle:UIAlertControllerStyleAlert];
@@ -67,7 +71,7 @@ static void showAlert(NSString *title, NSString *message) {
     [rootVC presentViewController:alert animated:YES completion:nil];
 }
 
-static void checkCoordinates() {
++ (void)checkCoordinates {
     struct Vector3 pos = GetPlayerPosition();
     NSString *message;
     if (pos.x == 0 && pos.y == 0 && pos.z == 0) {
@@ -75,13 +79,13 @@ static void checkCoordinates() {
     } else {
         message = [NSString stringWithFormat:@"X: %.2f\nY: %.2f\nZ: %.2f\n\nЭто координаты ТВОЕГО персонажа!", pos.x, pos.y, pos.z];
     }
-    showAlert(@"Твои координаты", message);
+    [self showAlert:@"Твои координаты" message:message];
 }
 
-static void checkOffsets() {
++ (void)checkOffsets {
     uintptr_t base = getBase();
     if (base == 0) {
-        showAlert(@"Ошибка", @"База UnityFramework не найдена!");
+        [self showAlert:@"Ошибка" message:@"База UnityFramework не найдена!"];
         return;
     }
     
@@ -100,10 +104,10 @@ static void checkOffsets() {
         TRANSFORM_POSITION_OFFSET
     ];
     
-    showAlert(@"Смещения", info);
+    [self showAlert:@"Смещения" message:info];
 }
 
-static void updateCoordinates() {
++ (void)updateCoordinates {
     if (!coordLabel) return;
     struct Vector3 pos = GetPlayerPosition();
     if (pos.x == 0 && pos.y == 0 && pos.z == 0) {
@@ -115,12 +119,12 @@ static void updateCoordinates() {
     }
 }
 
-static void toggleMenu() {
++ (void)toggleMenu {
     isMenuVisible = !isMenuVisible;
     menuContainer.hidden = !isMenuVisible;
 }
 
-static void dragButton(UIPanGestureRecognizer *gesture) {
++ (void)dragButton:(UIPanGestureRecognizer *)gesture {
     CGPoint translation = [gesture translationInView:menuButton.superview];
     CGPoint newCenter = CGPointMake(menuButton.center.x + translation.x, menuButton.center.y + translation.y);
     
@@ -139,7 +143,7 @@ static void dragButton(UIPanGestureRecognizer *gesture) {
     menuContainer.frame = frame;
 }
 
-static void setupMenu() {
++ (void)setup {
     UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
     if (!keyWindow) return;
     
@@ -154,10 +158,10 @@ static void setupMenu() {
     [menuButton setTitle:@"⚡" forState:UIControlStateNormal];
     [menuButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     menuButton.titleLabel.font = [UIFont boldSystemFontOfSize:24];
-    [menuButton addTarget:nil action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
+    [menuButton addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
     
     // Перетаскивание
-    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:nil action:@selector(dragButton:)];
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragButton:)];
     [menuButton addGestureRecognizer:pan];
     
     [keyWindow addSubview:menuButton];
@@ -189,7 +193,7 @@ static void setupMenu() {
     [coordBtn setTitle:@"📍 Мои координаты" forState:UIControlStateNormal];
     [coordBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     coordBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-    [coordBtn addTarget:nil action:@selector(checkCoordinates) forControlEvents:UIControlEventTouchUpInside];
+    [coordBtn addTarget:self action:@selector(checkCoordinates) forControlEvents:UIControlEventTouchUpInside];
     [menuContainer addSubview:coordBtn];
     
     // Кнопка "Смещения"
@@ -200,7 +204,7 @@ static void setupMenu() {
     [offsetsBtn setTitle:@"🔧 Смещения" forState:UIControlStateNormal];
     [offsetsBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     offsetsBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-    [offsetsBtn addTarget:nil action:@selector(checkOffsets) forControlEvents:UIControlEventTouchUpInside];
+    [offsetsBtn addTarget:self action:@selector(checkOffsets) forControlEvents:UIControlEventTouchUpInside];
     [menuContainer addSubview:offsetsBtn];
     
     // Метка с координатами
@@ -216,10 +220,8 @@ static void setupMenu() {
     
     // Обновляем координаты раз в секунду
     [NSTimer scheduledTimerWithTimeInterval:1.0 
-                                     target:[NSBlockOperation blockOperationWithBlock:^{
-        updateCoordinates();
-    }] 
-                                   selector:@selector(main) 
+                                     target:self 
+                                   selector:@selector(updateCoordinates) 
                                    userInfo:nil 
                                     repeats:YES];
     
@@ -229,10 +231,14 @@ static void setupMenu() {
     GetPlayerPosition();
 }
 
+@end
+
+// ==================== ЗАГРУЗКА ====================
+
 static void loadMenu() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         if ([UIApplication sharedApplication].keyWindow) {
-            setupMenu();
+            [TestMenu setup];
         } else {
             loadMenu();
         }
