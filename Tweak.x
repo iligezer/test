@@ -22,7 +22,7 @@ uintptr_t getBase() {
 
 static UIView *menuContainer = nil;
 static UIButton *menuButton = nil;
-static UITextView *debugText = nil;
+static UITextView *resultText = nil;
 static BOOL isMenuVisible = NO;
 
 + (void)showAlert:(NSString *)title message:(NSString *)message {
@@ -34,80 +34,74 @@ static BOOL isMenuVisible = NO;
     [rootVC presentViewController:alert animated:YES completion:nil];
 }
 
-+ (void)scanForTransform {
++ (void)scanTransforms {
     uintptr_t base = getBase();
     if (base == 0) {
         [self showAlert:@"Ошибка" message:@"Base не найдена"];
         return;
     }
     
-    NSMutableString *info = [NSMutableString string];
-    [info appendFormat:@"Base: 0x%llx\n", (unsigned long long)base];
-    
     uintptr_t typeInfo = base + UTILITIES_TYPEINFO_RVA;
     uintptr_t static_fields = *(uintptr_t*)(typeInfo + 0x08);
-    [info appendFormat:@"static_fields: 0x%llx\n\n", (unsigned long long)static_fields];
     
-    // Проверяем оба кандидата _playerController
-    int playerOffsets[] = {0x28, 0x30};
+    NSMutableString *results = [NSMutableString string];
+    [results appendFormat:@"Сканирование FirstPersonController\n"];
+    [results appendFormat:@"static_fields: 0x%llx\n\n", (unsigned long long)static_fields];
     
-    for (int p = 0; p < 2; p++) {
-        int playerOffset = playerOffsets[p];
-        uintptr_t firstPerson = *(uintptr_t*)(static_fields + playerOffset);
+    // Проверяем оба кандидата
+    int candidates[] = {0x28, 0x30};
+    
+    for (int ci = 0; ci < 2; ci++) {
+        int offset = candidates[ci];
+        uintptr_t firstPerson = *(uintptr_t*)(static_fields + offset);
         
-        [info appendFormat:@"\n========== _playerController at 0x%02x ==========\n", playerOffset];
-        [info appendFormat:@"FirstPerson: 0x%llx\n", (unsigned long long)firstPerson];
+        [results appendFormat:@"========== offset 0x%02x ==========\n", offset];
+        [results appendFormat:@"FirstPerson: 0x%llx\n", (unsigned long long)firstPerson];
         
         if (firstPerson == 0 || firstPerson < base) {
-            [info appendString:@"❌ Невалидный адрес\n"];
+            [results appendFormat:@"❌ Невалидный адрес\n\n"];
             continue;
         }
         
-        [info appendString:@"\nСканирование возможных смещений Transform (0x00 - 0x200):\n"];
+        [results appendFormat:@"Сканирование смещений 0x00-0x200:\n"];
         
         int foundCount = 0;
-        
-        // Сканируем все возможные смещения
-        for (int offset = 0; offset <= 0x200; offset += 8) {
-            uintptr_t possibleTransform = *(uintptr_t*)(firstPerson + offset);
+        for (int testOffset = 0; testOffset <= 0x200; testOffset += 8) {
+            uintptr_t possibleTransform = *(uintptr_t*)(firstPerson + testOffset);
             
-            // Проверка: адрес должен быть в диапазоне памяти игры
+            // Проверка: адрес должен быть выровнен и в пределах базы
             if (possibleTransform == 0) continue;
-            if (possibleTransform < base) continue;
-            if (possibleTransform > base + 0x20000000) continue;
+            if ((possibleTransform & 0x7) != 0) continue;  // не выровнен
+            if (possibleTransform < base || possibleTransform > base + 0x20000000) continue;
             
-            // Проверка выравнивания (Transform должен быть кратен 8)
-            if ((possibleTransform & 0x7) != 0) continue;
+            // Проверяем, похоже ли на Transform (первые 8 байт — указатель на klass)
+            uintptr_t possibleKlass = *(uintptr_t*)possibleTransform;
+            if (possibleKlass < base || possibleKlass > base + 0x20000000) continue;
             
-            // Пытаемся прочитать klass (первое поле Transform)
-            uintptr_t klass = *(uintptr_t*)possibleTransform;
-            
-            // klass должен быть указателем на Class (обычно в диапазоне игры)
-            if (klass < base || klass > base + 0x20000000) continue;
-            
-            // Читаем position
+            // Пробуем прочитать координаты
             float x = *(float*)(possibleTransform + 0x20);
             float y = *(float*)(possibleTransform + 0x24);
             float z = *(float*)(possibleTransform + 0x28);
             
-            // Проверяем, похоже ли на реальные координаты
-            if (fabs(x) < 10000 && fabs(y) < 10000 && fabs(z) < 10000 && (x != 0 || y != 0 || z != 0)) {
-                [info appendFormat:@"\n✅ НАЙДЕН! offset 0x%03x (0x%x)\n", offset, offset];
-                [info appendFormat:@"   Transform: 0x%llx\n", (unsigned long long)possibleTransform];
-                [info appendFormat:@"   klass: 0x%llx\n", (unsigned long long)klass];
-                [info appendFormat:@"   position: (%.2f, %.2f, %.2f)\n", x, y, z];
+            // Проверяем, похожи ли координаты на реальные
+            if (fabs(x) < 5000 && fabs(y) < 5000 && fabs(z) < 5000 && (x != 0 || y != 0 || z != 0)) {
+                [results appendFormat:@"\n✅ НАЙДЕН! смещение 0x%03x\n", testOffset];
+                [results appendFormat:@"   Transform: 0x%llx\n", (unsigned long long)possibleTransform];
+                [results appendFormat:@"   klass: 0x%llx\n", (unsigned long long)possibleKlass];
+                [results appendFormat:@"   position: (%.2f, %.2f, %.2f)\n", x, y, z];
                 foundCount++;
             }
         }
         
         if (foundCount == 0) {
-            [info appendString:@"❌ Не найдено валидных Transform\n"];
+            [results appendFormat:@"❌ Не найдено валидных Transform\n"];
         }
+        [results appendFormat:@"\n"];
     }
     
-    [self showAlert:@"Scan Results" message:info];
-    if (debugText) {
-        debugText.text = info;
+    [self showAlert:@"Результаты сканирования" message:results];
+    if (resultText) {
+        resultText.text = results;
     }
 }
 
@@ -153,13 +147,13 @@ static BOOL isMenuVisible = NO;
     
     menuContainer = [[UIView alloc] initWithFrame:CGRectMake(menuButton.frame.origin.x, 
                                                               menuButton.frame.origin.y + 55, 
-                                                              380, 500)];
+                                                              360, 500)];
     menuContainer.backgroundColor = [UIColor colorWithRed:0.05 green:0.05 blue:0.05 alpha:0.95];
     menuContainer.layer.cornerRadius = 12;
     menuContainer.hidden = YES;
     menuContainer.userInteractionEnabled = YES;
     
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, 380, 28)];
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, 360, 28)];
     title.text = @"Modern Strike - Scan Transform";
     title.textColor = [UIColor whiteColor];
     title.textAlignment = NSTextAlignmentCenter;
@@ -167,22 +161,22 @@ static BOOL isMenuVisible = NO;
     [menuContainer addSubview:title];
     
     UIButton *scanBtn = [UIButton buttonWithType:UIButtonTypeRoundedRect];
-    scanBtn.frame = CGRectMake(10, 45, 360, 40);
+    scanBtn.frame = CGRectMake(10, 45, 340, 40);
     scanBtn.backgroundColor = [UIColor colorWithRed:0.2 green:0.5 blue:0.8 alpha:1];
     scanBtn.layer.cornerRadius = 8;
     [scanBtn setTitle:@"🔍 СКАНИРОВАТЬ TRANSFORM" forState:UIControlStateNormal];
     [scanBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     scanBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-    [scanBtn addTarget:self action:@selector(scanForTransform) forControlEvents:UIControlEventTouchUpInside];
+    [scanBtn addTarget:self action:@selector(scanTransforms) forControlEvents:UIControlEventTouchUpInside];
     [menuContainer addSubview:scanBtn];
     
-    debugText = [[UITextView alloc] initWithFrame:CGRectMake(5, 95, 370, 390)];
-    debugText.backgroundColor = [UIColor colorWithRed:0.1 green:0.1 blue:0.1 alpha:1];
-    debugText.textColor = [UIColor colorWithRed:0.8 green:0.8 blue:0.8 alpha:1];
-    debugText.font = [UIFont fontWithName:@"Courier" size:9];
-    debugText.editable = NO;
-    debugText.text = @"Зайди в матч, затем нажми кнопку\nСканер найдет правильное смещение AxeArms";
-    [menuContainer addSubview:debugText];
+    resultText = [[UITextView alloc] initWithFrame:CGRectMake(5, 95, 350, 390)];
+    resultText.backgroundColor = [UIColor colorWithRed:0.1 green:0.1 blue:0.1 alpha:1];
+    resultText.textColor = [UIColor colorWithRed:0.8 green:0.8 blue:0.8 alpha:1];
+    resultText.font = [UIFont fontWithName:@"Courier" size:10];
+    resultText.editable = NO;
+    resultText.text = @"Нажми кнопку после захода в матч";
+    [menuContainer addSubview:resultText];
     
     [keyWindow addSubview:menuContainer];
     
