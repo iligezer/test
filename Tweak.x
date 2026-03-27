@@ -1,10 +1,27 @@
 #import <UIKit/UIKit.h>
 #import <mach-o/dyld.h>
+#import <substrate.h>
 
-// ========== ПОЛУЧЕНИЕ БАЗОВОГО АДРЕСА ==========
-uintptr_t getUnityFrameworkBase() {
+// ==================== СМЕЩЕНИЯ ДЛЯ iOS (Modern Strike Online) ====================
+
+// Utilities TypeInfo (найден в IDA)
+#define UTILITIES_TYPEINFO_RVA          0x8E15248
+
+// Смещения полей (найдены в IDA)
+#define PLAYERCONTROLLER_OFFSET         0x30        // _playerController в static_fields
+#define AXEARMS_OFFSET                  0x150       // FirstPersonController -> AxeArms
+#define TRANSFORM_POSITION_OFFSET       0x20        // Transform.position
+
+// RVA функций (найдены в script.json)
+#define GET_PLAYERCONTROLLER_RVA        0x32494cc
+#define CAMERA_GET_MAIN_RVA             0x445baf8
+#define WORLD_TO_SCREEN_POINT_RVA       0x445a9cc
+
+// ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
+
+uintptr_t getBase() {
     for (uint32_t i = 0; i < _dyld_image_count(); i++) {
-        const char *name = _dyld_get_image_name(i);
+        const char* name = _dyld_get_image_name(i);
         if (strstr(name, "UnityFramework")) {
             return (uintptr_t)_dyld_get_image_header(i);
         }
@@ -12,212 +29,274 @@ uintptr_t getUnityFrameworkBase() {
     return 0;
 }
 
-// ========== ПОЛУЧЕНИЕ КООРДИНАТ ==========
-void getPosition(float *x, float *y, float *z, float *x2, float *y2, float *z2, uintptr_t *player1, uintptr_t *player2, uintptr_t *trans1, uintptr_t *trans2) {
-    uintptr_t base = getUnityFrameworkBase();
-    if (!base) return;
+struct Vector3 {
+    float x, y, z;
+};
+
+// Получить позицию игрока
+Vector3 GetPlayerPosition() {
+    Vector3 result = {0, 0, 0};
     
-    uintptr_t typeInfo = base + 0x8E15248;
+    uintptr_t base = getBase();
+    if (base == 0) {
+        NSLog(@"[ESP] Base not found");
+        return result;
+    }
+    
+    NSLog(@"[ESP] Base: 0x%llx", (unsigned long long)base);
+    
+    // 1. Utilities TypeInfo
+    uintptr_t typeInfo = base + UTILITIES_TYPEINFO_RVA;
+    NSLog(@"[ESP] TypeInfo: 0x%llx", (unsigned long long)typeInfo);
+    
+    // 2. static_fields (TypeInfo + 0x08)
     uintptr_t static_fields = *(uintptr_t*)(typeInfo + 0x08);
+    NSLog(@"[ESP] static_fields: 0x%llx", (unsigned long long)static_fields);
     
-    *player1 = *(uintptr_t*)(static_fields + 0x28);
-    *player2 = *(uintptr_t*)(static_fields + 0x30);
-    
-    if (*player1) {
-        *trans1 = *(uintptr_t*)(*player1 + 0x150);
-        if (*trans1) {
-            *x = *(float*)(*trans1 + 0x20);
-            *y = *(float*)(*trans1 + 0x24);
-            *z = *(float*)(*trans1 + 0x28);
-        }
+    if (static_fields == 0) {
+        NSLog(@"[ESP] static_fields is NULL");
+        return result;
     }
     
-    if (*player2) {
-        *trans2 = *(uintptr_t*)(*player2 + 0x150);
-        if (*trans2) {
-            *x2 = *(float*)(*trans2 + 0x20);
-            *y2 = *(float*)(*trans2 + 0x24);
-            *z2 = *(float*)(*trans2 + 0x28);
-        }
+    // 3. FirstPersonController (_playerController)
+    uintptr_t firstPersonController = *(uintptr_t*)(static_fields + PLAYERCONTROLLER_OFFSET);
+    NSLog(@"[ESP] FirstPersonController: 0x%llx", (unsigned long long)firstPersonController);
+    
+    if (firstPersonController == 0) {
+        NSLog(@"[ESP] FirstPersonController is NULL");
+        return result;
     }
+    
+    // 4. Transform (AxeArms)
+    uintptr_t transform = *(uintptr_t*)(firstPersonController + AXEARMS_OFFSET);
+    NSLog(@"[ESP] Transform: 0x%llx", (unsigned long long)transform);
+    
+    if (transform == 0) {
+        NSLog(@"[ESP] Transform is NULL");
+        return result;
+    }
+    
+    // 5. Position
+    result.x = *(float*)(transform + TRANSFORM_POSITION_OFFSET);
+    result.y = *(float*)(transform + TRANSFORM_POSITION_OFFSET + 4);
+    result.z = *(float*)(transform + TRANSFORM_POSITION_OFFSET + 8);
+    
+    NSLog(@"[ESP] Position: (%.2f, %.2f, %.2f)", result.x, result.y, result.z);
+    
+    return result;
 }
 
-// ========== ПЛАВАЮЩАЯ КНОПКА ==========
-@interface FloatingButton : UIButton
-@property (nonatomic, strong) UIPanGestureRecognizer *panGesture;
+// ==================== МЕНЮ И UI ====================
+
+@interface TestMenu : UIView {
+    UIButton *menuButton;
+    UIView *menuView;
+    UILabel *coordLabel;
+    BOOL isMenuVisible;
+}
 @end
 
-@implementation FloatingButton
+@implementation TestMenu
 
-- (instancetype)initWithFrame:(CGRect)frame {
+- (id)initWithFrame:(CGRect)frame {
     self = [super initWithFrame:frame];
     if (self) {
-        self.backgroundColor = [UIColor colorWithRed:0.0 green:0.48 blue:1.0 alpha:0.9];
-        self.layer.cornerRadius = 30;
-        self.layer.shadowColor = [UIColor blackColor].CGColor;
-        self.layer.shadowOffset = CGSizeMake(0, 2);
-        self.layer.shadowRadius = 4;
-        self.layer.shadowOpacity = 0.3;
-        
-        [self setTitle:@"⚡" forState:UIControlStateNormal];
-        self.titleLabel.font = [UIFont systemFontOfSize:24];
-        
-        self.panGesture = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
-        [self addGestureRecognizer:self.panGesture];
+        self.backgroundColor = [UIColor clearColor];
+        self.userInteractionEnabled = YES;
+        isMenuVisible = NO;
+        [self setupMenuButton];
     }
     return self;
 }
 
-- (void)handlePan:(UIPanGestureRecognizer *)gesture {
-    CGPoint translation = [gesture translationInView:self.superview];
-    CGPoint newCenter = CGPointMake(self.center.x + translation.x, self.center.y + translation.y);
+- (void)setupMenuButton {
+    // Плавающая кнопка
+    menuButton = [UIButton buttonWithType:UIButtonTypeRoundedRect];
+    menuButton.frame = CGRectMake(20, 100, 50, 50);
+    menuButton.backgroundColor = [UIColor colorWithRed:0.0 green:0.5 blue:1.0 alpha:0.9];
+    menuButton.layer.cornerRadius = 25;
+    menuButton.layer.shadowColor = [UIColor blackColor].CGColor;
+    menuButton.layer.shadowOffset = CGSizeMake(2, 2);
+    menuButton.layer.shadowOpacity = 0.5;
+    [menuButton setTitle:@"⚡" forState:UIControlStateNormal];
+    [menuButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    menuButton.titleLabel.font = [UIFont systemFontOfSize:24];
+    [menuButton addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
     
-    // Ограничиваем по краям экрана
-    CGFloat halfWidth = self.frame.size.width / 2;
-    CGFloat halfHeight = self.frame.size.height / 2;
-    newCenter.x = MAX(halfWidth, MIN(newCenter.x, self.superview.bounds.size.width - halfWidth));
-    newCenter.y = MAX(halfHeight, MIN(newCenter.y, self.superview.bounds.size.height - halfHeight));
+    // Добавляем возможность перетаскивать кнопку
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragButton:)];
+    [menuButton addGestureRecognizer:pan];
     
-    self.center = newCenter;
-    [gesture setTranslation:CGPointZero inView:self.superview];
+    [self addSubview:menuButton];
+    
+    // Меню
+    menuView = [[UIView alloc] initWithFrame:CGRectMake(20, 160, 250, 180)];
+    menuView.backgroundColor = [UIColor colorWithRed:0.1 green:0.1 blue:0.1 alpha:0.95];
+    menuView.layer.cornerRadius = 12;
+    menuView.layer.borderWidth = 1;
+    menuView.layer.borderColor = [UIColor colorWithRed:0.3 green:0.3 blue:0.3 alpha:1].CGColor;
+    menuView.hidden = YES;
+    
+    // Заголовок
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 10, 250, 30)];
+    title.text = @"Modern Strike ESP Test";
+    title.textColor = [UIColor whiteColor];
+    title.textAlignment = NSTextAlignmentCenter;
+    title.font = [UIFont boldSystemFontOfSize:16];
+    [menuView addSubview:title];
+    
+    // Кнопка проверки координат
+    UIButton *checkButton = [UIButton buttonWithType:UIButtonTypeRoundedRect];
+    checkButton.frame = CGRectMake(20, 50, 210, 40);
+    checkButton.backgroundColor = [UIColor colorWithRed:0.2 green:0.6 blue:0.2 alpha:1];
+    checkButton.layer.cornerRadius = 8;
+    [checkButton setTitle:@"📍 Проверить координаты" forState:UIControlStateNormal];
+    [checkButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    checkButton.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+    [checkButton addTarget:self action:@selector(checkCoordinates) forControlEvents:UIControlEventTouchUpInside];
+    [menuView addSubview:checkButton];
+    
+    // Кнопка проверки смещений
+    UIButton *offsetsButton = [UIButton buttonWithType:UIButtonTypeRoundedRect];
+    offsetsButton.frame = CGRectMake(20, 100, 210, 40);
+    offsetsButton.backgroundColor = [UIColor colorWithRed:0.6 green:0.3 blue:0.2 alpha:1];
+    offsetsButton.layer.cornerRadius = 8;
+    [offsetsButton setTitle:@"🔧 Проверить смещения" forState:UIControlStateNormal];
+    [offsetsButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    offsetsButton.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+    [offsetsButton addTarget:self action:@selector(checkOffsets) forControlEvents:UIControlEventTouchUpInside];
+    [menuView addSubview:offsetsButton];
+    
+    // Метка для вывода координат
+    coordLabel = [[UILabel alloc] initWithFrame:CGRectMake(10, 150, 230, 20)];
+    coordLabel.text = @"Координаты: ???";
+    coordLabel.textColor = [UIColor colorWithRed:0.8 green:0.8 blue:0.8 alpha:1];
+    coordLabel.font = [UIFont systemFontOfSize:11];
+    coordLabel.textAlignment = NSTextAlignmentCenter;
+    [menuView addSubview:coordLabel];
+    
+    [self addSubview:menuView];
 }
 
-@end
-
-// ========== МЕНЮ С КНОПКОЙ ПОКАЗАТЬ КООРДИНАТЫ ==========
-@interface ESPMenuView : UIView
-@property (nonatomic, strong) UIButton *showCoordsButton;
-@property (nonatomic, strong) UIButton *closeButton;
-@property (nonatomic, strong) UILabel *titleLabel;
-@end
-
-@implementation ESPMenuView
-
-- (instancetype)initWithFrame:(CGRect)frame {
-    self = [super initWithFrame:frame];
-    if (self) {
-        self.backgroundColor = [UIColor colorWithRed:0.1 green:0.1 blue:0.15 alpha:0.95];
-        self.layer.cornerRadius = 16;
-        self.layer.shadowColor = [UIColor blackColor].CGColor;
-        self.layer.shadowOffset = CGSizeMake(0, 4);
-        self.layer.shadowRadius = 8;
-        self.layer.shadowOpacity = 0.5;
-        
-        // Заголовок
-        self.titleLabel = [[UILabel alloc] initWithFrame:CGRectMake(20, 16, frame.size.width - 100, 30)];
-        self.titleLabel.text = @"MODERN STRIKE ESP";
-        self.titleLabel.textColor = [UIColor whiteColor];
-        self.titleLabel.font = [UIFont boldSystemFontOfSize:16];
-        [self addSubview:self.titleLabel];
-        
-        // Кнопка показать координаты
-        self.showCoordsButton = [UIButton buttonWithType:UIButtonTypeSystem];
-        self.showCoordsButton.frame = CGRectMake(20, 60, frame.size.width - 40, 44);
-        self.showCoordsButton.backgroundColor = [UIColor colorWithRed:0.0 green:0.48 blue:1.0 alpha:1.0];
-        self.showCoordsButton.layer.cornerRadius = 8;
-        [self.showCoordsButton setTitle:@"📍 ПОКАЗАТЬ КООРДИНАТЫ" forState:UIControlStateNormal];
-        [self.showCoordsButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        self.showCoordsButton.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-        [self addSubview:self.showCoordsButton];
-        
-        // Кнопка закрыть
-        self.closeButton = [UIButton buttonWithType:UIButtonTypeSystem];
-        self.closeButton.frame = CGRectMake(frame.size.width - 50, 12, 40, 40);
-        [self.closeButton setTitle:@"✕" forState:UIControlStateNormal];
-        [self.closeButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        self.closeButton.titleLabel.font = [UIFont boldSystemFontOfSize:20];
-        [self addSubview:self.closeButton];
+- (void)dragButton:(UIPanGestureRecognizer *)gesture {
+    CGPoint translation = [gesture translationInView:self];
+    CGRect newFrame = menuButton.frame;
+    newFrame.origin.x += translation.x;
+    newFrame.origin.y += translation.y;
+    
+    // Ограничиваем, чтобы кнопка не выходила за экран
+    if (newFrame.origin.x < 0) newFrame.origin.x = 0;
+    if (newFrame.origin.y < 0) newFrame.origin.y = 0;
+    if (newFrame.origin.x + newFrame.size.width > self.frame.size.width) {
+        newFrame.origin.x = self.frame.size.width - newFrame.size.width;
     }
-    return self;
-}
-
-@end
-
-// ========== ОСНОВНОЙ КЛАСС ==========
-@interface ESPManager : NSObject
-@property (nonatomic, strong) FloatingButton *floatButton;
-@property (nonatomic, strong) ESPMenuView *menuView;
-@property (nonatomic, assign) BOOL isMenuVisible;
-@end
-
-@implementation ESPManager
-
-+ (instancetype)shared {
-    static ESPManager *instance = nil;
-    static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        instance = [[ESPManager alloc] init];
-    });
-    return instance;
-}
-
-- (void)setupUI {
-    dispatch_async(dispatch_get_main_queue(), ^{
-        UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
-        if (!keyWindow) return;
-        
-        // Создаём плавающую кнопку (60x60)
-        self.floatButton = [[FloatingButton alloc] initWithFrame:CGRectMake(keyWindow.bounds.size.width - 80, 100, 60, 60)];
-        [self.floatButton addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
-        [keyWindow addSubview:self.floatButton];
-        
-        // Создаём меню (280x160)
-        self.menuView = [[ESPMenuView alloc] initWithFrame:CGRectMake(keyWindow.bounds.size.width/2 - 140, keyWindow.bounds.size.height/2 - 80, 280, 160)];
-        self.menuView.hidden = YES;
-        [self.menuView.showCoordsButton addTarget:self action:@selector(showCoordinates) forControlEvents:UIControlEventTouchUpInside];
-        [self.menuView.closeButton addTarget:self action:@selector(hideMenu) forControlEvents:UIControlEventTouchUpInside];
-        [keyWindow addSubview:self.menuView];
-    });
+    if (newFrame.origin.y + newFrame.size.height > self.frame.size.height) {
+        newFrame.origin.y = self.frame.size.height - newFrame.size.height;
+    }
+    
+    menuButton.frame = newFrame;
+    [gesture setTranslation:CGPointZero inView:self];
+    
+    if (gesture.state == UIGestureRecognizerStateEnded) {
+        // Сохраняем позицию кнопки
+        [[NSUserDefaults standardUserDefaults] setFloat:newFrame.origin.x forKey:@"buttonX"];
+        [[NSUserDefaults standardUserDefaults] setFloat:newFrame.origin.y forKey:@"buttonY"];
+    }
 }
 
 - (void)toggleMenu {
-    self.isMenuVisible = !self.isMenuVisible;
-    self.menuView.hidden = !self.isMenuVisible;
+    isMenuVisible = !isMenuVisible;
+    menuView.hidden = !isMenuVisible;
 }
 
-- (void)hideMenu {
-    self.isMenuVisible = NO;
-    self.menuView.hidden = YES;
-}
-
-- (void)showCoordinates {
-    float x1 = 0, y1 = 0, z1 = 0;
-    float x2 = 0, y2 = 0, z2 = 0;
-    uintptr_t player1 = 0, player2 = 0;
-    uintptr_t trans1 = 0, trans2 = 0;
+- (void)checkCoordinates {
+    NSLog(@"[ESP] ========== CHECK COORDINATES ==========");
+    Vector3 pos = GetPlayerPosition();
     
-    getPosition(&x1, &y1, &z1, &x2, &y2, &z2, &player1, &player2, &trans1, &trans2);
+    NSString *message;
+    if (pos.x == 0 && pos.y == 0 && pos.z == 0) {
+        message = @"❌ Не удалось получить координаты!\nПроверь логи в консоли.";
+        coordLabel.text = @"Координаты: ОШИБКА!";
+        coordLabel.textColor = [UIColor redColor];
+    } else {
+        message = [NSString stringWithFormat:@"✅ X: %.2f\nY: %.2f\nZ: %.2f", pos.x, pos.y, pos.z];
+        coordLabel.text = [NSString stringWithFormat:@"📍 X:%.0f Y:%.0f Z:%.0f", pos.x, pos.y, pos.z];
+        coordLabel.textColor = [UIColor colorWithRed:0.3 green:0.9 blue:0.3 alpha:1];
+    }
     
-    uintptr_t base = getUnityFrameworkBase();
-    
-    NSString *message = [NSString stringWithFormat:
-        @"📱 UnityFramework: 0x%lX\n\n"
-        @"🔹 Кандидат +0x28:\n"
-        @"   Player: 0x%lX\n"
-        @"   Transform: 0x%lX\n"
-        @"   📍 X: %.2f  Y: %.2f  Z: %.2f\n\n"
-        @"🔸 Кандидат +0x30:\n"
-        @"   Player: 0x%lX\n"
-        @"   Transform: 0x%lX\n"
-        @"   📍 X: %.2f  Y: %.2f  Z: %.2f",
-        base,
-        player1, trans1, x1, y1, z1,
-        player2, trans2, x2, y2, z2];
-    
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🎯 MODERN STRIKE ESP"
-                                                                   message:message
+    // Показываем алерт
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Координаты игрока" 
+                                                                   message:message 
                                                             preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
     
-    UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
-    [keyWindow.rootViewController presentViewController:alert animated:YES completion:nil];
+    UIViewController *rootVC = [UIApplication sharedApplication].keyWindow.rootViewController;
+    [rootVC presentViewController:alert animated:YES completion:nil];
+}
+
+- (void)checkOffsets {
+    NSLog(@"[ESP] ========== CHECK OFFSETS ==========");
+    
+    uintptr_t base = getBase();
+    if (base == 0) {
+        [self showAlert:@"Ошибка" message:@"База UnityFramework не найдена!"];
+        return;
+    }
+    
+    NSString *info = [NSString stringWithFormat:
+        @"База: 0x%llx\n"
+        @"Utilities TypeInfo: 0x%llx\n"
+        @"static_fields: 0x%llx\n"
+        @"_playerController смещение: 0x%02x\n"
+        @"AxeArms смещение: 0x%02x\n"
+        @"Transform.position смещение: 0x%02x",
+        (unsigned long long)base,
+        (unsigned long long)(base + UTILITIES_TYPEINFO_RVA),
+        (unsigned long long)(base + UTILITIES_TYPEINFO_RVA + 0x08),
+        PLAYERCONTROLLER_OFFSET,
+        AXEARMS_OFFSET,
+        TRANSFORM_POSITION_OFFSET
+    ];
+    
+    [self showAlert:@"Смещения" message:info];
+}
+
+- (void)showAlert:(NSString *)title message:(NSString *)message {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title 
+                                                                   message:message 
+                                                            preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+    
+    UIViewController *rootVC = [UIApplication sharedApplication].keyWindow.rootViewController;
+    [rootVC presentViewController:alert animated:YES completion:nil];
 }
 
 @end
 
-// ========== ИНИЦИАЛИЗАЦИЯ ПРИ ЗАПУСКЕ ==========
-%ctor {
+// ==================== ЗАГРУЗКА ТВИКА ====================
+
+static TestMenu *testMenu;
+
+static void loadTestMenu() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        [[ESPManager shared] setupUI];
+        UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
+        if (keyWindow) {
+            testMenu = [[TestMenu alloc] initWithFrame:keyWindow.bounds];
+            [keyWindow addSubview:testMenu];
+            NSLog(@"[ESP] Test menu loaded!");
+            
+            // Выводим информацию при запуске
+            GetPlayerPosition();
+        } else {
+            // Если окна нет, пробуем снова
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 1 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+                loadTestMenu();
+            });
+        }
     });
+}
+
+%ctor {
+    NSLog(@"[ESP] Tweak loaded!");
+    loadTestMenu();
 }
