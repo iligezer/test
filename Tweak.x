@@ -3,6 +3,7 @@
 #import <substrate.h>
 
 #define UTILITIES_TYPEINFO_RVA          0x8E15248
+#define AXEARMS_OFFSET                  0x150
 
 uintptr_t getBase() {
     for (uint32_t i = 0; i < _dyld_image_count(); i++) {
@@ -48,79 +49,68 @@ static BOOL isMenuVisible = NO;
     uintptr_t static_fields = *(uintptr_t*)(typeInfo + 0x08);
     [info appendFormat:@"static_fields: 0x%llx\n\n", (unsigned long long)static_fields];
     
-    // Кандидаты из предыдущего анализа
-    int candidates[] = {0x28, 0x30};
+    // Проверяем смещения 0x28 и 0x30
+    int offsets[] = {0x28, 0x30};
     
     for (int i = 0; i < 2; i++) {
-        int offset = candidates[i];
+        int offset = offsets[i];
         uintptr_t firstPerson = *(uintptr_t*)(static_fields + offset);
         [info appendFormat:@"\n========== offset 0x%02x ==========\n", offset];
-        [info appendFormat:@"FirstPerson: 0x%llx\n", (unsigned long long)firstPerson];
+        [info appendFormat:@"FirstPerson ptr: 0x%llx\n", (unsigned long long)firstPerson];
         
         if (firstPerson == 0) {
             [info appendString:@"❌ NULL\n"];
             continue;
         }
         
-        // Читаем 32 байта по адресу FirstPerson (чтобы увидеть, что там)
-        [info appendString:@"FirstPerson raw data (32 bytes):\n"];
+        // Показываем первый qword как HEX (это то, что мы читали как float)
+        uint64_t firstQword = *(uint64_t*)(firstPerson);
+        [info appendFormat:@"First 8 bytes (as hex): 0x%016llx\n", (unsigned long long)firstQword];
+        
+        // Читаем Transform по смещению 0x150
+        uintptr_t transform = *(uintptr_t*)(firstPerson + AXEARMS_OFFSET);
+        [info appendFormat:@"\nTransform ptr (0x150): 0x%llx\n", (unsigned long long)transform];
+        
+        if (transform == 0) {
+            [info appendString:@"❌ Transform = NULL\n"];
+            continue;
+        }
+        
+        // Показываем первые 32 байта Transform как hex
+        [info appendString:@"\nTransform raw data (32 bytes):\n"];
         for (int j = 0; j < 32; j += 8) {
-            uint64_t val = *(uint64_t*)(firstPerson + j);
-            [info appendFormat:@"  +0x%02x: 0x%016llx\n", j, (unsigned long long)val];
-        }
-        
-        // Читаем поле по смещению 0x150 (AxeArms) и смотрим, что там
-        uintptr_t possibleTransform = *(uintptr_t*)(firstPerson + 0x150);
-        [info appendFormat:@"\nPossible Transform (0x150): 0x%llx\n", (unsigned long long)possibleTransform];
-        
-        if (possibleTransform != 0 && (possibleTransform & 0x7) == 0) {  // Проверка выравнивания
-            [info appendString:@"✅ Адрес выровнен, возможно это Transform\n"];
+            uint64_t val = *(uint64_t*)(transform + j);
+            [info appendFormat:@"  +0x%02x: 0x%016llx", j, (unsigned long long)val];
             
-            // Пытаемся прочитать klass (первое поле Transform)
-            uintptr_t klass = *(uintptr_t*)possibleTransform;
-            [info appendFormat:@"  klass: 0x%llx\n", (unsigned long long)klass];
-            
-            // Читаем position
-            float x = *(float*)(possibleTransform + 0x20);
-            float y = *(float*)(possibleTransform + 0x24);
-            float z = *(float*)(possibleTransform + 0x28);
-            [info appendFormat:@"  position: (%.2f, %.2f, %.2f)\n", x, y, z];
-            
-            if (fabs(x) < 10000 && fabs(y) < 10000 && fabs(z) < 10000 && (x != 0 || y != 0 || z != 0)) {
-                [info appendString:@"  ✅ ПОХОЖЕ НА РЕАЛЬНЫЕ КООРДИНАТЫ!\n"];
-            } else {
-                [info appendString:@"  ❌ Координаты нереалистичные\n"];
-            }
-        } else {
-            [info appendString:@"❌ Адрес не выровнен или NULL, это не Transform\n"];
-            // Показываем сырые данные по этому адресу
-            [info appendString:@"Raw data at this address:\n"];
-            for (int j = 0; j < 32; j += 8) {
-                uint64_t val = *(uint64_t*)(possibleTransform + j);
-                [info appendFormat:@"  +0x%02x: 0x%016llx\n", j, (unsigned long long)val];
-            }
-        }
-        
-        // Также проверим другие возможные смещения для AxeArms (не только 0x150)
-        [info appendString:@"\nПроверка других возможных смещений для Transform:\n"];
-        int testOffsets[] = {0x28, 0x30, 0x38, 0x40, 0x48, 0x50, 0x58, 0x60, 0x68, 0x70, 0x78, 0x80, 0x88, 0x90, 0x98, 0xA0, 0xA8, 0xB0, 0xB8, 0xC0, 0xC8, 0xD0, 0xD8, 0xE0, 0xE8, 0xF0, 0xF8, 0x100, 0x108, 0x110, 0x118, 0x120, 0x128, 0x130, 0x138, 0x140, 0x148, 0x150, 0x158, 0x160, 0x168, 0x170, 0x178, 0x180};
-        
-        for (int j = 0; j < sizeof(testOffsets)/sizeof(int); j++) {
-            int testOffset = testOffsets[j];
-            uintptr_t testPtr = *(uintptr_t*)(firstPerson + testOffset);
-            if (testPtr != 0 && (testPtr & 0x7) == 0) {
-                // Проверяем, похоже ли на Transform
-                uintptr_t klass = *(uintptr_t*)testPtr;
-                // Transform обычно имеет vtable в диапазоне UnityFramework
-                if (klass > base && klass < base + 0x20000000) {
-                    float x = *(float*)(testPtr + 0x20);
-                    float y = *(float*)(testPtr + 0x24);
-                    float z = *(float*)(testPtr + 0x28);
-                    if (fabs(x) < 10000 && fabs(y) < 10000 && fabs(z) < 10000 && (x != 0 || y != 0 || z != 0)) {
-                        [info appendFormat:@"  ✅ Найден! offset 0x%02x: pos=(%.2f, %.2f, %.2f)\n", testOffset, x, y, z];
-                    }
+            // Проверяем, может это указатель на класс?
+            if (j == 0) {
+                if (val > base && val < base + 0x20000000) {
+                    [info appendString:@" ← возможно klass (vtable)"];
                 }
             }
+            [info appendString:@"\n"];
+        }
+        
+        // Читаем position как float и как uint32
+        [info appendString:@"\nPosition (offset 0x20):\n"];
+        uint32_t rawX = *(uint32_t*)(transform + 0x20);
+        uint32_t rawY = *(uint32_t*)(transform + 0x24);
+        uint32_t rawZ = *(uint32_t*)(transform + 0x28);
+        float x = *(float*)(transform + 0x20);
+        float y = *(float*)(transform + 0x24);
+        float z = *(float*)(transform + 0x28);
+        
+        [info appendFormat:@"  as hex: X=0x%08x Y=0x%08x Z=0x%08x\n", rawX, rawY, rawZ];
+        [info appendFormat:@"  as float: X=%f Y=%f Z=%f\n", x, y, z];
+        
+        // Проверяем, похоже ли на реальные координаты
+        if (fabs(x) < 10000 && fabs(y) < 10000 && fabs(z) < 10000 && (x != 0 || y != 0 || z != 0)) {
+            [info appendString:@"  ✅ ПОХОЖЕ НА РЕАЛЬНЫЕ КООРДИНАТЫ!\n"];
+        } else if (rawX == 0 && rawY == 0 && rawZ == 0) {
+            [info appendString:@"  ⚠️ Все нули\n"];
+        } else {
+            [info appendString:@"  ❌ Это не координаты (слишком большие или нереалистичные)\n"];
+            [info appendFormat:@"     Возможно, это указатели: 0x%08x, 0x%08x, 0x%08x\n", rawX, rawY, rawZ];
         }
     }
     
@@ -172,30 +162,30 @@ static BOOL isMenuVisible = NO;
     
     menuContainer = [[UIView alloc] initWithFrame:CGRectMake(menuButton.frame.origin.x, 
                                                               menuButton.frame.origin.y + 55, 
-                                                              360, 500)];
+                                                              380, 500)];
     menuContainer.backgroundColor = [UIColor colorWithRed:0.05 green:0.05 blue:0.05 alpha:0.95];
     menuContainer.layer.cornerRadius = 12;
     menuContainer.hidden = YES;
     menuContainer.userInteractionEnabled = YES;
     
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, 360, 28)];
-    title.text = @"Modern Strike Debug - Find Transform";
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, 380, 28)];
+    title.text = @"Modern Strike Debug - RAW DATA";
     title.textColor = [UIColor whiteColor];
     title.textAlignment = NSTextAlignmentCenter;
     title.font = [UIFont boldSystemFontOfSize:14];
     [menuContainer addSubview:title];
     
     UIButton *debugBtn = [UIButton buttonWithType:UIButtonTypeRoundedRect];
-    debugBtn.frame = CGRectMake(10, 45, 340, 40);
+    debugBtn.frame = CGRectMake(10, 45, 360, 40);
     debugBtn.backgroundColor = [UIColor colorWithRed:0.2 green:0.5 blue:0.8 alpha:1];
     debugBtn.layer.cornerRadius = 8;
-    [debugBtn setTitle:@"🔍 Найти Transform (AxeArms)" forState:UIControlStateNormal];
+    [debugBtn setTitle:@"🔍 Показать RAW DATA" forState:UIControlStateNormal];
     [debugBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     debugBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
     [debugBtn addTarget:self action:@selector(debugRawData) forControlEvents:UIControlEventTouchUpInside];
     [menuContainer addSubview:debugBtn];
     
-    debugText = [[UITextView alloc] initWithFrame:CGRectMake(5, 95, 350, 390)];
+    debugText = [[UITextView alloc] initWithFrame:CGRectMake(5, 95, 370, 390)];
     debugText.backgroundColor = [UIColor colorWithRed:0.1 green:0.1 blue:0.1 alpha:1];
     debugText.textColor = [UIColor colorWithRed:0.8 green:0.8 blue:0.8 alpha:1];
     debugText.font = [UIFont fontWithName:@"Courier" size:9];
