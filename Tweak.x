@@ -3,7 +3,6 @@
 #import <substrate.h>
 
 #define UTILITIES_TYPEINFO_RVA          0x8E15248
-#define AXEARMS_OFFSET                  0x150
 
 uintptr_t getBase() {
     for (uint32_t i = 0; i < _dyld_image_count(); i++) {
@@ -15,11 +14,11 @@ uintptr_t getBase() {
     return 0;
 }
 
-@interface DebugMenu : NSObject
+@interface ScanMenu : NSObject
 + (void)setup;
 @end
 
-@implementation DebugMenu
+@implementation ScanMenu
 
 static UIView *menuContainer = nil;
 static UIButton *menuButton = nil;
@@ -35,7 +34,7 @@ static BOOL isMenuVisible = NO;
     [rootVC presentViewController:alert animated:YES completion:nil];
 }
 
-+ (void)debugRawData {
++ (void)scanForTransform {
     uintptr_t base = getBase();
     if (base == 0) {
         [self showAlert:@"Ошибка" message:@"Base не найдена"];
@@ -43,78 +42,70 @@ static BOOL isMenuVisible = NO;
     }
     
     NSMutableString *info = [NSMutableString string];
-    [info appendFormat:@"Base: 0x%llx\n\n", (unsigned long long)base];
+    [info appendFormat:@"Base: 0x%llx\n", (unsigned long long)base];
     
     uintptr_t typeInfo = base + UTILITIES_TYPEINFO_RVA;
     uintptr_t static_fields = *(uintptr_t*)(typeInfo + 0x08);
     [info appendFormat:@"static_fields: 0x%llx\n\n", (unsigned long long)static_fields];
     
-    // Проверяем смещения 0x28 и 0x30
-    int offsets[] = {0x28, 0x30};
+    // Проверяем оба кандидата _playerController
+    int playerOffsets[] = {0x28, 0x30};
     
-    for (int i = 0; i < 2; i++) {
-        int offset = offsets[i];
-        uintptr_t firstPerson = *(uintptr_t*)(static_fields + offset);
-        [info appendFormat:@"\n========== offset 0x%02x ==========\n", offset];
-        [info appendFormat:@"FirstPerson ptr: 0x%llx\n", (unsigned long long)firstPerson];
+    for (int p = 0; p < 2; p++) {
+        int playerOffset = playerOffsets[p];
+        uintptr_t firstPerson = *(uintptr_t*)(static_fields + playerOffset);
         
-        if (firstPerson == 0) {
-            [info appendString:@"❌ NULL\n"];
+        [info appendFormat:@"\n========== _playerController at 0x%02x ==========\n", playerOffset];
+        [info appendFormat:@"FirstPerson: 0x%llx\n", (unsigned long long)firstPerson];
+        
+        if (firstPerson == 0 || firstPerson < base) {
+            [info appendString:@"❌ Невалидный адрес\n"];
             continue;
         }
         
-        // Показываем первый qword как HEX (это то, что мы читали как float)
-        uint64_t firstQword = *(uint64_t*)(firstPerson);
-        [info appendFormat:@"First 8 bytes (as hex): 0x%016llx\n", (unsigned long long)firstQword];
+        [info appendString:@"\nСканирование возможных смещений Transform (0x00 - 0x200):\n"];
         
-        // Читаем Transform по смещению 0x150
-        uintptr_t transform = *(uintptr_t*)(firstPerson + AXEARMS_OFFSET);
-        [info appendFormat:@"\nTransform ptr (0x150): 0x%llx\n", (unsigned long long)transform];
+        int foundCount = 0;
         
-        if (transform == 0) {
-            [info appendString:@"❌ Transform = NULL\n"];
-            continue;
-        }
-        
-        // Показываем первые 32 байта Transform как hex
-        [info appendString:@"\nTransform raw data (32 bytes):\n"];
-        for (int j = 0; j < 32; j += 8) {
-            uint64_t val = *(uint64_t*)(transform + j);
-            [info appendFormat:@"  +0x%02x: 0x%016llx", j, (unsigned long long)val];
+        // Сканируем все возможные смещения
+        for (int offset = 0; offset <= 0x200; offset += 8) {
+            uintptr_t possibleTransform = *(uintptr_t*)(firstPerson + offset);
             
-            // Проверяем, может это указатель на класс?
-            if (j == 0) {
-                if (val > base && val < base + 0x20000000) {
-                    [info appendString:@" ← возможно klass (vtable)"];
-                }
+            // Проверка: адрес должен быть в диапазоне памяти игры
+            if (possibleTransform == 0) continue;
+            if (possibleTransform < base) continue;
+            if (possibleTransform > base + 0x20000000) continue;
+            
+            // Проверка выравнивания (Transform должен быть кратен 8)
+            if ((possibleTransform & 0x7) != 0) continue;
+            
+            // Пытаемся прочитать klass (первое поле Transform)
+            uintptr_t klass = *(uintptr_t*)possibleTransform;
+            
+            // klass должен быть указателем на Class (обычно в диапазоне игры)
+            if (klass < base || klass > base + 0x20000000) continue;
+            
+            // Читаем position
+            float x = *(float*)(possibleTransform + 0x20);
+            float y = *(float*)(possibleTransform + 0x24);
+            float z = *(float*)(possibleTransform + 0x28);
+            
+            // Проверяем, похоже ли на реальные координаты
+            if (fabs(x) < 10000 && fabs(y) < 10000 && fabs(z) < 10000 && (x != 0 || y != 0 || z != 0)) {
+                [info appendFormat:@"\n✅ НАЙДЕН! offset 0x%03x (0x%x)\n", offset, offset];
+                [info appendFormat:@"   Transform: 0x%llx\n", (unsigned long long)possibleTransform];
+                [info appendFormat:@"   klass: 0x%llx\n", (unsigned long long)klass];
+                [info appendFormat:@"   position: (%.2f, %.2f, %.2f)\n", x, y, z];
+                foundCount++;
             }
-            [info appendString:@"\n"];
         }
         
-        // Читаем position как float и как uint32
-        [info appendString:@"\nPosition (offset 0x20):\n"];
-        uint32_t rawX = *(uint32_t*)(transform + 0x20);
-        uint32_t rawY = *(uint32_t*)(transform + 0x24);
-        uint32_t rawZ = *(uint32_t*)(transform + 0x28);
-        float x = *(float*)(transform + 0x20);
-        float y = *(float*)(transform + 0x24);
-        float z = *(float*)(transform + 0x28);
-        
-        [info appendFormat:@"  as hex: X=0x%08x Y=0x%08x Z=0x%08x\n", rawX, rawY, rawZ];
-        [info appendFormat:@"  as float: X=%f Y=%f Z=%f\n", x, y, z];
-        
-        // Проверяем, похоже ли на реальные координаты
-        if (fabs(x) < 10000 && fabs(y) < 10000 && fabs(z) < 10000 && (x != 0 || y != 0 || z != 0)) {
-            [info appendString:@"  ✅ ПОХОЖЕ НА РЕАЛЬНЫЕ КООРДИНАТЫ!\n"];
-        } else if (rawX == 0 && rawY == 0 && rawZ == 0) {
-            [info appendString:@"  ⚠️ Все нули\n"];
-        } else {
-            [info appendString:@"  ❌ Это не координаты (слишком большие или нереалистичные)\n"];
-            [info appendFormat:@"     Возможно, это указатели: 0x%08x, 0x%08x, 0x%08x\n", rawX, rawY, rawZ];
+        if (foundCount == 0) {
+            [info appendString:@"❌ Не найдено валидных Transform\n"];
         }
     }
     
-    [self showAlert:@"Raw Data Debug" message:info];
+    [self showAlert:@"Scan Results" message:info];
     if (debugText) {
         debugText.text = info;
     }
@@ -169,33 +160,33 @@ static BOOL isMenuVisible = NO;
     menuContainer.userInteractionEnabled = YES;
     
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, 380, 28)];
-    title.text = @"Modern Strike Debug - RAW DATA";
+    title.text = @"Modern Strike - Scan Transform";
     title.textColor = [UIColor whiteColor];
     title.textAlignment = NSTextAlignmentCenter;
     title.font = [UIFont boldSystemFontOfSize:14];
     [menuContainer addSubview:title];
     
-    UIButton *debugBtn = [UIButton buttonWithType:UIButtonTypeRoundedRect];
-    debugBtn.frame = CGRectMake(10, 45, 360, 40);
-    debugBtn.backgroundColor = [UIColor colorWithRed:0.2 green:0.5 blue:0.8 alpha:1];
-    debugBtn.layer.cornerRadius = 8;
-    [debugBtn setTitle:@"🔍 Показать RAW DATA" forState:UIControlStateNormal];
-    [debugBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    debugBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-    [debugBtn addTarget:self action:@selector(debugRawData) forControlEvents:UIControlEventTouchUpInside];
-    [menuContainer addSubview:debugBtn];
+    UIButton *scanBtn = [UIButton buttonWithType:UIButtonTypeRoundedRect];
+    scanBtn.frame = CGRectMake(10, 45, 360, 40);
+    scanBtn.backgroundColor = [UIColor colorWithRed:0.2 green:0.5 blue:0.8 alpha:1];
+    scanBtn.layer.cornerRadius = 8;
+    [scanBtn setTitle:@"🔍 СКАНИРОВАТЬ TRANSFORM" forState:UIControlStateNormal];
+    [scanBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    scanBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+    [scanBtn addTarget:self action:@selector(scanForTransform) forControlEvents:UIControlEventTouchUpInside];
+    [menuContainer addSubview:scanBtn];
     
     debugText = [[UITextView alloc] initWithFrame:CGRectMake(5, 95, 370, 390)];
     debugText.backgroundColor = [UIColor colorWithRed:0.1 green:0.1 blue:0.1 alpha:1];
     debugText.textColor = [UIColor colorWithRed:0.8 green:0.8 blue:0.8 alpha:1];
     debugText.font = [UIFont fontWithName:@"Courier" size:9];
     debugText.editable = NO;
-    debugText.text = @"Нажми кнопку после захода в матч";
+    debugText.text = @"Зайди в матч, затем нажми кнопку\nСканер найдет правильное смещение AxeArms";
     [menuContainer addSubview:debugText];
     
     [keyWindow addSubview:menuContainer];
     
-    NSLog(@"[ESP] Debug menu loaded!");
+    NSLog(@"[ESP] Scan menu loaded!");
 }
 
 @end
@@ -203,7 +194,7 @@ static BOOL isMenuVisible = NO;
 static void loadMenu() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         if ([UIApplication sharedApplication].keyWindow) {
-            [DebugMenu setup];
+            [ScanMenu setup];
         } else {
             loadMenu();
         }
@@ -211,6 +202,6 @@ static void loadMenu() {
 }
 
 %ctor {
-    NSLog(@"[ESP] Debug tweak loaded!");
+    NSLog(@"[ESP] Scan tweak loaded!");
     loadMenu();
 }
