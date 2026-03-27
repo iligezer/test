@@ -15,100 +15,129 @@ uintptr_t getBase() {
     return 0;
 }
 
-@interface DebugMenu : NSObject
+// Безопасное чтение
+BOOL isValidPointer(uintptr_t ptr) {
+    if (ptr == 0) return NO;
+    if (ptr < 0x100000000) return NO;
+    if (ptr > 0x2000000000) return NO;
+    return YES;
+}
+
+uintptr_t safeReadPtr(uintptr_t addr) {
+    if (!isValidPointer(addr)) return 0;
+    return *(uintptr_t*)addr;
+}
+
+float safeReadFloat(uintptr_t addr) {
+    if (!isValidPointer(addr)) return 0;
+    return *(float*)addr;
+}
+
+@interface SafeDebugMenu : NSObject
 + (void)setup;
 @end
 
-@implementation DebugMenu
+@implementation SafeDebugMenu
 
 static UIView *menuContainer = nil;
 static UIButton *menuButton = nil;
 static UITextView *debugText = nil;
 static BOOL isMenuVisible = NO;
+static NSMutableString *logBuffer = nil;
 
-+ (void)showAlert:(NSString *)title message:(NSString *)message {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title 
-                                                                   message:message 
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-    UIViewController *rootVC = [UIApplication sharedApplication].keyWindow.rootViewController;
-    [rootVC presentViewController:alert animated:YES completion:nil];
++ (void)copyLog {
+    if (debugText.text.length > 0) {
+        UIPasteboard *pasteboard = [UIPasteboard generalPasteboard];
+        pasteboard.string = debugText.text;
+        
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"✅ Скопировано" 
+                                                                       message:@"Лог скопирован в буфер обмена" 
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        UIViewController *rootVC = [UIApplication sharedApplication].keyWindow.rootViewController;
+        [rootVC presentViewController:alert animated:YES completion:nil];
+    }
 }
 
 + (void)debugAddresses {
+    logBuffer = [NSMutableString string];
+    [logBuffer appendString:@"=== Modern Strike Debug ===\n\n"];
+    
     uintptr_t base = getBase();
     if (base == 0) {
-        [self showAlert:@"Ошибка" message:@"Base не найдена"];
+        [logBuffer appendString:@"❌ Base не найдена!\n"];
+        [self showDebugInfo];
         return;
     }
     
-    NSMutableString *info = [NSMutableString string];
-    [info appendFormat:@"Base: 0x%llx\n\n", (unsigned long long)base];
+    [logBuffer appendFormat:@"Base: 0x%llx\n\n", (unsigned long long)base];
     
     // 1. Utilities TypeInfo
     uintptr_t typeInfo = base + UTILITIES_TYPEINFO_RVA;
-    [info appendFormat:@"TypeInfo: 0x%llx\n", (unsigned long long)typeInfo];
+    [logBuffer appendFormat:@"TypeInfo: 0x%llx\n", (unsigned long long)typeInfo];
     
     // 2. static_fields
-    uintptr_t static_fields = *(uintptr_t*)(typeInfo + 0x08);
-    [info appendFormat:@"static_fields: 0x%llx\n\n", (unsigned long long)static_fields];
+    uintptr_t static_fields = safeReadPtr(typeInfo + 0x08);
+    [logBuffer appendFormat:@"static_fields: 0x%llx\n\n", (unsigned long long)static_fields];
     
-    if (static_fields == 0) {
-        [info appendString:@"❌ static_fields = NULL\n"];
-        [self showAlert:@"Debug" message:info];
+    if (static_fields == 0 || !isValidPointer(static_fields)) {
+        [logBuffer appendString:@"❌ static_fields невалидный\n"];
+        [self showDebugInfo];
         return;
     }
     
-    // 3. Читаем 16 полей подряд от static_fields (чтобы увидеть все возможные кандидаты)
-    [info appendString:@"Поля в static_fields:\n"];
-    for (int i = 0; i < 16; i++) {
-        uintptr_t val = *(uintptr_t*)(static_fields + i * 8);
-        [info appendFormat:@"  +0x%02x: 0x%llx\n", i * 8, (unsigned long long)val];
-    }
+    // 3. Читаем ТОЛЬКО 4 кандидата (безопасно)
+    int candidates[] = {0x28, 0x30, 0x38, 0x40};
+    [logBuffer appendString:@"Проверка кандидатов _playerController:\n\n"];
     
-    [info appendString:@"\nПопытка прочитать позицию по разным смещениям:\n"];
-    
-    // 4. Проверяем несколько кандидатов (0x28, 0x30, 0x38, 0x40)
-    int candidates[] = {0x28, 0x30, 0x38, 0x40, 0x48, 0x50};
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 4; i++) {
         int offset = candidates[i];
-        uintptr_t firstPerson = *(uintptr_t*)(static_fields + offset);
-        if (firstPerson == 0) {
-            [info appendFormat:@"\n[0x%02x] FirstPerson = NULL", offset];
+        uintptr_t firstPerson = safeReadPtr(static_fields + offset);
+        
+        [logBuffer appendFormat:@"[0x%02x] FirstPerson = 0x%llx", offset, (unsigned long long)firstPerson];
+        
+        if (firstPerson == 0 || !isValidPointer(firstPerson)) {
+            [logBuffer appendString:@" ❌ (невалидный)\n"];
             continue;
         }
         
-        uintptr_t transform = *(uintptr_t*)(firstPerson + AXEARMS_OFFSET);
-        if (transform == 0) {
-            [info appendFormat:@"\n[0x%02x] Transform = NULL", offset];
+        // Пробуем прочитать AxeArms
+        uintptr_t transform = safeReadPtr(firstPerson + AXEARMS_OFFSET);
+        [logBuffer appendFormat:@"\n       Transform = 0x%llx", (unsigned long long)transform];
+        
+        if (transform == 0 || !isValidPointer(transform)) {
+            [logBuffer appendString:@" ❌ (невалидный)\n\n"];
             continue;
         }
         
-        // Читаем как float (позиция)
-        float x = *(float*)(transform + 0x20);
-        float y = *(float*)(transform + 0x24);
-        float z = *(float*)(transform + 0x28);
+        // Читаем позицию
+        float x = safeReadFloat(transform + 0x20);
+        float y = safeReadFloat(transform + 0x24);
+        float z = safeReadFloat(transform + 0x28);
         
-        // Также читаем как int (чтобы увидеть сырые данные)
-        uint32_t raw_x = *(uint32_t*)(transform + 0x20);
-        uint32_t raw_y = *(uint32_t*)(transform + 0x24);
-        uint32_t raw_z = *(uint32_t*)(transform + 0x28);
+        [logBuffer appendFormat:@"\n       Position: (%.2f, %.2f, %.2f)", x, y, z];
         
-        [info appendFormat:@"\n[0x%02x] pos as float: (%.2f, %.2f, %.2f)", offset, x, y, z];
-        [info appendFormat:@"\n       as raw: (0x%08x, 0x%08x, 0x%08x)", raw_x, raw_y, raw_z];
-        
-        // Проверяем, похоже ли на реальные координаты (обычно в пределах -1000..1000)
-        if (fabs(x) < 10000 && fabs(y) < 10000 && fabs(z) < 10000 && x != 0) {
-            [info appendFormat:@"\n       ✅ ПОХОЖЕ НА РЕАЛЬНЫЕ КООРДИНАТЫ!"];
+        // Проверяем, похоже ли на реальные координаты
+        if (fabs(x) < 1000 && fabs(y) < 1000 && fabs(z) < 1000 && x != 0) {
+            [logBuffer appendString:@" ✅ РЕАЛИСТИЧНЫЕ КООРДИНАТЫ!\n\n"];
+        } else {
+            [logBuffer appendString:@" ❌ нереалистичные\n\n"];
         }
     }
     
-    [self showAlert:@"Debug Info" message:info];
+    [logBuffer appendString:@"\n💡 Если ни один кандидат не дал реалистичных координат,\n"];
+    [logBuffer appendString:@"   значит смещение _playerController другое.\n"];
+    [logBuffer appendString:@"   Нужно поискать другие кандидаты (0x48, 0x50 и т.д.)\n"];
     
-    // Обновляем текстовое поле
-    if (debugText) {
-        debugText.text = info;
-    }
+    [self showDebugInfo];
+}
+
++ (void)showDebugInfo {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (debugText) {
+            debugText.text = logBuffer;
+        }
+    });
 }
 
 + (void)toggleMenu {
@@ -138,58 +167,73 @@ static BOOL isMenuVisible = NO;
     UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
     if (!keyWindow) return;
     
-    // Кнопка
+    // Маленькая кнопка (40x40)
     menuButton = [UIButton buttonWithType:UIButtonTypeRoundedRect];
-    menuButton.frame = CGRectMake(keyWindow.bounds.size.width - 70, 60, 50, 50);
+    menuButton.frame = CGRectMake(keyWindow.bounds.size.width - 55, 60, 40, 40);
     menuButton.backgroundColor = [UIColor colorWithRed:0.0 green:0.5 blue:1.0 alpha:0.9];
-    menuButton.layer.cornerRadius = 25;
+    menuButton.layer.cornerRadius = 20;
     [menuButton setTitle:@"🔍" forState:UIControlStateNormal];
     [menuButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    menuButton.titleLabel.font = [UIFont boldSystemFontOfSize:24];
+    menuButton.titleLabel.font = [UIFont boldSystemFontOfSize:20];
     [menuButton addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
     
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragButton:)];
     [menuButton addGestureRecognizer:pan];
     [keyWindow addSubview:menuButton];
     
-    // Меню
+    // Маленькое меню (260x300)
     menuContainer = [[UIView alloc] initWithFrame:CGRectMake(menuButton.frame.origin.x, 
-                                                              menuButton.frame.origin.y + 55, 
-                                                              320, 400)];
-    menuContainer.backgroundColor = [UIColor colorWithRed:0.05 green:0.05 blue:0.05 alpha:0.95];
-    menuContainer.layer.cornerRadius = 12;
+                                                              menuButton.frame.origin.y + 45, 
+                                                              260, 300)];
+    menuContainer.backgroundColor = [UIColor colorWithRed:0.08 green:0.08 blue:0.08 alpha:0.95];
+    menuContainer.layer.cornerRadius = 10;
+    menuContainer.layer.borderWidth = 0.5;
+    menuContainer.layer.borderColor = [UIColor colorWithRed:0.3 green:0.3 blue:0.3 alpha:1].CGColor;
     menuContainer.hidden = YES;
     menuContainer.userInteractionEnabled = YES;
     
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, 320, 28)];
+    // Заголовок
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, 260, 28)];
     title.text = @"Modern Strike Debug";
     title.textColor = [UIColor whiteColor];
     title.textAlignment = NSTextAlignmentCenter;
     title.font = [UIFont boldSystemFontOfSize:14];
     [menuContainer addSubview:title];
     
+    // Кнопка Debug
     UIButton *debugBtn = [UIButton buttonWithType:UIButtonTypeRoundedRect];
-    debugBtn.frame = CGRectMake(10, 45, 300, 40);
+    debugBtn.frame = CGRectMake(10, 45, 240, 38);
     debugBtn.backgroundColor = [UIColor colorWithRed:0.2 green:0.5 blue:0.8 alpha:1];
     debugBtn.layer.cornerRadius = 8;
-    [debugBtn setTitle:@"🔍 DEBUG: Показать все поля" forState:UIControlStateNormal];
+    [debugBtn setTitle:@"🔍 Проверить смещения" forState:UIControlStateNormal];
     [debugBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     debugBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
     [debugBtn addTarget:self action:@selector(debugAddresses) forControlEvents:UIControlEventTouchUpInside];
     [menuContainer addSubview:debugBtn];
     
-    // Текстовое поле для вывода
-    debugText = [[UITextView alloc] initWithFrame:CGRectMake(5, 95, 310, 290)];
-    debugText.backgroundColor = [UIColor colorWithRed:0.1 green:0.1 blue:0.1 alpha:1];
-    debugText.textColor = [UIColor colorWithRed:0.8 green:0.8 blue:0.8 alpha:1];
+    // Кнопка копирования
+    UIButton *copyBtn = [UIButton buttonWithType:UIButtonTypeRoundedRect];
+    copyBtn.frame = CGRectMake(10, 92, 240, 38);
+    copyBtn.backgroundColor = [UIColor colorWithRed:0.3 green:0.6 blue:0.3 alpha:1];
+    copyBtn.layer.cornerRadius = 8;
+    [copyBtn setTitle:@"📋 Копировать лог" forState:UIControlStateNormal];
+    [copyBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    copyBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+    [copyBtn addTarget:self action:@selector(copyLog) forControlEvents:UIControlEventTouchUpInside];
+    [menuContainer addSubview:copyBtn];
+    
+    // Текстовое поле для вывода (маленькое)
+    debugText = [[UITextView alloc] initWithFrame:CGRectMake(5, 140, 250, 150)];
+    debugText.backgroundColor = [UIColor colorWithRed:0.05 green:0.05 blue:0.05 alpha:1];
+    debugText.textColor = [UIColor colorWithRed:0.7 green:0.7 blue:0.7 alpha:1];
     debugText.font = [UIFont fontWithName:@"Courier" size:10];
     debugText.editable = NO;
-    debugText.text = @"Нажми кнопку для отладки";
+    debugText.text = @"Нажми 'Проверить смещения'";
     [menuContainer addSubview:debugText];
     
     [keyWindow addSubview:menuContainer];
     
-    NSLog(@"[ESP] Debug menu loaded!");
+    NSLog(@"[ESP] Safe debug menu loaded!");
 }
 
 @end
@@ -197,7 +241,7 @@ static BOOL isMenuVisible = NO;
 static void loadMenu() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         if ([UIApplication sharedApplication].keyWindow) {
-            [DebugMenu setup];
+            [SafeDebugMenu setup];
         } else {
             loadMenu();
         }
