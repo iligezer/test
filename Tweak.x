@@ -48,22 +48,14 @@ struct Vector3 GetPlayerPosition() {
     return result;
 }
 
-// ==================== МЕНЮ ====================
+// ==================== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ====================
 
 static UIView *menuContainer = nil;
 static UIButton *menuButton = nil;
+static UILabel *coordLabel = nil;
 static BOOL isMenuVisible = NO;
 
-static void updateCoordinatesLabel(UILabel *label) {
-    struct Vector3 pos = GetPlayerPosition();
-    if (pos.x == 0 && pos.y == 0 && pos.z == 0) {
-        label.text = @"❌ Ошибка! Смотри логи";
-        label.textColor = [UIColor redColor];
-    } else {
-        label.text = [NSString stringWithFormat:@"X:%.0f  Y:%.0f  Z:%.0f", pos.x, pos.y, pos.z];
-        label.textColor = [UIColor colorWithRed:0.3 green:0.9 blue:0.3 alpha:1];
-    }
-}
+// ==================== ФУНКЦИИ МЕНЮ ====================
 
 static void showAlert(NSString *title, NSString *message) {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:title 
@@ -111,6 +103,18 @@ static void checkOffsets() {
     showAlert(@"Смещения", info);
 }
 
+static void updateCoordinates() {
+    if (!coordLabel) return;
+    struct Vector3 pos = GetPlayerPosition();
+    if (pos.x == 0 && pos.y == 0 && pos.z == 0) {
+        coordLabel.text = @"❌ Ошибка! Смотри логи";
+        coordLabel.textColor = [UIColor redColor];
+    } else {
+        coordLabel.text = [NSString stringWithFormat:@"X:%.0f  Y:%.0f  Z:%.0f", pos.x, pos.y, pos.z];
+        coordLabel.textColor = [UIColor colorWithRed:0.3 green:0.9 blue:0.3 alpha:1];
+    }
+}
+
 static void toggleMenu() {
     isMenuVisible = !isMenuVisible;
     menuContainer.hidden = !isMenuVisible;
@@ -150,15 +154,15 @@ static void setupMenu() {
     [menuButton setTitle:@"⚡" forState:UIControlStateNormal];
     [menuButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     menuButton.titleLabel.font = [UIFont boldSystemFontOfSize:24];
-    [menuButton addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
+    [menuButton addTarget:nil action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
     
     // Перетаскивание
-    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragButton:)];
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:nil action:@selector(dragButton:)];
     [menuButton addGestureRecognizer:pan];
     
     [keyWindow addSubview:menuButton];
     
-    // Контейнер меню (добавляем на окно, а не на кнопку!)
+    // Контейнер меню
     menuContainer = [[UIView alloc] initWithFrame:CGRectMake(menuButton.frame.origin.x, 
                                                               menuButton.frame.origin.y + 55, 
                                                               220, 180)];
@@ -167,7 +171,7 @@ static void setupMenu() {
     menuContainer.layer.borderWidth = 0.5;
     menuContainer.layer.borderColor = [UIColor colorWithRed:0.3 green:0.3 blue:0.3 alpha:1].CGColor;
     menuContainer.hidden = YES;
-    menuContainer.userInteractionEnabled = YES;  // ← ВАЖНО!
+    menuContainer.userInteractionEnabled = YES;
     
     // Заголовок
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, 220, 28)];
@@ -185,7 +189,7 @@ static void setupMenu() {
     [coordBtn setTitle:@"📍 Мои координаты" forState:UIControlStateNormal];
     [coordBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     coordBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-    [coordBtn addTarget:self action:@selector(checkCoordinates) forControlEvents:UIControlEventTouchUpInside];
+    [coordBtn addTarget:nil action:@selector(checkCoordinates) forControlEvents:UIControlEventTouchUpInside];
     [menuContainer addSubview:coordBtn];
     
     // Кнопка "Смещения"
@@ -196,11 +200,11 @@ static void setupMenu() {
     [offsetsBtn setTitle:@"🔧 Смещения" forState:UIControlStateNormal];
     [offsetsBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     offsetsBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-    [offsetsBtn addTarget:self action:@selector(checkOffsets) forControlEvents:UIControlEventTouchUpInside];
+    [offsetsBtn addTarget:nil action:@selector(checkOffsets) forControlEvents:UIControlEventTouchUpInside];
     [menuContainer addSubview:offsetsBtn];
     
     // Метка с координатами
-    UILabel *coordLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 140, 210, 32)];
+    coordLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 140, 210, 32)];
     coordLabel.text = @"X: ?  Y: ?  Z: ?";
     coordLabel.textColor = [UIColor colorWithRed:0.7 green:0.7 blue:0.7 alpha:1];
     coordLabel.font = [UIFont systemFontOfSize:11];
@@ -213,7 +217,7 @@ static void setupMenu() {
     // Обновляем координаты раз в секунду
     [NSTimer scheduledTimerWithTimeInterval:1.0 
                                      target:[NSBlockOperation blockOperationWithBlock:^{
-        updateCoordinatesLabel(coordLabel);
+        updateCoordinates();
     }] 
                                    selector:@selector(main) 
                                    userInfo:nil 
