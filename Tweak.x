@@ -2,11 +2,10 @@
 #import <mach-o/dyld.h>
 
 // ==================== RVA ИЗ IDA ====================
-#define GLOBAL_PTR_RVA               0x8FB0F78   // off_8FB0F78 (новая!)
+#define GLOBAL_PTR_RVA               0x8FB0F78   // off_8FB0F78
 #define OFFSET_TO_TRANSFORM          0xB8
 #define POSITION_OFFSET              0x20
 
-// ==================== ПОЛУЧЕНИЕ БАЗЫ ====================
 uintptr_t getBase() {
     for (uint32_t i = 0; i < _dyld_image_count(); i++) {
         const char* name = _dyld_get_image_name(i);
@@ -21,63 +20,30 @@ struct Vector3 {
     float x, y, z;
 };
 
-// Проверка, является ли адрес валидным (читаемым)
-bool isValidPointer(uintptr_t ptr) {
-    if (ptr == 0) return false;
-    if (ptr < 0x100000000) return false;
-    // Пытаемся прочитать первый байт
-    volatile char test = *(volatile char*)ptr;
-    (void)test;
-    return true;
-}
-
 struct Vector3 GetPlayerPosition() {
     struct Vector3 result = {0, 0, 0};
     
     uintptr_t base = getBase();
-    if (base == 0) {
-        NSLog(@"[ESP] ❌ Base = 0");
-        return result;
-    }
-    NSLog(@"[ESP] Base = 0x%llx", (unsigned long long)base);
+    if (base == 0) return result;
     
     // 1. Глобальная переменная off_8FB0F78
     uintptr_t globalPtrAddr = base + GLOBAL_PTR_RVA;
-    NSLog(@"[ESP] globalPtrAddr = 0x%llx", (unsigned long long)globalPtrAddr);
-    
-    if (!isValidPointer(globalPtrAddr)) {
-        NSLog(@"[ESP] ❌ globalPtrAddr невалидный");
-        return result;
-    }
-    
     uintptr_t obj = *(uintptr_t*)globalPtrAddr;
-    NSLog(@"[ESP] obj = 0x%llx", (unsigned long long)obj);
-    
-    if (!isValidPointer(obj)) {
-        NSLog(@"[ESP] ❌ obj невалидный");
-        return result;
-    }
+    if (obj == 0) return result;
     
     // 2. Transform по смещению 0xB8
     uintptr_t transform = *(uintptr_t*)(obj + OFFSET_TO_TRANSFORM);
-    NSLog(@"[ESP] transform = 0x%llx", (unsigned long long)transform);
-    
-    if (!isValidPointer(transform)) {
-        NSLog(@"[ESP] ❌ transform невалидный");
-        return result;
-    }
+    if (transform == 0) return result;
     
     // 3. position
     result.x = *(float*)(transform + POSITION_OFFSET);
     result.y = *(float*)(transform + POSITION_OFFSET + 4);
     result.z = *(float*)(transform + POSITION_OFFSET + 8);
     
-    NSLog(@"[ESP] position = (%.2f, %.2f, %.2f)", result.x, result.y, result.z);
-    
     return result;
 }
 
-// ==================== UI ====================
+// ==================== UI МЕНЮ ====================
 @interface TestMenu : NSObject
 + (void)setup;
 @end
@@ -102,8 +68,8 @@ static BOOL isMenuVisible = NO;
     struct Vector3 pos = GetPlayerPosition();
     NSString *message;
     if (pos.x == 0 && pos.y == 0 && pos.z == 0) {
-        message = @"❌ Не удалось получить координаты!\nСмотри логи в консоли";
-        coordLabel.text = @"❌ Ошибка!";
+        message = @"❌ Не удалось получить координаты!\nЗайди в матч и нажми снова";
+        coordLabel.text = @"❌ Ошибка! Зайди в матч";
         coordLabel.textColor = [UIColor redColor];
     } else {
         message = [NSString stringWithFormat:@"X: %.2f\nY: %.2f\nZ: %.2f", pos.x, pos.y, pos.z];
@@ -117,7 +83,7 @@ static BOOL isMenuVisible = NO;
     if (!coordLabel) return;
     struct Vector3 pos = GetPlayerPosition();
     if (pos.x == 0 && pos.y == 0 && pos.z == 0) {
-        coordLabel.text = @"❌ Ошибка!";
+        coordLabel.text = @"❌ Зайди в матч";
         coordLabel.textColor = [UIColor redColor];
     } else {
         coordLabel.text = [NSString stringWithFormat:@"X:%.0f  Y:%.0f  Z:%.0f", pos.x, pos.y, pos.z];
@@ -152,7 +118,6 @@ static BOOL isMenuVisible = NO;
     UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
     if (!keyWindow) return;
     
-    // Плавающая кнопка
     menuButton = [UIButton buttonWithType:UIButtonTypeRoundedRect];
     menuButton.frame = CGRectMake(keyWindow.bounds.size.width - 70, 60, 50, 50);
     menuButton.backgroundColor = [UIColor colorWithRed:0.0 green:0.5 blue:1.0 alpha:0.9];
@@ -162,21 +127,18 @@ static BOOL isMenuVisible = NO;
     menuButton.titleLabel.font = [UIFont boldSystemFontOfSize:24];
     [menuButton addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
     
-    // Перетаскивание
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragButton:)];
     [menuButton addGestureRecognizer:pan];
     [keyWindow addSubview:menuButton];
     
-    // Меню
     menuContainer = [[UIView alloc] initWithFrame:CGRectMake(menuButton.frame.origin.x, 
                                                               menuButton.frame.origin.y + 55, 
-                                                              260, 180)];
+                                                              260, 150)];
     menuContainer.backgroundColor = [UIColor colorWithRed:0.1 green:0.1 blue:0.1 alpha:0.95];
     menuContainer.layer.cornerRadius = 12;
     menuContainer.hidden = YES;
     menuContainer.userInteractionEnabled = YES;
     
-    // Заголовок
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, 260, 28)];
     title.text = @"Modern Strike ESP";
     title.textColor = [UIColor whiteColor];
@@ -184,7 +146,6 @@ static BOOL isMenuVisible = NO;
     title.font = [UIFont boldSystemFontOfSize:14];
     [menuContainer addSubview:title];
     
-    // Кнопка проверки координат
     UIButton *checkBtn = [UIButton buttonWithType:UIButtonTypeRoundedRect];
     checkBtn.frame = CGRectMake(10, 45, 240, 38);
     checkBtn.backgroundColor = [UIColor colorWithRed:0.2 green:0.6 blue:0.2 alpha:1];
@@ -195,43 +156,27 @@ static BOOL isMenuVisible = NO;
     [checkBtn addTarget:self action:@selector(checkCoordinates) forControlEvents:UIControlEventTouchUpInside];
     [menuContainer addSubview:checkBtn];
     
-    // Кнопка логов
-    UIButton *debugBtn = [UIButton buttonWithType:UIButtonTypeRoundedRect];
-    debugBtn.frame = CGRectMake(10, 95, 240, 38);
-    debugBtn.backgroundColor = [UIColor colorWithRed:0.6 green:0.3 blue:0.2 alpha:1];
-    debugBtn.layer.cornerRadius = 8;
-    [debugBtn setTitle:@"🔧 Логи в консоль" forState:UIControlStateNormal];
-    [debugBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-    debugBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-    [debugBtn addTarget:self action:@selector(checkCoordinates) forControlEvents:UIControlEventTouchUpInside];
-    [menuContainer addSubview:debugBtn];
-    
-    // Метка с координатами
-    coordLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 145, 250, 28)];
-    coordLabel.text = @"X: ?  Y: ?  Z: ?";
+    coordLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 100, 250, 40)];
+    coordLabel.text = @"Зайди в матч";
     coordLabel.textColor = [UIColor lightGrayColor];
     coordLabel.font = [UIFont systemFontOfSize:12];
     coordLabel.textAlignment = NSTextAlignmentCenter;
+    coordLabel.numberOfLines = 2;
     [menuContainer addSubview:coordLabel];
     
     [keyWindow addSubview:menuContainer];
     
-    // Обновляем координаты каждые 2 секунды
+    // Обновляем каждые 2 секунды
     [NSTimer scheduledTimerWithTimeInterval:2.0 
                                      target:self 
                                    selector:@selector(updateCoordinates) 
                                    userInfo:nil 
                                     repeats:YES];
     
-    // Принудительно вызываем один раз для логов
-    GetPlayerPosition();
-    
-    NSLog(@"[ESP] Menu setup complete!");
+    NSLog(@"[ESP] Menu ready! off_8FB0F78 RVA = 0x%x", GLOBAL_PTR_RVA);
 }
 
 @end
-
-// ==================== ЗАГРУЗКА ТВИКА ====================
 
 static void loadMenu() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
@@ -244,6 +189,6 @@ static void loadMenu() {
 }
 
 %ctor {
-    NSLog(@"[ESP] Tweak loaded!");
+    NSLog(@"[ESP] Tweak loaded! Base = 0x%llx", getBase());
     loadMenu();
 }
