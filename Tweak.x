@@ -2,33 +2,11 @@
 #import <mach-o/dyld.h>
 
 // ==================== RVA ИЗ IDA ====================
-#define GLOBAL_PTR_RVA               0x8FB0F78
-#define OFFSET_TO_TRANSFORM          0xB8
-#define POSITION_OFFSET              0x20
-
-// ==================== БЕЗОПАСНОЕ ЧТЕНИЕ ====================
-static bool safeRead(uintptr_t addr, void* buf, size_t size) {
-    if (addr == 0) return false;
-    // Проверяем, что адрес в разумных пределах
-    if (addr < 0x100000000) return false;
-    if (addr > 0x2000000000) return false;
-    
-    // Пытаемся прочитать через memcpy с защитой
-    __builtin_memcpy(buf, (void*)addr, size);
-    return true;
-}
-
-static uintptr_t safeReadPtr(uintptr_t addr) {
-    uintptr_t val = 0;
-    if (safeRead(addr, &val, sizeof(val))) return val;
-    return 0;
-}
-
-static float safeReadFloat(uintptr_t addr) {
-    float val = 0;
-    if (safeRead(addr, &val, sizeof(val))) return val;
-    return 0;
-}
+#define STATIC_FIELDS_PTR_RVA       0x8FC1848   // off_8FC1848
+#define OFFSET_TO_OBJ               0xB8
+#define PLAYER_CONTROLLER_OFFSET    0x30
+#define TRANSFORM_OFFSET            0xF0        // из _FT_Get_Transform
+#define POSITION_OFFSET             0x20
 
 uintptr_t getBase() {
     for (uint32_t i = 0; i < _dyld_image_count(); i++) {
@@ -48,47 +26,38 @@ struct Vector3 GetPlayerPosition() {
     struct Vector3 result = {0, 0, 0};
     
     uintptr_t base = getBase();
-    if (base == 0) {
-        NSLog(@"[ESP] Base = 0");
-        return result;
-    }
-    NSLog(@"[ESP] Base = 0x%lx", base);
+    if (base == 0) return result;
     
-    // 1. Глобальная переменная off_8FB0F78
-    uintptr_t globalPtrAddr = base + GLOBAL_PTR_RVA;
-    NSLog(@"[ESP] globalPtrAddr = 0x%lx", globalPtrAddr);
+    // 1. Получаем staticFieldsPtr из off_8FC1848
+    uintptr_t staticFieldsPtr = *(uintptr_t*)(base + STATIC_FIELDS_PTR_RVA);
+    if (staticFieldsPtr == 0) return result;
     
-    uintptr_t obj = safeReadPtr(globalPtrAddr);
-    if (obj == 0) {
-        NSLog(@"[ESP] obj = 0 (NULL)");
-        return result;
-    }
-    NSLog(@"[ESP] obj = 0x%lx", obj);
+    // 2. Получаем объект по смещению 0xB8
+    uintptr_t obj = *(uintptr_t*)(staticFieldsPtr + OFFSET_TO_OBJ);
+    if (obj == 0) return result;
     
-    // 2. Transform по смещению 0xB8
-    uintptr_t transform = safeReadPtr(obj + OFFSET_TO_TRANSFORM);
-    if (transform == 0) {
-        NSLog(@"[ESP] transform = 0 (NULL)");
-        return result;
-    }
-    NSLog(@"[ESP] transform = 0x%lx", transform);
+    // 3. Получаем _playerController
+    uintptr_t playerController = *(uintptr_t*)(obj + PLAYER_CONTROLLER_OFFSET);
+    if (playerController == 0) return result;
     
-    // 3. position
-    result.x = safeReadFloat(transform + POSITION_OFFSET);
-    result.y = safeReadFloat(transform + POSITION_OFFSET + 4);
-    result.z = safeReadFloat(transform + POSITION_OFFSET + 8);
+    // 4. Получаем Transform (через 0xF0, как в _FT_Get_Transform)
+    uintptr_t transform = *(uintptr_t*)(playerController + TRANSFORM_OFFSET);
+    if (transform == 0) return result;
     
-    NSLog(@"[ESP] position = (%.2f, %.2f, %.2f)", result.x, result.y, result.z);
+    // 5. Получаем позицию
+    result.x = *(float*)(transform + POSITION_OFFSET);
+    result.y = *(float*)(transform + POSITION_OFFSET + 4);
+    result.z = *(float*)(transform + POSITION_OFFSET + 8);
     
     return result;
 }
 
 // ==================== UI МЕНЮ ====================
-@interface TestMenu : NSObject
+@interface ESPMenu : NSObject
 + (void)setup;
 @end
 
-@implementation TestMenu
+@implementation ESPMenu
 
 static UIButton *menuButton = nil;
 static UIView *menuContainer = nil;
@@ -210,15 +179,11 @@ static BOOL isMenuVisible = NO;
     
     [keyWindow addSubview:menuContainer];
     
-    // Обновляем каждые 2 секунды
     [NSTimer scheduledTimerWithTimeInterval:2.0 
                                      target:self 
                                    selector:@selector(updateCoordinates) 
                                    userInfo:nil 
                                     repeats:YES];
-    
-    // Принудительно вызываем для логов
-    GetPlayerPosition();
     
     NSLog(@"[ESP] Menu ready!");
 }
@@ -229,7 +194,7 @@ static void loadMenu() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
         if (keyWindow) {
-            [TestMenu setup];
+            [ESPMenu setup];
         } else {
             loadMenu();
         }
