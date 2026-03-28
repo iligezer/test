@@ -47,15 +47,13 @@ struct Vector3 GetPlayerPosition() {
     return result;
 }
 
-void* (*Camera_get_main)() = (void* (*)())getBase() + CAMERA_GET_MAIN_RVA;
-struct Vector3 (*WorldToScreenPoint)(void* cam, struct Vector3 pos) = (struct Vector3 (*)(void*, struct Vector3))(getBase() + WORLD_TO_SCREEN_POINT_RVA);
-
-// ==================== МЕНЮ И ESP ====================
+// ==================== МЕНЮ ====================
 
 static UIButton *menuButton = nil;
 static UIView *menuView = nil;
 static UILabel *coordLabel = nil;
 static BOOL isMenuVisible = NO;
+static NSTimer *updateTimer = nil;
 
 static void checkCoordinates() {
     struct Vector3 pos = GetPlayerPosition();
@@ -70,9 +68,14 @@ static void checkCoordinates() {
 }
 
 static void updateCoordinates() {
+    if (!coordLabel) return;
     struct Vector3 pos = GetPlayerPosition();
-    if (coordLabel) {
-        coordLabel.text = [NSString stringWithFormat:@"X:%.0f Y:%.0f Z:%.0f", pos.x, pos.y, pos.z];
+    if (pos.x == 0 && pos.y == 0 && pos.z == 0) {
+        coordLabel.text = @"❌ Игрок не найден";
+        coordLabel.textColor = [UIColor redColor];
+    } else {
+        coordLabel.text = [NSString stringWithFormat:@"X:%.0f  Y:%.0f  Z:%.0f", pos.x, pos.y, pos.z];
+        coordLabel.textColor = [UIColor colorWithRed:0.3 green:0.9 blue:0.3 alpha:1];
     }
 }
 
@@ -111,9 +114,9 @@ static void setupMenu() {
     [menuButton setTitle:@"⚡" forState:UIControlStateNormal];
     [menuButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     menuButton.titleLabel.font = [UIFont boldSystemFontOfSize:24];
-    [menuButton addTarget:nil action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
+    [menuButton addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
     
-    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:nil action:@selector(dragButton:)];
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragButton:)];
     [menuButton addGestureRecognizer:pan];
     [keyWindow addSubview:menuButton];
     
@@ -131,7 +134,7 @@ static void setupMenu() {
     [checkBtn setTitle:@"📍 Мои координаты" forState:UIControlStateNormal];
     [checkBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     checkBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-    [checkBtn addTarget:nil action:@selector(checkCoordinates) forControlEvents:UIControlEventTouchUpInside];
+    [checkBtn addTarget:self action:@selector(checkCoordinates) forControlEvents:UIControlEventTouchUpInside];
     [menuView addSubview:checkBtn];
     
     coordLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 60, 210, 40)];
@@ -144,8 +147,12 @@ static void setupMenu() {
     
     [keyWindow addSubview:menuView];
     
-    // Обновление координат
-    [NSTimer scheduledTimerWithTimeInterval:1.0 target:nil selector:@selector(updateCoordinates) userInfo:nil repeats:YES];
+    // Обновление координат каждую секунду
+    updateTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 
+                                                   target:self 
+                                                 selector:@selector(updateCoordinates) 
+                                                 userInfo:nil 
+                                                  repeats:YES];
 }
 
 static void loadMenu() {
