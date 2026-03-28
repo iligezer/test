@@ -1,17 +1,70 @@
 #import <UIKit/UIKit.h>
 #import <mach-o/dyld.h>
+#import <signal.h>
+#import <setjmp.h>
 
 // ==================== RVA ИЗ IDA ====================
-#define STATIC_FIELDS_PTR_RVA       0x8FC1848   // off_8FC1848
+#define STATIC_FIELDS_PTR_RVA       0x8FC1848
 #define OFFSET_TO_OBJ               0xB8
 #define PLAYER_CONTROLLER_OFFSET    0x30
-#define TRANSFORM_OFFSET            0xF0        // из _FT_Get_Transform
+#define TRANSFORM_OFFSET            0xF0
 #define POSITION_OFFSET             0x20
+
+// ==================== ЗАЩИТА ОТ ВЫЛЕТА ====================
+static jmp_buf jump_buffer;
+static volatile BOOL is_reading = NO;
+
+static void sig_handler(int sig) {
+    if (is_reading) {
+        longjmp(jump_buffer, 1);
+    }
+}
+
+static BOOL safe_read(void *dst, const void *src, size_t size) {
+    if (src == NULL) return NO;
+    if ((uintptr_t)src < 0x100000000) return NO;
+    if ((uintptr_t)src > 0x2000000000) return NO;
+    
+    // Устанавливаем обработчик сигнала
+    signal(SIGSEGV, sig_handler);
+    signal(SIGBUS, sig_handler);
+    
+    is_reading = YES;
+    BOOL success = YES;
+    if (setjmp(jump_buffer) == 0) {
+        memcpy(dst, src, size);
+    } else {
+        success = NO;
+    }
+    is_reading = NO;
+    
+    // Восстанавливаем обработчики
+    signal(SIGSEGV, SIG_DFL);
+    signal(SIGBUS, SIG_DFL);
+    
+    return success;
+}
+
+static uintptr_t safe_read_ptr(uintptr_t addr) {
+    uintptr_t val = 0;
+    if (safe_read(&val, (void*)addr, sizeof(val))) {
+        return val;
+    }
+    return 0;
+}
+
+static float safe_read_float(uintptr_t addr) {
+    float val = 0;
+    if (safe_read(&val, (void*)addr, sizeof(val))) {
+        return val;
+    }
+    return 0;
+}
 
 uintptr_t getBase() {
     for (uint32_t i = 0; i < _dyld_image_count(); i++) {
         const char* name = _dyld_get_image_name(i);
-        if (strstr(name, "UnityFramework")) {
+        if (name && strstr(name, "UnityFramework")) {
             return (uintptr_t)_dyld_get_image_header(i);
         }
     }
@@ -24,30 +77,67 @@ struct Vector3 {
 
 struct Vector3 GetPlayerPosition() {
     struct Vector3 result = {0, 0, 0};
-    
     uintptr_t base = getBase();
-    if (base == 0) return result;
     
-    // 1. Получаем staticFieldsPtr из off_8FC1848
-    uintptr_t staticFieldsPtr = *(uintptr_t*)(base + STATIC_FIELDS_PTR_RVA);
-    if (staticFieldsPtr == 0) return result;
+    NSLog(@"[ESP] === START GET POSITION ===");
     
-    // 2. Получаем объект по смещению 0xB8
-    uintptr_t obj = *(uintptr_t*)(staticFieldsPtr + OFFSET_TO_OBJ);
-    if (obj == 0) return result;
+    if (base == 0) {
+        NSLog(@"[ESP] ❌ Base = 0");
+        return result;
+    }
+    NSLog(@"[ESP] ✅ Base = 0x%lx", base);
     
-    // 3. Получаем _playerController
-    uintptr_t playerController = *(uintptr_t*)(obj + PLAYER_CONTROLLER_OFFSET);
-    if (playerController == 0) return result;
+    // 1. staticFieldsPtr
+    uintptr_t staticFieldsPtrAddr = base + STATIC_FIELDS_PTR_RVA;
+    NSLog(@"[ESP] staticFieldsPtrAddr = 0x%lx", staticFieldsPtrAddr);
     
-    // 4. Получаем Transform (через 0xF0, как в _FT_Get_Transform)
-    uintptr_t transform = *(uintptr_t*)(playerController + TRANSFORM_OFFSET);
-    if (transform == 0) return result;
+    uintptr_t staticFieldsPtr = safe_read_ptr(staticFieldsPtrAddr);
+    if (staticFieldsPtr == 0) {
+        NSLog(@"[ESP] ❌ staticFieldsPtr = 0");
+        return result;
+    }
+    NSLog(@"[ESP] ✅ staticFieldsPtr = 0x%lx", staticFieldsPtr);
     
-    // 5. Получаем позицию
-    result.x = *(float*)(transform + POSITION_OFFSET);
-    result.y = *(float*)(transform + POSITION_OFFSET + 4);
-    result.z = *(float*)(transform + POSITION_OFFSET + 8);
+    // 2. obj
+    uintptr_t objAddr = staticFieldsPtr + OFFSET_TO_OBJ;
+    NSLog(@"[ESP] objAddr = 0x%lx", objAddr);
+    
+    uintptr_t obj = safe_read_ptr(objAddr);
+    if (obj == 0) {
+        NSLog(@"[ESP] ❌ obj = 0");
+        return result;
+    }
+    NSLog(@"[ESP] ✅ obj = 0x%lx", obj);
+    
+    // 3. playerController
+    uintptr_t playerControllerAddr = obj + PLAYER_CONTROLLER_OFFSET;
+    NSLog(@"[ESP] playerControllerAddr = 0x%lx", playerControllerAddr);
+    
+    uintptr_t playerController = safe_read_ptr(playerControllerAddr);
+    if (playerController == 0) {
+        NSLog(@"[ESP] ❌ playerController = 0");
+        return result;
+    }
+    NSLog(@"[ESP] ✅ playerController = 0x%lx", playerController);
+    
+    // 4. transform
+    uintptr_t transformAddr = playerController + TRANSFORM_OFFSET;
+    NSLog(@"[ESP] transformAddr = 0x%lx", transformAddr);
+    
+    uintptr_t transform = safe_read_ptr(transformAddr);
+    if (transform == 0) {
+        NSLog(@"[ESP] ❌ transform = 0");
+        return result;
+    }
+    NSLog(@"[ESP] ✅ transform = 0x%lx", transform);
+    
+    // 5. position
+    result.x = safe_read_float(transform + POSITION_OFFSET);
+    result.y = safe_read_float(transform + POSITION_OFFSET + 4);
+    result.z = safe_read_float(transform + POSITION_OFFSET + 8);
+    
+    NSLog(@"[ESP] position = (%.2f, %.2f, %.2f)", result.x, result.y, result.z);
+    NSLog(@"[ESP] === END GET POSITION ===");
     
     return result;
 }
@@ -81,8 +171,8 @@ static BOOL isMenuVisible = NO;
     struct Vector3 pos = GetPlayerPosition();
     NSString *message;
     if (pos.x == 0 && pos.y == 0 && pos.z == 0) {
-        message = @"❌ Не удалось получить координаты!\nЗайди в матч и нажми снова";
-        coordLabel.text = @"❌ Зайди в матч";
+        message = @"❌ Не удалось получить координаты!\nСмотри логи в консоли";
+        coordLabel.text = @"❌ Ошибка!";
         coordLabel.textColor = [UIColor redColor];
     } else {
         message = [NSString stringWithFormat:@"X: %.2f\nY: %.2f\nZ: %.2f", pos.x, pos.y, pos.z];
@@ -146,21 +236,21 @@ static BOOL isMenuVisible = NO;
     
     menuContainer = [[UIView alloc] initWithFrame:CGRectMake(menuButton.frame.origin.x, 
                                                               menuButton.frame.origin.y + 55, 
-                                                              260, 150)];
+                                                              280, 200)];
     menuContainer.backgroundColor = [UIColor colorWithRed:0.1 green:0.1 blue:0.1 alpha:0.95];
     menuContainer.layer.cornerRadius = 12;
     menuContainer.hidden = YES;
     menuContainer.userInteractionEnabled = YES;
     
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, 260, 28)];
-    title.text = @"Modern Strike ESP";
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, 280, 28)];
+    title.text = @"Modern Strike ESP v2";
     title.textColor = [UIColor whiteColor];
     title.textAlignment = NSTextAlignmentCenter;
     title.font = [UIFont boldSystemFontOfSize:14];
     [menuContainer addSubview:title];
     
     UIButton *checkBtn = [UIButton buttonWithType:UIButtonTypeRoundedRect];
-    checkBtn.frame = CGRectMake(10, 45, 240, 38);
+    checkBtn.frame = CGRectMake(10, 45, 260, 40);
     checkBtn.backgroundColor = [UIColor colorWithRed:0.2 green:0.6 blue:0.2 alpha:1];
     checkBtn.layer.cornerRadius = 8;
     [checkBtn setTitle:@"📍 Мои координаты" forState:UIControlStateNormal];
@@ -169,7 +259,15 @@ static BOOL isMenuVisible = NO;
     [checkBtn addTarget:self action:@selector(checkCoordinates) forControlEvents:UIControlEventTouchUpInside];
     [menuContainer addSubview:checkBtn];
     
-    coordLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 100, 250, 40)];
+    UILabel *info = [[UILabel alloc] initWithFrame:CGRectMake(5, 100, 270, 40)];
+    info.text = @"Смотри логи в Xcode Console\nWindow → Devices → Console";
+    info.textColor = [UIColor lightGrayColor];
+    info.font = [UIFont systemFontOfSize:10];
+    info.textAlignment = NSTextAlignmentCenter;
+    info.numberOfLines = 2;
+    [menuContainer addSubview:info];
+    
+    coordLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 150, 270, 40)];
     coordLabel.text = @"Зайди в матч";
     coordLabel.textColor = [UIColor lightGrayColor];
     coordLabel.font = [UIFont systemFontOfSize:12];
@@ -184,6 +282,9 @@ static BOOL isMenuVisible = NO;
                                    selector:@selector(updateCoordinates) 
                                    userInfo:nil 
                                     repeats:YES];
+    
+    // Принудительно вызываем для логов
+    GetPlayerPosition();
     
     NSLog(@"[ESP] Menu ready!");
 }
