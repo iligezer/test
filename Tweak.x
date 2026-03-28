@@ -23,32 +23,76 @@ struct Vector3 {
     float x, y, z;
 };
 
+// Проверка, является ли адрес валидным (читаемым)
+bool isValidPointer(uintptr_t ptr) {
+    if (ptr == 0) return false;
+    if (ptr < 0x100000000) return false; // слишком низкий адрес
+    // Пытаемся прочитать первый байт
+    volatile char test = *(volatile char*)ptr;
+    (void)test; // чтобы компилятор не оптимизировал
+    return true;
+}
+
 struct Vector3 GetPlayerPosition() {
     struct Vector3 result = {0, 0, 0};
     
     uintptr_t base = getBase();
-    if (base == 0) return result;
+    if (base == 0) {
+        NSLog(@"[ESP] ❌ Base = 0");
+        return result;
+    }
+    NSLog(@"[ESP] Base = 0x%llx", (unsigned long long)base);
     
     // 1. Глобальная переменная
     uintptr_t globalPtrAddr = base + GLOBAL_PTR_RVA;
+    NSLog(@"[ESP] globalPtrAddr = 0x%llx", (unsigned long long)globalPtrAddr);
+    
+    if (!isValidPointer(globalPtrAddr)) {
+        NSLog(@"[ESP] ❌ globalPtrAddr невалидный");
+        return result;
+    }
+    
     uintptr_t staticFieldsPtr = *(uintptr_t*)globalPtrAddr;
+    NSLog(@"[ESP] staticFieldsPtr = 0x%llx", (unsigned long long)staticFieldsPtr);
+    
+    if (!isValidPointer(staticFieldsPtr)) {
+        NSLog(@"[ESP] ❌ staticFieldsPtr невалидный");
+        return result;
+    }
     
     // 2. Объект по смещению 0xB8
     uintptr_t obj = *(uintptr_t*)(staticFieldsPtr + OFFSET_TO_OBJ);
-    if (obj == 0) return result;
+    NSLog(@"[ESP] obj (staticFields+0xB8) = 0x%llx", (unsigned long long)obj);
+    
+    if (!isValidPointer(obj)) {
+        NSLog(@"[ESP] ❌ obj невалидный");
+        return result;
+    }
     
     // 3. _playerController
     uintptr_t playerController = *(uintptr_t*)(obj + PLAYERCONTROLLER_OFFSET);
-    if (playerController == 0) return result;
+    NSLog(@"[ESP] playerController = 0x%llx", (unsigned long long)playerController);
+    
+    if (!isValidPointer(playerController)) {
+        NSLog(@"[ESP] ❌ playerController невалидный");
+        return result;
+    }
     
     // 4. Transform (AxeArms)
     uintptr_t transform = *(uintptr_t*)(playerController + AXEARMS_OFFSET);
-    if (transform == 0) return result;
+    NSLog(@"[ESP] transform (AxeArms) = 0x%llx", (unsigned long long)transform);
+    
+    if (!isValidPointer(transform)) {
+        NSLog(@"[ESP] ❌ transform невалидный");
+        return result;
+    }
     
     // 5. position
     result.x = *(float*)(transform + POSITION_OFFSET);
     result.y = *(float*)(transform + POSITION_OFFSET + 4);
     result.z = *(float*)(transform + POSITION_OFFSET + 8);
+    
+    NSLog(@"[ESP] position = (%.2f, %.2f, %.2f)", result.x, result.y, result.z);
     
     return result;
 }
@@ -78,7 +122,7 @@ static BOOL isMenuVisible = NO;
     struct Vector3 pos = GetPlayerPosition();
     NSString *message;
     if (pos.x == 0 && pos.y == 0 && pos.z == 0) {
-        message = @"❌ Не удалось получить координаты!\nПроверь логи";
+        message = @"❌ Не удалось получить координаты!\nСмотри логи в консоли";
         coordLabel.text = @"❌ Ошибка!";
         coordLabel.textColor = [UIColor redColor];
     } else {
@@ -143,13 +187,13 @@ static BOOL isMenuVisible = NO;
     
     menuContainer = [[UIView alloc] initWithFrame:CGRectMake(menuButton.frame.origin.x, 
                                                               menuButton.frame.origin.y + 55, 
-                                                              220, 130)];
+                                                              260, 180)];
     menuContainer.backgroundColor = [UIColor colorWithRed:0.1 green:0.1 blue:0.1 alpha:0.95];
     menuContainer.layer.cornerRadius = 12;
     menuContainer.hidden = YES;
     menuContainer.userInteractionEnabled = YES;
     
-    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, 220, 28)];
+    UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, 260, 28)];
     title.text = @"Modern Strike ESP";
     title.textColor = [UIColor whiteColor];
     title.textAlignment = NSTextAlignmentCenter;
@@ -157,7 +201,7 @@ static BOOL isMenuVisible = NO;
     [menuContainer addSubview:title];
     
     UIButton *checkBtn = [UIButton buttonWithType:UIButtonTypeRoundedRect];
-    checkBtn.frame = CGRectMake(10, 45, 200, 38);
+    checkBtn.frame = CGRectMake(10, 45, 240, 38);
     checkBtn.backgroundColor = [UIColor colorWithRed:0.2 green:0.6 blue:0.2 alpha:1];
     checkBtn.layer.cornerRadius = 8;
     [checkBtn setTitle:@"📍 Мои координаты" forState:UIControlStateNormal];
@@ -166,7 +210,17 @@ static BOOL isMenuVisible = NO;
     [checkBtn addTarget:self action:@selector(checkCoordinates) forControlEvents:UIControlEventTouchUpInside];
     [menuContainer addSubview:checkBtn];
     
-    coordLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 95, 210, 28)];
+    UIButton *debugBtn = [UIButton buttonWithType:UIButtonTypeRoundedRect];
+    debugBtn.frame = CGRectMake(10, 95, 240, 38);
+    debugBtn.backgroundColor = [UIColor colorWithRed:0.6 green:0.3 blue:0.2 alpha:1];
+    debugBtn.layer.cornerRadius = 8;
+    [debugBtn setTitle:@"🔧 Логи в консоль" forState:UIControlStateNormal];
+    [debugBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    debugBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
+    [debugBtn addTarget:self action:@selector(checkCoordinates) forControlEvents:UIControlEventTouchUpInside];
+    [menuContainer addSubview:debugBtn];
+    
+    coordLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 145, 250, 28)];
     coordLabel.text = @"X: ?  Y: ?  Z: ?";
     coordLabel.textColor = [UIColor lightGrayColor];
     coordLabel.font = [UIFont systemFontOfSize:12];
@@ -181,6 +235,9 @@ static BOOL isMenuVisible = NO;
                                    selector:@selector(updateCoordinates) 
                                    userInfo:nil 
                                     repeats:YES];
+    
+    // Принудительно вызываем один раз для логов
+    GetPlayerPosition();
     
     NSLog(@"[ESP] Menu setup complete!");
 }
