@@ -2,9 +2,33 @@
 #import <mach-o/dyld.h>
 
 // ==================== RVA ИЗ IDA ====================
-#define GLOBAL_PTR_RVA               0x8FB0F78   // off_8FB0F78
+#define GLOBAL_PTR_RVA               0x8FB0F78
 #define OFFSET_TO_TRANSFORM          0xB8
 #define POSITION_OFFSET              0x20
+
+// ==================== БЕЗОПАСНОЕ ЧТЕНИЕ ====================
+static bool safeRead(uintptr_t addr, void* buf, size_t size) {
+    if (addr == 0) return false;
+    // Проверяем, что адрес в разумных пределах
+    if (addr < 0x100000000) return false;
+    if (addr > 0x2000000000) return false;
+    
+    // Пытаемся прочитать через memcpy с защитой
+    __builtin_memcpy(buf, (void*)addr, size);
+    return true;
+}
+
+static uintptr_t safeReadPtr(uintptr_t addr) {
+    uintptr_t val = 0;
+    if (safeRead(addr, &val, sizeof(val))) return val;
+    return 0;
+}
+
+static float safeReadFloat(uintptr_t addr) {
+    float val = 0;
+    if (safeRead(addr, &val, sizeof(val))) return val;
+    return 0;
+}
 
 uintptr_t getBase() {
     for (uint32_t i = 0; i < _dyld_image_count(); i++) {
@@ -24,21 +48,37 @@ struct Vector3 GetPlayerPosition() {
     struct Vector3 result = {0, 0, 0};
     
     uintptr_t base = getBase();
-    if (base == 0) return result;
+    if (base == 0) {
+        NSLog(@"[ESP] Base = 0");
+        return result;
+    }
+    NSLog(@"[ESP] Base = 0x%lx", base);
     
     // 1. Глобальная переменная off_8FB0F78
     uintptr_t globalPtrAddr = base + GLOBAL_PTR_RVA;
-    uintptr_t obj = *(uintptr_t*)globalPtrAddr;
-    if (obj == 0) return result;
+    NSLog(@"[ESP] globalPtrAddr = 0x%lx", globalPtrAddr);
+    
+    uintptr_t obj = safeReadPtr(globalPtrAddr);
+    if (obj == 0) {
+        NSLog(@"[ESP] obj = 0 (NULL)");
+        return result;
+    }
+    NSLog(@"[ESP] obj = 0x%lx", obj);
     
     // 2. Transform по смещению 0xB8
-    uintptr_t transform = *(uintptr_t*)(obj + OFFSET_TO_TRANSFORM);
-    if (transform == 0) return result;
+    uintptr_t transform = safeReadPtr(obj + OFFSET_TO_TRANSFORM);
+    if (transform == 0) {
+        NSLog(@"[ESP] transform = 0 (NULL)");
+        return result;
+    }
+    NSLog(@"[ESP] transform = 0x%lx", transform);
     
     // 3. position
-    result.x = *(float*)(transform + POSITION_OFFSET);
-    result.y = *(float*)(transform + POSITION_OFFSET + 4);
-    result.z = *(float*)(transform + POSITION_OFFSET + 8);
+    result.x = safeReadFloat(transform + POSITION_OFFSET);
+    result.y = safeReadFloat(transform + POSITION_OFFSET + 4);
+    result.z = safeReadFloat(transform + POSITION_OFFSET + 8);
+    
+    NSLog(@"[ESP] position = (%.2f, %.2f, %.2f)", result.x, result.y, result.z);
     
     return result;
 }
@@ -56,12 +96,16 @@ static UILabel *coordLabel = nil;
 static BOOL isMenuVisible = NO;
 
 + (void)showAlert:(NSString *)title message:(NSString *)message {
-    UIAlertController *alert = [UIAlertController alertControllerWithTitle:title 
-                                                                   message:message 
-                                                            preferredStyle:UIAlertControllerStyleAlert];
-    [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
-    UIViewController *rootVC = [UIApplication sharedApplication].keyWindow.rootViewController;
-    [rootVC presentViewController:alert animated:YES completion:nil];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:title 
+                                                                       message:message 
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"OK" style:UIAlertActionStyleDefault handler:nil]];
+        UIViewController *rootVC = [UIApplication sharedApplication].keyWindow.rootViewController;
+        if (rootVC) {
+            [rootVC presentViewController:alert animated:YES completion:nil];
+        }
+    });
 }
 
 + (void)checkCoordinates {
@@ -69,7 +113,7 @@ static BOOL isMenuVisible = NO;
     NSString *message;
     if (pos.x == 0 && pos.y == 0 && pos.z == 0) {
         message = @"❌ Не удалось получить координаты!\nЗайди в матч и нажми снова";
-        coordLabel.text = @"❌ Ошибка! Зайди в матч";
+        coordLabel.text = @"❌ Зайди в матч";
         coordLabel.textColor = [UIColor redColor];
     } else {
         message = [NSString stringWithFormat:@"X: %.2f\nY: %.2f\nZ: %.2f", pos.x, pos.y, pos.z];
@@ -173,14 +217,18 @@ static BOOL isMenuVisible = NO;
                                    userInfo:nil 
                                     repeats:YES];
     
-    NSLog(@"[ESP] Menu ready! off_8FB0F78 RVA = 0x%x", GLOBAL_PTR_RVA);
+    // Принудительно вызываем для логов
+    GetPlayerPosition();
+    
+    NSLog(@"[ESP] Menu ready!");
 }
 
 @end
 
 static void loadMenu() {
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        if ([UIApplication sharedApplication].keyWindow) {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
+        if (keyWindow) {
             [TestMenu setup];
         } else {
             loadMenu();
