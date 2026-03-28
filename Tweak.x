@@ -2,10 +2,8 @@
 #import <mach-o/dyld.h>
 
 // ==================== RVA ИЗ IDA ====================
-#define GLOBAL_PTR_RVA               0x8FC1848
-#define OFFSET_TO_OBJ                0xB8
-#define PLAYERCONTROLLER_OFFSET      0x30
-#define AXEARMS_OFFSET               0x150
+#define GLOBAL_PTR_RVA               0x8FB0F78   // off_8FB0F78 (новая!)
+#define OFFSET_TO_TRANSFORM          0xB8
 #define POSITION_OFFSET              0x20
 
 // ==================== ПОЛУЧЕНИЕ БАЗЫ ====================
@@ -26,10 +24,10 @@ struct Vector3 {
 // Проверка, является ли адрес валидным (читаемым)
 bool isValidPointer(uintptr_t ptr) {
     if (ptr == 0) return false;
-    if (ptr < 0x100000000) return false; // слишком низкий адрес
+    if (ptr < 0x100000000) return false;
     // Пытаемся прочитать первый байт
     volatile char test = *(volatile char*)ptr;
-    (void)test; // чтобы компилятор не оптимизировал
+    (void)test;
     return true;
 }
 
@@ -43,7 +41,7 @@ struct Vector3 GetPlayerPosition() {
     }
     NSLog(@"[ESP] Base = 0x%llx", (unsigned long long)base);
     
-    // 1. Глобальная переменная
+    // 1. Глобальная переменная off_8FB0F78
     uintptr_t globalPtrAddr = base + GLOBAL_PTR_RVA;
     NSLog(@"[ESP] globalPtrAddr = 0x%llx", (unsigned long long)globalPtrAddr);
     
@@ -52,42 +50,24 @@ struct Vector3 GetPlayerPosition() {
         return result;
     }
     
-    uintptr_t staticFieldsPtr = *(uintptr_t*)globalPtrAddr;
-    NSLog(@"[ESP] staticFieldsPtr = 0x%llx", (unsigned long long)staticFieldsPtr);
-    
-    if (!isValidPointer(staticFieldsPtr)) {
-        NSLog(@"[ESP] ❌ staticFieldsPtr невалидный");
-        return result;
-    }
-    
-    // 2. Объект по смещению 0xB8
-    uintptr_t obj = *(uintptr_t*)(staticFieldsPtr + OFFSET_TO_OBJ);
-    NSLog(@"[ESP] obj (staticFields+0xB8) = 0x%llx", (unsigned long long)obj);
+    uintptr_t obj = *(uintptr_t*)globalPtrAddr;
+    NSLog(@"[ESP] obj = 0x%llx", (unsigned long long)obj);
     
     if (!isValidPointer(obj)) {
         NSLog(@"[ESP] ❌ obj невалидный");
         return result;
     }
     
-    // 3. _playerController
-    uintptr_t playerController = *(uintptr_t*)(obj + PLAYERCONTROLLER_OFFSET);
-    NSLog(@"[ESP] playerController = 0x%llx", (unsigned long long)playerController);
-    
-    if (!isValidPointer(playerController)) {
-        NSLog(@"[ESP] ❌ playerController невалидный");
-        return result;
-    }
-    
-    // 4. Transform (AxeArms)
-    uintptr_t transform = *(uintptr_t*)(playerController + AXEARMS_OFFSET);
-    NSLog(@"[ESP] transform (AxeArms) = 0x%llx", (unsigned long long)transform);
+    // 2. Transform по смещению 0xB8
+    uintptr_t transform = *(uintptr_t*)(obj + OFFSET_TO_TRANSFORM);
+    NSLog(@"[ESP] transform = 0x%llx", (unsigned long long)transform);
     
     if (!isValidPointer(transform)) {
         NSLog(@"[ESP] ❌ transform невалидный");
         return result;
     }
     
-    // 5. position
+    // 3. position
     result.x = *(float*)(transform + POSITION_OFFSET);
     result.y = *(float*)(transform + POSITION_OFFSET + 4);
     result.z = *(float*)(transform + POSITION_OFFSET + 8);
@@ -172,6 +152,7 @@ static BOOL isMenuVisible = NO;
     UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
     if (!keyWindow) return;
     
+    // Плавающая кнопка
     menuButton = [UIButton buttonWithType:UIButtonTypeRoundedRect];
     menuButton.frame = CGRectMake(keyWindow.bounds.size.width - 70, 60, 50, 50);
     menuButton.backgroundColor = [UIColor colorWithRed:0.0 green:0.5 blue:1.0 alpha:0.9];
@@ -181,10 +162,12 @@ static BOOL isMenuVisible = NO;
     menuButton.titleLabel.font = [UIFont boldSystemFontOfSize:24];
     [menuButton addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
     
+    // Перетаскивание
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragButton:)];
     [menuButton addGestureRecognizer:pan];
     [keyWindow addSubview:menuButton];
     
+    // Меню
     menuContainer = [[UIView alloc] initWithFrame:CGRectMake(menuButton.frame.origin.x, 
                                                               menuButton.frame.origin.y + 55, 
                                                               260, 180)];
@@ -193,6 +176,7 @@ static BOOL isMenuVisible = NO;
     menuContainer.hidden = YES;
     menuContainer.userInteractionEnabled = YES;
     
+    // Заголовок
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(0, 8, 260, 28)];
     title.text = @"Modern Strike ESP";
     title.textColor = [UIColor whiteColor];
@@ -200,6 +184,7 @@ static BOOL isMenuVisible = NO;
     title.font = [UIFont boldSystemFontOfSize:14];
     [menuContainer addSubview:title];
     
+    // Кнопка проверки координат
     UIButton *checkBtn = [UIButton buttonWithType:UIButtonTypeRoundedRect];
     checkBtn.frame = CGRectMake(10, 45, 240, 38);
     checkBtn.backgroundColor = [UIColor colorWithRed:0.2 green:0.6 blue:0.2 alpha:1];
@@ -210,6 +195,7 @@ static BOOL isMenuVisible = NO;
     [checkBtn addTarget:self action:@selector(checkCoordinates) forControlEvents:UIControlEventTouchUpInside];
     [menuContainer addSubview:checkBtn];
     
+    // Кнопка логов
     UIButton *debugBtn = [UIButton buttonWithType:UIButtonTypeRoundedRect];
     debugBtn.frame = CGRectMake(10, 95, 240, 38);
     debugBtn.backgroundColor = [UIColor colorWithRed:0.6 green:0.3 blue:0.2 alpha:1];
@@ -220,6 +206,7 @@ static BOOL isMenuVisible = NO;
     [debugBtn addTarget:self action:@selector(checkCoordinates) forControlEvents:UIControlEventTouchUpInside];
     [menuContainer addSubview:debugBtn];
     
+    // Метка с координатами
     coordLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 145, 250, 28)];
     coordLabel.text = @"X: ?  Y: ?  Z: ?";
     coordLabel.textColor = [UIColor lightGrayColor];
@@ -243,6 +230,8 @@ static BOOL isMenuVisible = NO;
 }
 
 @end
+
+// ==================== ЗАГРУЗКА ТВИКА ====================
 
 static void loadMenu() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
