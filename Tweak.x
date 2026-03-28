@@ -189,6 +189,6 @@ static void loadMenu() {
 }
 
 %ctor {
-    NSLog(@"[ESP] Tweak loaded! Base = 0x%llx", getBase());
+    NSLog(@"[ESP] Tweak loaded!");
     loadMenu();
 }
