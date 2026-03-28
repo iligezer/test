@@ -2,9 +2,17 @@
 #import <mach-o/dyld.h>
 #import <substrate.h>
 
-// RVA из IDA
-#define GLOBAL_PTR_RVA      0x8FC1A80      // off_8FC1A80
-#define TRANSFORM_OFFSET    0xB8           // смещение transform в объекте
+// ==================== RVA ИЗ IDA ====================
+#define GLOBAL_PTR_RVA      0x8FC1A80
+#define TRANSFORM_OFFSET    0xB8
+
+// ==================== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ====================
+static UIView *menuContainer = nil;
+static UIButton *menuButton = nil;
+static UILabel *coordLabel = nil;
+static BOOL isMenuVisible = NO;
+
+// ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 
 uintptr_t getBase() {
     for (uint32_t i = 0; i < _dyld_image_count(); i++) {
@@ -34,30 +42,21 @@ struct Vector3 GetPlayerPosition() {
     uintptr_t globalPtr = *(uintptr_t*)globalPtrAddr;
     NSLog(@"[ESP] globalPtr = 0x%llx", (unsigned long long)globalPtr);
     
-    if (globalPtr == 0) {
-        NSLog(@"[ESP] globalPtr is NULL");
-        return result;
-    }
+    if (globalPtr == 0) return result;
     
-    // 2. Разыменовываем (первое LDR X8, [X8])
+    // 2. Разыменовываем
     uintptr_t obj = *(uintptr_t*)globalPtr;
     NSLog(@"[ESP] obj = 0x%llx", (unsigned long long)obj);
     
-    if (obj == 0) {
-        NSLog(@"[ESP] obj is NULL");
-        return result;
-    }
+    if (obj == 0) return result;
     
-    // 3. Получаем Transform (LDR X8, [X8,#0xB8])
+    // 3. Получаем Transform
     uintptr_t transform = *(uintptr_t*)(obj + TRANSFORM_OFFSET);
     NSLog(@"[ESP] transform = 0x%llx", (unsigned long long)transform);
     
-    if (transform == 0) {
-        NSLog(@"[ESP] transform is NULL");
-        return result;
-    }
+    if (transform == 0) return result;
     
-    // 4. Читаем позицию (LDR S0, [X8,#0] и т.д.)
+    // 4. Читаем позицию
     result.x = *(float*)(transform + 0);
     result.y = *(float*)(transform + 4);
     result.z = *(float*)(transform + 8);
@@ -67,12 +66,7 @@ struct Vector3 GetPlayerPosition() {
     return result;
 }
 
-// ==================== МЕНЮ (как в FreeFire) ====================
-
-static UIView *menuContainer = nil;
-static UIButton *menuButton = nil;
-static UILabel *coordLabel = nil;
-static BOOL isMenuVisible = NO;
+// ==================== ФУНКЦИИ МЕНЮ ====================
 
 static void showAlert(NSString *title, NSString *message) {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:title 
@@ -142,16 +136,16 @@ static void setupMenu() {
     [menuButton setTitle:@"⚡" forState:UIControlStateNormal];
     [menuButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     menuButton.titleLabel.font = [UIFont boldSystemFontOfSize:24];
-    [menuButton addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
+    [menuButton addTarget:nil action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
     
-    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragButton:)];
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:nil action:@selector(dragButton:)];
     [menuButton addGestureRecognizer:pan];
     [keyWindow addSubview:menuButton];
     
     // Контейнер меню
     menuContainer = [[UIView alloc] initWithFrame:CGRectMake(menuButton.frame.origin.x, 
                                                               menuButton.frame.origin.y + 55, 
-                                                              220, 160)];
+                                                              220, 140)];
     menuContainer.backgroundColor = [UIColor colorWithRed:0.1 green:0.1 blue:0.1 alpha:0.95];
     menuContainer.layer.cornerRadius = 12;
     menuContainer.hidden = YES;
@@ -173,11 +167,11 @@ static void setupMenu() {
     [coordBtn setTitle:@"📍 Мои координаты" forState:UIControlStateNormal];
     [coordBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     coordBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-    [coordBtn addTarget:self action:@selector(checkCoordinates) forControlEvents:UIControlEventTouchUpInside];
+    [coordBtn addTarget:nil action:@selector(checkCoordinates) forControlEvents:UIControlEventTouchUpInside];
     [menuContainer addSubview:coordBtn];
     
     // Метка с координатами
-    coordLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 100, 210, 40)];
+    coordLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 95, 210, 35)];
     coordLabel.text = @"X: ?  Y: ?  Z: ?";
     coordLabel.textColor = [UIColor colorWithRed:0.7 green:0.7 blue:0.7 alpha:1];
     coordLabel.font = [UIFont systemFontOfSize:11];
@@ -189,7 +183,7 @@ static void setupMenu() {
     
     // Обновляем координаты раз в секунду
     [NSTimer scheduledTimerWithTimeInterval:1.0 
-                                     target:self 
+                                     target:nil 
                                    selector:@selector(updateCoordinatesLabel) 
                                    userInfo:nil 
                                     repeats:YES];
