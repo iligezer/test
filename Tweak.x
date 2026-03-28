@@ -6,12 +6,6 @@
 #define GLOBAL_PTR_RVA      0x8FC1A80
 #define TRANSFORM_OFFSET    0xB8
 
-// ==================== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ====================
-static UIView *menuContainer = nil;
-static UIButton *menuButton = nil;
-static UILabel *coordLabel = nil;
-static BOOL isMenuVisible = NO;
-
 // ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 
 uintptr_t getBase() {
@@ -37,26 +31,16 @@ struct Vector3 GetPlayerPosition() {
         return result;
     }
     
-    // 1. Глобальный указатель
     uintptr_t globalPtrAddr = base + GLOBAL_PTR_RVA;
     uintptr_t globalPtr = *(uintptr_t*)globalPtrAddr;
-    NSLog(@"[ESP] globalPtr = 0x%llx", (unsigned long long)globalPtr);
-    
     if (globalPtr == 0) return result;
     
-    // 2. Разыменовываем
     uintptr_t obj = *(uintptr_t*)globalPtr;
-    NSLog(@"[ESP] obj = 0x%llx", (unsigned long long)obj);
-    
     if (obj == 0) return result;
     
-    // 3. Получаем Transform
     uintptr_t transform = *(uintptr_t*)(obj + TRANSFORM_OFFSET);
-    NSLog(@"[ESP] transform = 0x%llx", (unsigned long long)transform);
-    
     if (transform == 0) return result;
     
-    // 4. Читаем позицию
     result.x = *(float*)(transform + 0);
     result.y = *(float*)(transform + 4);
     result.z = *(float*)(transform + 8);
@@ -66,29 +50,23 @@ struct Vector3 GetPlayerPosition() {
     return result;
 }
 
-// ==================== КЛАСС ДЛЯ ТАЙМЕРА ====================
+// ==================== КЛАСС МЕНЮ (как в FreeFire) ====================
 
-@interface TimerHelper : NSObject
-+ (void)updateCoordinates;
+@interface TestMenu : NSObject
++ (void)showAlert:(NSString *)title message:(NSString *)message;
++ (void)checkCoordinates;
++ (void)updateCoordinatesLabel:(UILabel *)label;
++ (void)setup;
 @end
 
-@implementation TimerHelper
-+ (void)updateCoordinates {
-    if (!coordLabel) return;
-    struct Vector3 pos = GetPlayerPosition();
-    if (pos.x == 0 && pos.y == 0 && pos.z == 0) {
-        coordLabel.text = @"❌ Ошибка! Смотри логи";
-        coordLabel.textColor = [UIColor redColor];
-    } else {
-        coordLabel.text = [NSString stringWithFormat:@"X:%.0f  Y:%.0f  Z:%.0f", pos.x, pos.y, pos.z];
-        coordLabel.textColor = [UIColor colorWithRed:0.3 green:0.9 blue:0.3 alpha:1];
-    }
-}
-@end
+@implementation TestMenu
 
-// ==================== ФУНКЦИИ МЕНЮ ====================
+static UIView *menuContainer = nil;
+static UIButton *menuButton = nil;
+static UILabel *coordLabel = nil;
+static BOOL isMenuVisible = NO;
 
-static void showAlert(NSString *title, NSString *message) {
++ (void)showAlert:(NSString *)title message:(NSString *)message {
     UIAlertController *alert = [UIAlertController alertControllerWithTitle:title 
                                                                    message:message 
                                                             preferredStyle:UIAlertControllerStyleAlert];
@@ -97,7 +75,7 @@ static void showAlert(NSString *title, NSString *message) {
     [rootVC presentViewController:alert animated:YES completion:nil];
 }
 
-static void checkCoordinates() {
++ (void)checkCoordinates {
     struct Vector3 pos = GetPlayerPosition();
     NSString *message;
     if (pos.x == 0 && pos.y == 0 && pos.z == 0) {
@@ -105,15 +83,27 @@ static void checkCoordinates() {
     } else {
         message = [NSString stringWithFormat:@"X: %.2f\nY: %.2f\nZ: %.2f", pos.x, pos.y, pos.z];
     }
-    showAlert(@"Координаты игрока", message);
+    [self showAlert:@"Координаты игрока" message:message];
 }
 
-static void toggleMenu() {
++ (void)updateCoordinatesLabel:(UILabel *)label {
+    if (!label) return;
+    struct Vector3 pos = GetPlayerPosition();
+    if (pos.x == 0 && pos.y == 0 && pos.z == 0) {
+        label.text = @"❌ Ошибка! Смотри логи";
+        label.textColor = [UIColor redColor];
+    } else {
+        label.text = [NSString stringWithFormat:@"X:%.0f  Y:%.0f  Z:%.0f", pos.x, pos.y, pos.z];
+        label.textColor = [UIColor colorWithRed:0.3 green:0.9 blue:0.3 alpha:1];
+    }
+}
+
++ (void)toggleMenu {
     isMenuVisible = !isMenuVisible;
     menuContainer.hidden = !isMenuVisible;
 }
 
-static void dragButton(UIPanGestureRecognizer *gesture) {
++ (void)dragButton:(UIPanGestureRecognizer *)gesture {
     CGPoint translation = [gesture translationInView:menuButton.superview];
     CGPoint newCenter = CGPointMake(menuButton.center.x + translation.x, menuButton.center.y + translation.y);
     
@@ -125,14 +115,13 @@ static void dragButton(UIPanGestureRecognizer *gesture) {
     menuButton.center = newCenter;
     [gesture setTranslation:CGPointZero inView:menuButton.superview];
     
-    // Меню следует за кнопкой
     CGRect frame = menuContainer.frame;
     frame.origin.x = menuButton.frame.origin.x;
     frame.origin.y = menuButton.frame.origin.y + menuButton.frame.size.height + 5;
     menuContainer.frame = frame;
 }
 
-static void setupMenu() {
++ (void)setup {
     UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
     if (!keyWindow) return;
     
@@ -144,9 +133,9 @@ static void setupMenu() {
     [menuButton setTitle:@"⚡" forState:UIControlStateNormal];
     [menuButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     menuButton.titleLabel.font = [UIFont boldSystemFontOfSize:24];
-    [menuButton addTarget:nil action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
+    [menuButton addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
     
-    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:nil action:@selector(dragButton:)];
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragButton:)];
     [menuButton addGestureRecognizer:pan];
     [keyWindow addSubview:menuButton];
     
@@ -175,7 +164,7 @@ static void setupMenu() {
     [coordBtn setTitle:@"📍 Мои координаты" forState:UIControlStateNormal];
     [coordBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     coordBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-    [coordBtn addTarget:nil action:@selector(checkCoordinates) forControlEvents:UIControlEventTouchUpInside];
+    [coordBtn addTarget:self action:@selector(checkCoordinates) forControlEvents:UIControlEventTouchUpInside];
     [menuContainer addSubview:coordBtn];
     
     // Метка с координатами
@@ -191,21 +180,27 @@ static void setupMenu() {
     
     // Обновляем координаты раз в секунду
     [NSTimer scheduledTimerWithTimeInterval:1.0 
-                                     target:[TimerHelper class]
-                                   selector:@selector(updateCoordinates)
-                                   userInfo:nil
+                                     target:self 
+                                   selector:@selector(updateTimer:)
+                                   userInfo:nil 
                                     repeats:YES];
     
     NSLog(@"[ESP] Menu setup complete!");
-    
-    // Проверяем при запуске
     GetPlayerPosition();
 }
+
++ (void)updateTimer:(NSTimer *)timer {
+    [self updateCoordinatesLabel:coordLabel];
+}
+
+@end
+
+// ==================== ЗАГРУЗКА ====================
 
 static void loadMenu() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         if ([UIApplication sharedApplication].keyWindow) {
-            setupMenu();
+            [TestMenu setup];
         } else {
             loadMenu();
         }
