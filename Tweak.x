@@ -66,6 +66,26 @@ struct Vector3 GetPlayerPosition() {
     return result;
 }
 
+// ==================== КЛАСС ДЛЯ ТАЙМЕРА ====================
+
+@interface TimerHelper : NSObject
++ (void)updateCoordinates;
+@end
+
+@implementation TimerHelper
++ (void)updateCoordinates {
+    if (!coordLabel) return;
+    struct Vector3 pos = GetPlayerPosition();
+    if (pos.x == 0 && pos.y == 0 && pos.z == 0) {
+        coordLabel.text = @"❌ Ошибка! Смотри логи";
+        coordLabel.textColor = [UIColor redColor];
+    } else {
+        coordLabel.text = [NSString stringWithFormat:@"X:%.0f  Y:%.0f  Z:%.0f", pos.x, pos.y, pos.z];
+        coordLabel.textColor = [UIColor colorWithRed:0.3 green:0.9 blue:0.3 alpha:1];
+    }
+}
+@end
+
 // ==================== ФУНКЦИИ МЕНЮ ====================
 
 static void showAlert(NSString *title, NSString *message) {
@@ -86,18 +106,6 @@ static void checkCoordinates() {
         message = [NSString stringWithFormat:@"X: %.2f\nY: %.2f\nZ: %.2f", pos.x, pos.y, pos.z];
     }
     showAlert(@"Координаты игрока", message);
-}
-
-static void updateCoordinatesLabel() {
-    if (!coordLabel) return;
-    struct Vector3 pos = GetPlayerPosition();
-    if (pos.x == 0 && pos.y == 0 && pos.z == 0) {
-        coordLabel.text = @"❌ Ошибка! Смотри логи";
-        coordLabel.textColor = [UIColor redColor];
-    } else {
-        coordLabel.text = [NSString stringWithFormat:@"X:%.0f  Y:%.0f  Z:%.0f", pos.x, pos.y, pos.z];
-        coordLabel.textColor = [UIColor colorWithRed:0.3 green:0.9 blue:0.3 alpha:1];
-    }
 }
 
 static void toggleMenu() {
@@ -183,9 +191,9 @@ static void setupMenu() {
     
     // Обновляем координаты раз в секунду
     [NSTimer scheduledTimerWithTimeInterval:1.0 
-                                     target:nil 
-                                   selector:@selector(updateCoordinatesLabel) 
-                                   userInfo:nil 
+                                     target:[TimerHelper class]
+                                   selector:@selector(updateCoordinates)
+                                   userInfo:nil
                                     repeats:YES];
     
     NSLog(@"[ESP] Menu setup complete!");
