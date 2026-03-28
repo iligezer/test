@@ -8,8 +8,6 @@
 #define POSITION_X_OFFSET               0x158
 #define POSITION_Y_OFFSET               0x15C
 #define POSITION_Z_OFFSET               0x160
-#define CAMERA_GET_MAIN_RVA             0x445baf8
-#define WORLD_TO_SCREEN_POINT_RVA       0x445a9cc
 
 // ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 
@@ -47,7 +45,13 @@ struct Vector3 GetPlayerPosition() {
     return result;
 }
 
-// ==================== МЕНЮ ====================
+// ==================== КЛАСС МЕНЮ ====================
+
+@interface ESPMenu : NSObject
++ (void)setup;
+@end
+
+@implementation ESPMenu
 
 static UIButton *menuButton = nil;
 static UIView *menuView = nil;
@@ -55,7 +59,7 @@ static UILabel *coordLabel = nil;
 static BOOL isMenuVisible = NO;
 static NSTimer *updateTimer = nil;
 
-static void checkCoordinates() {
++ (void)checkCoordinates {
     struct Vector3 pos = GetPlayerPosition();
     NSString *message = [NSString stringWithFormat:@"X: %.2f\nY: %.2f\nZ: %.2f", pos.x, pos.y, pos.z];
     
@@ -67,7 +71,7 @@ static void checkCoordinates() {
     [rootVC presentViewController:alert animated:YES completion:nil];
 }
 
-static void updateCoordinates() {
++ (void)updateCoordinates {
     if (!coordLabel) return;
     struct Vector3 pos = GetPlayerPosition();
     if (pos.x == 0 && pos.y == 0 && pos.z == 0) {
@@ -79,12 +83,12 @@ static void updateCoordinates() {
     }
 }
 
-static void toggleMenu() {
++ (void)toggleMenu {
     isMenuVisible = !isMenuVisible;
     menuView.hidden = !isMenuVisible;
 }
 
-static void dragButton(UIPanGestureRecognizer *gesture) {
++ (void)dragButton:(UIPanGestureRecognizer *)gesture {
     CGPoint translation = [gesture translationInView:menuButton.superview];
     CGPoint newCenter = CGPointMake(menuButton.center.x + translation.x, menuButton.center.y + translation.y);
     
@@ -102,7 +106,7 @@ static void dragButton(UIPanGestureRecognizer *gesture) {
     menuView.frame = frame;
 }
 
-static void setupMenu() {
++ (void)setup {
     UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
     if (!keyWindow) return;
     
@@ -114,9 +118,9 @@ static void setupMenu() {
     [menuButton setTitle:@"⚡" forState:UIControlStateNormal];
     [menuButton setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     menuButton.titleLabel.font = [UIFont boldSystemFontOfSize:24];
-    [menuButton addTarget:self action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
+    [menuButton addTarget:[ESPMenu class] action:@selector(toggleMenu) forControlEvents:UIControlEventTouchUpInside];
     
-    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragButton:)];
+    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:[ESPMenu class] action:@selector(dragButton:)];
     [menuButton addGestureRecognizer:pan];
     [keyWindow addSubview:menuButton];
     
@@ -134,7 +138,7 @@ static void setupMenu() {
     [checkBtn setTitle:@"📍 Мои координаты" forState:UIControlStateNormal];
     [checkBtn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
     checkBtn.titleLabel.font = [UIFont boldSystemFontOfSize:14];
-    [checkBtn addTarget:self action:@selector(checkCoordinates) forControlEvents:UIControlEventTouchUpInside];
+    [checkBtn addTarget:[ESPMenu class] action:@selector(checkCoordinates) forControlEvents:UIControlEventTouchUpInside];
     [menuView addSubview:checkBtn];
     
     coordLabel = [[UILabel alloc] initWithFrame:CGRectMake(5, 60, 210, 40)];
@@ -149,16 +153,22 @@ static void setupMenu() {
     
     // Обновление координат каждую секунду
     updateTimer = [NSTimer scheduledTimerWithTimeInterval:1.0 
-                                                   target:self 
+                                                   target:[ESPMenu class] 
                                                  selector:@selector(updateCoordinates) 
                                                  userInfo:nil 
                                                   repeats:YES];
+    
+    NSLog(@"[ESP] Menu setup complete!");
 }
+
+@end
+
+// ==================== ЗАГРУЗКА ====================
 
 static void loadMenu() {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
         if ([UIApplication sharedApplication].keyWindow) {
-            setupMenu();
+            [ESPMenu setup];
         } else {
             loadMenu();
         }
